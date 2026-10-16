@@ -58,7 +58,7 @@ export const usuariosSpec: CrudSpec = {
     { name: "activo", label: "Activo", type: "boolean", required: true }, centro,
   ],
   beforeWrite: async (_db, data, mode) => {
-    if (mode === "insert" && (data.password === undefined || data.password === "")) throw new ValidationError("La contraseña es obligatoria al crear un usuario");
+    if (mode === "insert" && (typeof data.password !== "string" || data.password.length < 6)) throw new ValidationError("La contraseña es obligatoria y debe tener al menos 6 caracteres");
     if (mode === "update" && data.password === "") delete data.password;
     await hashPasswordField(data);
     if (mode === "insert" && (data.rol === undefined || data.rol === null)) data.rol = "usuario";
