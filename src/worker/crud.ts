@@ -31,7 +31,9 @@ function parseValue(f: FieldSpec, raw: unknown): { ok: true; value: unknown } | 
       return { ok: true, value: n };
     }
     case "date": {
-      if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { ok: false, error: `${f.label}: fecha no válida` };
+      if (typeof raw !== "string" || raw.length !== 10 || raw[4] !== "-" || raw[7] !== "-") return { ok: false, error: `${f.label}: fecha no válida` };
+      const digits = `${raw.slice(0, 4)}${raw.slice(5, 7)}${raw.slice(8, 10)}`;
+      if ([...digits].some((char) => char < "0" || char > "9")) return { ok: false, error: `${f.label}: fecha no válida` };
       const date = new Date(`${raw}T00:00:00Z`);
       if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) return { ok: false, error: `${f.label}: fecha no válida` };
       return { ok: true, value: raw };
@@ -80,8 +82,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     const user = c.get("user"); if (!allowed(user, spec.read)) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const where: string[] = [], params: unknown[] = [], centroId = c.req.query("centro_id");
     if (centroId && centroId !== "all") { const id = Number(centroId); if (!Number.isInteger(id) || id < 1) return c.json({ error: "centro_id no válido" }, 400); where.push("t.centro_id = ?"); params.push(id); }
-    const q = (c.req.query("q") ?? "").trim();
-    if (q && searchCols.length) { where.push(`(${searchCols.map(col => `${col} LIKE ?`).join(" OR ")})`); for (let i=0;i<searchCols.length;i++) params.push(`%${q}%`); }
+    const q = (c.req.query("q") ?? "").trim(); if (q && searchCols.length) { where.push(`(${searchCols.map(col => `${col} LIKE ?`).join(" OR ")})`); for (let i=0;i<searchCols.length;i++) params.push(`%${q}%`); }
     const sql = `${baseSql}${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY t.${spec.orderBy} DESC`;
     return c.json({ items: (await c.env.DB.prepare(sql).bind(...params).all()).results });
   });
