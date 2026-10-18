@@ -67,11 +67,19 @@ export async function getUserByToken(db: Env["DB"], token: string): Promise<Sess
   return { id: Number(row.id), username: String(row.username), nombre: String(row.nombre), rol: row.rol === "admin" ? "admin" : "usuario" };
 }
 
+// En producción (https) la API vive en otro dominio que el frontend, así que
+// la cookie de sesión necesita SameSite=None (implica Secure). En local (http)
+// se mantiene SameSite=Strict.
+function sessionCookieOptions(c: Context<{ Bindings: Env; Variables: Variables }>): { path: string; secure: boolean; sameSite: "Strict" | "None" } {
+  const secure = new URL(c.req.url).protocol === "https:";
+  return { path: "/", secure, sameSite: secure ? "None" : "Strict" };
+}
+
 async function currentUser(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<SessionUser | null> {
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return null;
   const user = await getUserByToken(c.env.DB, token);
-  if (!user) deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  if (!user) deleteCookie(c, SESSION_COOKIE, sessionCookieOptions(c));
   return user;
 }
 
@@ -101,13 +109,13 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     if (hash !== String(row.password_hash)) return c.json({ error: "Usuario o contraseña incorrectos" }, 401);
     if (Number(row.activo) !== 1) return c.json({ error: "Usuario desactivado. Contacta con un administrador." }, 403);
     const token = await createSession(c.env.DB, Number(row.id));
-    setCookie(c, SESSION_COOKIE, token, { httpOnly: true, secure: new URL(c.req.url).protocol === "https:", sameSite: "Strict", path: "/", maxAge: SESSION_DAYS * 24 * 3600 });
+    setCookie(c, SESSION_COOKIE, token, { httpOnly: true, ...sessionCookieOptions(c), maxAge: SESSION_DAYS * 24 * 3600 });
     return c.json({ user: publicUser(row) });
   })
   .post("/logout", async (c) => {
     const token = getCookie(c, SESSION_COOKIE);
     if (token) await c.env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
-    deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    deleteCookie(c, SESSION_COOKIE, sessionCookieOptions(c));
     return c.json({ ok: true });
   })
   .get("/me", requireAuth, async (c) => {

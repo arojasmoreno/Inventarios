@@ -2,8 +2,12 @@ export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
+// URL base de la API. Vacía en local (same-origin con wrangler dev); en
+// producción se inyecta con la variable VITE_API_BASE apuntando al Worker de
+// Cloudflare. Se elimina la barra final para poder concatenar rutas "/api/...".
+const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), credentials: "same-origin" });
+  const res = await fetch(`${API_BASE}${url}`, { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), credentials: "include" });
   let data: unknown = null;
   try { data = await res.json(); } catch { /* respuesta sin cuerpo */ }
   if (!res.ok) {

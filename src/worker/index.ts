@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { Env } from "./d1";
 import type { Variables } from "./types";
 import { bootstrap } from "./db";
@@ -7,21 +8,38 @@ import { ValidationError } from "./crud";
 import { quimicos, material, maquinaria, centros, usuarios } from "./resources";
 import { reportesRoutes } from "./reportes";
 
+// Origenes externos de confianza: el frontend servido por Freebuff y el
+// servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
+const TRUSTED_ORIGINS = new Set([
+  "https://inventarios.freebuff.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]);
+
+function isTrustedOrigin(origin: string | undefined, requestUrl: string): boolean {
+  if (!origin) return true;
+  try {
+    if (origin === new URL(requestUrl).origin) return true;
+  } catch {
+    return false;
+  }
+  return TRUSTED_ORIGINS.has(origin);
+}
+
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+// CORS para que inventarios.freebuff.app (otro origen) pueda llamar a la API
+// con cookies incluidas; responde también a los preflight OPTIONS.
+app.use("*", cors({
+  origin: (origin, c) => (isTrustedOrigin(origin, c.req.url) ? origin : ""),
+  credentials: true,
+  allowHeaders: ["Content-Type"],
+  maxAge: 86400,
+}));
 app.use("*", async (c, next) => {
   await bootstrap(c.env.DB);
   const method = c.req.method;
-  if (method !== "GET" && method !== "HEAD") {
-    const origin = c.req.header("Origin");
-    if (origin) {
-      try {
-        const originUrl = new URL(origin);
-        const requestUrl = new URL(c.req.url);
-        if (originUrl.origin !== requestUrl.origin) return c.json({ error: "Origen no permitido" }, 403);
-      } catch {
-        return c.json({ error: "Origen no permitido" }, 403);
-      }
-    }
+  if (method !== "GET" && method !== "HEAD" && !isTrustedOrigin(c.req.header("Origin"), c.req.url)) {
+    return c.json({ error: "Origen no permitido" }, 403);
   }
   await next();
 });

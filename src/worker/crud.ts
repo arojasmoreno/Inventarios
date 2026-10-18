@@ -99,7 +99,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     const result = await c.env.DB.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
     const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind((result.meta as { last_row_id?: number }).last_row_id).first(); return c.json({ item: row }, 201);
   });
-  app.put("/:id", async c => {
+  app.put("/:id", async (c: Ctx): Promise<Response> => {
     if (!allowed(c.get("user"), spec.update)) return c.json({ error: "No tienes permiso para editar registros" }, 403);
     const id = Number(c.req.param("id")), existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(id).first();
     if (!existing) return c.json({ error: "Registro no encontrado" }, 404);
