@@ -5,7 +5,9 @@ import type { Variables } from "./types";
 import { bootstrap } from "./db";
 import { authRoutes } from "./auth";
 import { ValidationError } from "./crud";
-import { quimicos, material, maquinaria, centros, usuarios } from "./resources";
+import { quimicos, material, maquinaria, centros, usuarios, epis, ropa, tallas, entregas, movimientos } from "./resources";
+import { consumoRoutes } from "./consumo";
+import { empresaRoutes } from "./empresa";
 import { reportesRoutes } from "./reportes";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
@@ -49,6 +51,13 @@ app.route("/api/material-limpieza", material);
 app.route("/api/maquinaria", maquinaria);
 app.route("/api/centros", centros);
 app.route("/api/usuarios", usuarios);
+app.route("/api/epis", epis);
+app.route("/api/ropa-trabajo", ropa);
+app.route("/api/tallas", tallas);
+app.route("/api/entregas", entregas);
+app.route("/api/movimientos", movimientos);
+app.route("/api/empresa", empresaRoutes);
+app.route("/api/consumo", consumoRoutes);
 app.route("/api/informes", reportesRoutes);
 app.get("/api/salud", (c) => c.json({ ok: true, app: "Inventarios" }));
 app.notFound((c) => {

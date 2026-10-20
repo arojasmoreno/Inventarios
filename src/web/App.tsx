@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "./api";
 import { Field, Toast } from "./ui";
-import { CENTROS, MAQUINARIA, MATERIAL, QUIMICOS, ResourcePage, USUARIOS, type ResourceConfig } from "./resources";
+import { CENTROS, EPIS, ENTREGAS, MAQUINARIA, MATERIAL, MOVIMIENTOS, QUIMICOS, ResourcePage, ROPA, TALLAS, USUARIOS, type ResourceConfig } from "./resources";
+import { ConsumoPage } from "./qr";
+import { EntregaPage } from "./entrega";
+import { EmpresaPage } from "./empresa";
 import { Informes } from "./Informes";
 
 export interface User {
@@ -26,6 +29,14 @@ const NAV: NavItem[] = [
   { hash: "#/quimicos", label: "Químicos", icon: "🧴", resource: QUIMICOS },
   { hash: "#/material", label: "Material de limpieza", icon: "🧽", resource: MATERIAL },
   { hash: "#/maquinaria", label: "Maquinaria", icon: "🧹", resource: MAQUINARIA },
+  { hash: "#/epis", label: "EPIs", icon: "🦺", resource: EPIS },
+  { hash: "#/ropa", label: "Ropa de trabajo", icon: "🥼", resource: ROPA },
+  { hash: "#/tallas", label: "Tallas operarios", icon: "📏", resource: TALLAS },
+  { hash: "#/entregas", label: "Entregas de ropa", icon: "🧺", resource: ENTREGAS },
+  { hash: "#/entrega", label: "Entregar ropa", icon: "🧾", adminOnly: true },
+  { hash: "#/consumo", label: "Consumo QR", icon: "📱" },
+  { hash: "#/movimientos", label: "Movimientos", icon: "📜" },
+  { hash: "#/empresa", label: "Empresa", icon: "🏢", adminOnly: true },
   { hash: "#/centros", label: "Centros", icon: "🏭", resource: CENTROS },
   { hash: "#/usuarios", label: "Usuarios", icon: "👥", adminOnly: true, resource: USUARIOS },
   { hash: "#/informes", label: "Informes", icon: "📊" },
@@ -154,10 +165,14 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
     try { await api.post("/api/auth/logout", {}); } catch { /* la sesión puede haber caducado */ }
     setLogoutToast(true); onUserChange(null); window.location.hash = "";
   }, [onUserChange]);
-  const active = NAV.find((n) => n.hash === route) ?? NAV[0];
+  const active = NAV.find((n) => n.hash === route || (n.hash === "#/consumo" && route.startsWith("#/consumo"))) ?? NAV[0];
   let page: ReactNode;
   if (route === "#/cuenta") page = <MiCuenta user={user} />;
   else if (route === "#/informes") page = <Informes />;
+  else if (route === "#/consumo" || route.startsWith("#/consumo")) page = <ConsumoPage user={user} />;
+  else if (route === "#/entrega") page = <EntregaPage user={user} />;
+  else if (route === "#/empresa") page = <EmpresaPage />;
+  else if (route === "#/movimientos") page = <ResourcePage key={route} config={MOVIMIENTOS} user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;
   else page = <ResourcePage key="#/quimicos" config={QUIMICOS} user={user} />;
   return <div className="app">

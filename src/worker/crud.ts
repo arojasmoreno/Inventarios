@@ -9,10 +9,13 @@ export type FieldType = "text" | "textarea" | "number" | "integer" | "date" | "b
 export interface FieldSpec { name: string; label: string; type: FieldType; required?: boolean; enumValues?: string[]; min?: number; unique?: boolean; writeOnly?: boolean; maxLength?: number; placeholder?: string; }
 export type PermLevel = "all" | "admin";
 export interface CrudSpec {
-  table: string; orderBy: string; fields: FieldSpec[]; refCentro?: boolean; computed?: string;
+  table: string; orderBy: string; fields: FieldSpec[]; refCentro?: boolean; refUsuario?: boolean; computed?: string;
+  extraJoins?: string[]; extraSelect?: string[]; extraSearchCols?: string[];
   read: PermLevel; create: PermLevel; update: PermLevel; delete: PermLevel;
-  beforeWrite?: (db: D1Database, data: Record<string, unknown>, mode: "insert" | "update") => Promise<Record<string, unknown>>;
+  beforeWrite?: (db: D1Database, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>) => Promise<Record<string, unknown>>;
   beforeDelete?: (db: D1Database, user: SessionUser, row: Record<string, unknown>) => Promise<string | null>;
+  afterWrite?: (db: D1Database, user: SessionUser, row: Record<string, unknown>, mode: "insert" | "update") => Promise<void>;
+  afterDelete?: (db: D1Database, user: SessionUser, row: Record<string, unknown>) => Promise<void>;
 }
 export function allowed(user: SessionUser, level: PermLevel): boolean { return level === "all" || user.rol === "admin"; }
 function parseValue(f: FieldSpec, raw: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
@@ -74,10 +77,17 @@ async function checkUnique(db: D1Database, spec: CrudSpec, data: Record<string, 
 export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Variables }> {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>(); app.use("*", requireAuth);
   const selectCols = ["t.id", ...spec.fields.filter(f => !f.writeOnly).map(f => `t.${f.name}`), "t.created_at", "t.updated_at"];
-  if (spec.refCentro) selectCols.push("c.nombre AS centro_nombre"); if (spec.computed) selectCols.push(spec.computed);
-  const join = spec.refCentro ? " LEFT JOIN centros c ON c.id = t.centro_id" : "";
-  const baseSql = `SELECT ${selectCols.join(", ")} FROM ${spec.table} t${join}`;
-  const searchCols = spec.fields.filter(f => f.type === "text" || f.type === "textarea").map(f => `t.${f.name}`);
+  if (spec.refCentro) selectCols.push("c.nombre AS centro_nombre");
+  if (spec.refUsuario) selectCols.push("u.nombre AS usuario_nombre", "u.username AS usuario_username");
+  if (spec.fields.some(f => f.name === "foto")) selectCols.push("t.foto IS NOT NULL AS tiene_foto");
+  if (spec.computed) selectCols.push(spec.computed);
+  if (spec.extraSelect) selectCols.push(...spec.extraSelect);
+  const joins: string[] = [];
+  if (spec.refCentro) joins.push(" LEFT JOIN centros c ON c.id = t.centro_id");
+  if (spec.refUsuario) joins.push(" LEFT JOIN usuarios u ON u.id = t.usuario_id");
+  if (spec.extraJoins) joins.push(...spec.extraJoins);
+  const baseSql = `SELECT ${selectCols.join(", ")} FROM ${spec.table} t${joins.join("")}`;
+  const searchCols = [...spec.fields.filter(f => f.type === "text" || f.type === "textarea").map(f => `t.${f.name}`), ...(spec.extraSearchCols ?? [])];
   app.get("/", async c => {
     const user = c.get("user"); if (!allowed(user, spec.read)) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const where: string[] = [], params: unknown[] = [], centroId = c.req.query("centro_id");
@@ -97,25 +107,43 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "insert");
     const keys = Object.keys(data); if (!keys.length) throw new ValidationError("No hay datos que guardar");
     const result = await c.env.DB.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
-    const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind((result.meta as { last_row_id?: number }).last_row_id).first(); return c.json({ item: row }, 201);
+    const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind((result.meta as { last_row_id?: number }).last_row_id).first();
+    if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), row ?? data, "insert");
+    return c.json({ item: row }, 201);
   });
   app.put("/:id", async (c: Ctx): Promise<Response> => {
     if (!allowed(c.get("user"), spec.update)) return c.json({ error: "No tienes permiso para editar registros" }, 403);
     const id = Number(c.req.param("id")), existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(id).first();
     if (!existing) return c.json({ error: "Registro no encontrado" }, 404);
     const body = await readBody(c); let data = validate(spec, body, "update"); await checkUnique(c.env.DB, spec, data, id);
-    if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "update"); const keys = Object.keys(data); if (!keys.length) return c.json({ item: existing });
+    if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "update", existing); const keys = Object.keys(data); if (!keys.length) return c.json({ item: existing });
     const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
     await c.env.DB.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), id).run();
-    return c.json({ item: await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(id).first() });
+    const updated = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(id).first();
+    if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), updated ?? existing, "update");
+    return c.json({ item: updated });
   });
   app.delete("/:id", async c => {
     const user = c.get("user"); if (!allowed(user, spec.delete)) return c.json({ error: "No tienes permiso para borrar registros" }, 403);
     const id = Number(c.req.param("id")), row = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(id).first();
     if (!row) return c.json({ error: "Registro no encontrado" }, 404);
     if (spec.beforeDelete) { const error = await spec.beforeDelete(c.env.DB, user, row); if (error) return c.json({ error }, 400); }
-    await c.env.DB.prepare(`DELETE FROM ${spec.table} WHERE id = ?`).bind(id).run(); return c.json({ ok: true });
+    await c.env.DB.prepare(`DELETE FROM ${spec.table} WHERE id = ?`).bind(id).run();
+    if (spec.afterDelete) await spec.afterDelete(c.env.DB, user, row);
+    return c.json({ ok: true });
   });
+  // Foto del artículo (base64) sin cargarla en el listado.
+  if (spec.fields.some(f => f.name === "foto")) {
+    app.get("/:id/foto", async c => {
+      if (!allowed(c.get("user"), spec.read)) return c.json({ error: "Requiere permisos de administrador" }, 403);
+      const row = await c.env.DB.prepare(`SELECT foto FROM ${spec.table} WHERE id = ?`).bind(Number(c.req.param("id"))).first();
+      if (!row || !row.foto || typeof row.foto !== "string") return c.json({ error: "Foto no disponible" }, 404);
+      const m = /^data:(image\/[a-z+]+);base64,(.+)$/.exec(row.foto);
+      if (!m) return c.json({ error: "Foto no válida" }, 500);
+      const bin = Uint8Array.from(atob(m[2]), ch => ch.charCodeAt(0));
+      return new Response(bin, { headers: { "Content-Type": m[1], "Cache-Control": "private, max-age=300" } });
+    });
+  }
   return app;
 }
 async function readBody(c: Ctx): Promise<Record<string, unknown>> {
