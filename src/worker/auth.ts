@@ -16,7 +16,7 @@ export interface SessionUser {
   id: number;
   username: string;
   nombre: string;
-  rol: "admin" | "usuario";
+  rol: "admin" | "admin_centros" | "usuario";
 }
 
 export function toHex(bytes: Uint8Array): string {
@@ -47,7 +47,7 @@ export function publicUser(row: Record<string, unknown>): SessionUser & { email:
     username: String(row.username),
     nombre: String(row.nombre),
     email: (row.email as string | null) ?? null,
-    rol: row.rol === "admin" ? "admin" : "usuario",
+    rol: row.rol === "admin_centros" ? "admin_centros" : row.rol === "admin" ? "admin" : "usuario",
     activo: Number(row.activo) === 1,
     centro_id: (row.centro_id as number | null) ?? null,
   };
@@ -65,7 +65,7 @@ export async function getUserByToken(db: Env["DB"], token: string): Promise<Sess
      WHERE s.token = ? AND s.expires_at > datetime('now') AND u.activo = 1`,
   ).bind(token).first();
   if (!row) return null;
-  return { id: Number(row.id), username: String(row.username), nombre: String(row.nombre), rol: (row.rol as "admin" | "usuario") };
+  return { id: Number(row.id), username: String(row.username), nombre: String(row.nombre), rol: (row.rol as "admin" | "admin_centros" | "usuario") };
 }
 
 function sessionCookieOptions(c: Context<{ Bindings: Env; Variables: Variables }>): { path: string; secure: boolean; sameSite: "Strict" | "None" } {

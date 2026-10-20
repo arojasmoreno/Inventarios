@@ -1,21 +1,22 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "./api";
 import { Field, Toast } from "./ui";
-import { CENTROS, EPIS, ENTREGAS, MAQUINARIA, MATERIAL, MOVIMIENTOS, PUNTOS, QUIMICOS, ResourcePage, ROPA, SUBZONAS, TALLAS, TIPOS, USUARIOS, ZONAS, type ResourceConfig } from "./resources";
-import { ConsumoPage } from "./qr";
+import { CENTROS, EPIS, MAQUINARIA, MATERIAL, MOVIMIENTOS, QUIMICOS, ResourcePage, ROPA, SOPORTES, TALLAS, TIPOS, TIPOS_CONSUMIBLES, USUARIOS, type ResourceConfig } from "./resources";
 import { StockPage } from "./stock";
 import { ConsumosCostesPage } from "./costes";
 import { ImportarPage } from "./importar";
-import { EntregaPage } from "./entrega";
 import { EmpresaPage } from "./empresa";
 import { Informes } from "./Informes";
+import { ZonasCentroPage } from "./zonas";
+import { EstacionesPage } from "./estaciones";
+import { EntregaPage } from "./entrega";
 
 export interface User {
   id: number;
   username: string;
   nombre: string;
   email: string | null;
-  rol: "admin" | "usuario";
+  rol: "admin" | "admin_centros" | "usuario";
   activo: boolean;
   centro_id: number | null;
 }
@@ -27,30 +28,63 @@ interface NavItem {
   adminOnly?: boolean;
   resource?: ResourceConfig;
 }
+interface NavGroup {
+  section: string;
+  items: NavItem[];
+}
 
-const NAV: NavItem[] = [
-  { hash: "#/quimicos", label: "Químicos", icon: "🧴", resource: QUIMICOS },
-  { hash: "#/material", label: "Material de limpieza", icon: "🧽", resource: MATERIAL },
-  { hash: "#/maquinaria", label: "Maquinaria", icon: "🧹", resource: MAQUINARIA },
-  { hash: "#/tipos", label: "Tipos de maquinaria", icon: "🧩", resource: TIPOS },
-  { hash: "#/epis", label: "EPIs", icon: "🦺", resource: EPIS },
-  { hash: "#/ropa", label: "Ropa de trabajo", icon: "🥼", resource: ROPA },
-  { hash: "#/tallas", label: "Tallas operarios", icon: "📏", resource: TALLAS },
-  { hash: "#/entregas", label: "Entregas de ropa", icon: "🧺", resource: ENTREGAS },
-  { hash: "#/entrega", label: "Entregar ropa", icon: "🧾", adminOnly: true },
-  { hash: "#/zonas", label: "Zonas y subzonas", icon: "🗂️", resource: ZONAS },
-  { hash: "#/subzonas", label: "Subzonas", icon: "🧱", resource: SUBZONAS },
-  { hash: "#/puntos", label: "Zonas de consumo", icon: "📍", resource: PUNTOS },
-  { hash: "#/consumo", label: "Consumo QR", icon: "📱" },
-  { hash: "#/entradas", label: "Entradas / Salidas", icon: "📥", adminOnly: true },
-  { hash: "#/costes", label: "Consumos y costes", icon: "💶" },
-  { hash: "#/movimientos", label: "Auditoría", icon: "📜" },
-  { hash: "#/empresa", label: "Empresa", icon: "🏢", adminOnly: true },
-  { hash: "#/centros", label: "Centros", icon: "🏭", resource: CENTROS },
-  { hash: "#/usuarios", label: "Usuarios", icon: "👥", adminOnly: true, resource: USUARIOS },
-  { hash: "#/informes", label: "Informes", icon: "📊" },
-  { hash: "#/importar", label: "Importar CSV", icon: "📤", adminOnly: true },
+// Menú lateral agrupado por secciones (iconos de la web de referencia).
+const NAV: NavGroup[] = [
+  {
+    section: "Consumibles",
+    items: [
+      { hash: "#/quimicos", label: "Químicos", icon: "🧴", resource: QUIMICOS },
+      { hash: "#/ropa", label: "Ropa de trabajo", icon: "🥼", resource: ROPA },
+      { hash: "#/material", label: "Material de limpieza", icon: "🧽", resource: MATERIAL },
+      { hash: "#/maquinaria", label: "Maquinaria", icon: "🧹", resource: MAQUINARIA },
+      { hash: "#/epis", label: "EPIs", icon: "🦺", resource: EPIS },
+    ],
+  },
+  {
+    section: "Ubicaciones",
+    items: [
+      { hash: "#/centros", label: "Centros", icon: "🏭", resource: CENTROS },
+      { hash: "#/zonas", label: "Zonas y subzonas", icon: "🗺️" },
+      { hash: "#/estaciones", label: "Estaciones de consumo", icon: "🚻" },
+    ],
+  },
+  {
+    section: "Movimientos",
+    items: [
+      { hash: "#/entradas", label: "Entradas / Salidas", icon: "🔄", adminOnly: true },
+      { hash: "#/costes", label: "Consumos", icon: "📊" },
+      { hash: "#/movimientos", label: "Auditoría", icon: "📋" },
+    ],
+  },
+  {
+    section: "Gestión",
+    items: [
+      { hash: "#/entregas", label: "Entregar ropa", icon: "👕" },
+      { hash: "#/tallas", label: "Tallas operarios", icon: "📏", resource: TALLAS },
+      { hash: "#/tipos", label: "Tipos de maquinaria", icon: "🧩", resource: TIPOS },
+      { hash: "#/soportes", label: "Soportes", icon: "📌", resource: SOPORTES },
+      { hash: "#/consumibles-tipos", label: "Tipos de consumible", icon: "🏷️", resource: TIPOS_CONSUMIBLES },
+      { hash: "#/usuarios", label: "Usuarios", icon: "👥", adminOnly: true, resource: USUARIOS },
+      { hash: "#/empresa", label: "Empresa", icon: "🏢", adminOnly: true },
+      { hash: "#/importar", label: "Importar CSV", icon: "📤", adminOnly: true },
+    ],
+  },
+  {
+    section: "Consultas",
+    items: [
+      { hash: "#/informes", label: "Informes", icon: "📈" },
+    ],
+  },
 ];
+
+const NAV_FLAT: NavItem[] = NAV.flatMap((g) => g.items);
+const rolLabel = (rol: string) => (rol === "admin" ? "Administrador" : rol === "admin_centros" ? "Administrador de centros" : "Usuario");
+const rolBadge = (rol: string) => (rol === "admin" ? "info" : rol === "admin_centros" ? "warn" : "muted");
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -175,26 +209,33 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
     try { await api.post("/api/auth/logout", {}); } catch { /* la sesión puede haber caducado */ }
     setLogoutToast(true); onUserChange(null); window.location.hash = "";
   }, [onUserChange]);
-  const active = NAV.find((n) => n.hash === route || (n.hash === "#/consumo" && route.startsWith("#/consumo"))) ?? NAV[0];
+  const active = NAV_FLAT.find((n) => n.hash === route || route.startsWith(`${n.hash}?`)) ?? NAV_FLAT[0];
   let page: ReactNode;
   if (route === "#/cuenta") page = <MiCuenta user={user} />;
+  else if (route.startsWith("#/estaciones")) page = <EstacionesPage user={user} />;
+  else if (route === "#/zonas") page = <ZonasCentroPage user={user} />;
+  else if (route === "#/entregas") page = <EntregaPage user={user} />;
   else if (route === "#/informes") page = <Informes />;
-  else if (route === "#/consumo" || route.startsWith("#/consumo")) page = <ConsumoPage user={user} />;
-  else if (route === "#/entrega") page = <EntregaPage user={user} />;
-  else if (route === "#/empresa") page = <EmpresaPage />;
+  else if (route === "#/empresa") page = user.rol === "admin" ? <EmpresaPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden gestionar los datos de la empresa.</p></div>;
   else if (route === "#/entradas") page = user.rol === "admin" ? <StockPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden registrar entradas y salidas.</p></div>;
   else if (route === "#/costes") page = <ConsumosCostesPage />;
   else if (route === "#/importar") page = user.rol === "admin" ? <ImportarPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden importar datos.</p></div>;
   else if (route === "#/movimientos") page = <ResourcePage key={route} config={MOVIMIENTOS} user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;
   else page = <ResourcePage key="#/quimicos" config={QUIMICOS} user={user} />;
+  const grupos = NAV
+    .map((g) => ({ ...g, items: g.items.filter((n) => !n.adminOnly || user.rol === "admin") }))
+    .filter((g) => g.items.length > 0);
   return <div className="app">
-    <aside className="sidebar no-print"><div className="brand"><span className="logo">📦</span> Inventarios</div><div className="nav-section">Inventario</div>
-      {NAV.filter((n) => !n.adminOnly || user.rol === "admin").map((n) => <a key={n.hash} className={"nav-item" + (n.hash === active.hash ? " active" : "")} href={n.hash}><span>{n.icon}</span> {n.label}</a>)}
+    <aside className="sidebar no-print"><div className="brand"><span className="logo">📦</span> Inventarios</div>
+      {grupos.map((g) => <Fragment key={g.section}>
+        <div className="nav-section">{g.section}</div>
+        {g.items.map((n) => <a key={n.hash} className={"nav-item" + (n.hash === active.hash ? " active" : "")} href={n.hash}><span>{n.icon}</span> {n.label}</a>)}
+      </Fragment>)}
       <div className="nav-section">Cuenta</div><a className={"nav-item" + (route === "#/cuenta" ? " active" : "")} href="#/cuenta"><span>⚙️</span> Mi cuenta</a>
-      <div className="sidebar-footer"><div className="who">{user.nombre}</div><div>{user.rol === "admin" ? "Administrador" : "Usuario"}</div><button className="btn secondary small" style={{ marginTop: 10 }} onClick={logout}>Cerrar sesión</button></div>
+      <div className="sidebar-footer"><div className="who">{user.nombre}</div><div>{rolLabel(user.rol)}</div><button className="btn secondary small" style={{ marginTop: 10 }} onClick={logout}>Cerrar sesión</button></div>
     </aside>
-    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="no-print"><span className={`badge ${user.rol === "admin" ? "info" : "muted"}`}>{user.rol === "admin" ? "Administrador" : "Usuario"}</span></div></header><div className="content">{page}</div></main>
+    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="no-print"><span className={`badge ${rolBadge(user.rol)}`}>{rolLabel(user.rol)}</span></div></header><div className="content">{page}</div></main>
     {logoutToast && <Toast message="Sesión cerrada. Hasta pronto." kind="ok" onClose={() => setLogoutToast(false)} />}
   </div>;
 }
@@ -212,7 +253,7 @@ function MiCuenta({ user }: { user: User }) {
     finally { setBusy(false); }
   };
   return <>
-    <div className="card card-pad" style={{ maxWidth: 560 }}><div className="section-head"><h3>Datos de acceso</h3></div><table><tbody><tr><th>Usuario</th><td>{user.username}</td></tr><tr><th>Nombre</th><td>{user.nombre}</td></tr><tr><th>Email</th><td>{user.email ?? "—"}</td></tr><tr><th>Rol</th><td>{user.rol === "admin" ? "Administrador" : "Usuario"}</td></tr></tbody></table></div>
+    <div className="card card-pad" style={{ maxWidth: 560 }}><div className="section-head"><h3>Datos de acceso</h3></div><table><tbody><tr><th>Usuario</th><td>{user.username}</td></tr><tr><th>Nombre</th><td>{user.nombre}</td></tr><tr><th>Email</th><td>{user.email ?? "—"}</td></tr><tr><th>Rol</th><td>{rolLabel(user.rol)}</td></tr></tbody></table></div>
     <form className="card card-pad" style={{ maxWidth: 560 }} onSubmit={submit}><div className="section-head"><h3>Cambiar contraseña</h3></div>
       {msg && <div className={"banner " + (msg.kind === "ok" ? "" : "danger")} style={{ marginBottom: 12 }}>{msg.message}</div>}
       <div className="form-grid"><div className="full"><Field def={actualField} value={values.actual} onChange={(v) => setValues({ ...values, actual: v })} /></div><div className="full"><Field def={nuevaField} value={values.nueva} onChange={(v) => setValues({ ...values, nueva: v })} /></div></div>

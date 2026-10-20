@@ -1,142 +1,256 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import { Modal, formatFecha } from "./ui";
+import { Toast } from "./ui";
 
 type Row = Record<string, unknown>;
 
-interface Linea { ropaId: number; label: string; marca: string; modelo: string; talla: string | null; cantidad: number; }
+// Prendas fijas del formulario de entrega (tal y como en la hoja de reparto).
+const PRENDAS = [
+  "Camiseta", "Pantalón", "Zapatos seguridad", "Botas de agua", "Guantes anticorte",
+  "Casaca", "Pantalón casaca", "Chaqueton", "Polar", "Chaleco",
+];
 
-/** Flujo de entrega: seleccionar todas las prendas y generar el informe con el logo. */
-export function EntregaPage({ user }: { user: { nombre: string } }) {
-  const [usuarios, setUsuarios] = useState<Row[]>([]);
-  const [ropas, setRopas] = useState<Row[]>([]);
+interface Linea { talla: string; av: string; aux: string; manga: string; color: string; }
+const lineaVacia = (): Linea => ({ talla: "", av: "", aux: "", manga: "", color: "" });
+const flagDe = (v: string): number | null => (v === "" ? null : v === "sí" ? 1 : 0);
+const flagA = (v: unknown): string => (v === null || v === undefined ? "" : Number(v) === 1 ? "sí" : "no");
+const fmtFlag = (v: unknown): string => (v === null || v === undefined ? "—" : Number(v) === 1 ? "Sí" : "No");
+const hoy = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** Pestaña «Entregar ropa»: centro → trabajador → tabla de prendas; el
+ *  registro se muestra después tabulado por operario. */
+export function EntregaPage({ user }: { user: { rol: string; centro_id: number | null } }) {
+  const canWrite = user.rol === "admin" || user.rol === "admin_centros";
+
+  const [centros, setCentros] = useState<Row[]>([]);
+  const [trabajadores, setTrabajadores] = useState<Row[]>([]);
+  const [centroId, setCentroId] = useState<string>(user.centro_id ? String(user.centro_id) : "");
   const [usuarioId, setUsuarioId] = useState("");
-  const [marcaSel, setMarcaSel] = useState("");
-  const [modeloSel, setModeloSel] = useState("");
-  const [ropaSel, setRopaSel] = useState("");
-  const [cant, setCant] = useState("1");
-  const [lineas, setLineas] = useState<Linea[]>([]);
-  const [notas, setNotas] = useState("");
-  const [empresa, setEmpresa] = useState<{ nombre: string | null; logo: string | null }>({ nombre: null, logo: null });
+  const [fecha, setFecha] = useState(hoy);
+  const [lineas, setLineas] = useState<Record<string, Linea>>(() =>
+    Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()])));
+
+  const [list, setList] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [regCentro, setRegCentro] = useState("all");
+  const [regOperario, setRegOperario] = useState("all");
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [informe, setInforme] = useState<{ operario: string; lineas: Linea[]; fecha: string } | null>(null);
+
+  const loadTrabajadores = useCallback(async (centro: string) => {
+    if (!centro) { setTrabajadores([]); return; }
+    try {
+      const r = await api.get<{ items: Row[] }>(`/api/ropa-entregas/trabajadores?centro_id=${centro}`);
+      setTrabajadores(r.items);
+    } catch { setTrabajadores([]); }
+  }, []);
 
   const load = useCallback(async () => {
     try {
-      const [u, r, e] = await Promise.all([
-        api.get<{ items: Row[] }>("/api/usuarios"),
-        api.get<{ items: Row[] }>("/api/ropa-trabajo"),
-        api.get<{ empresa: { nombre: string | null; logo: string | null } }>("/api/empresa"),
-      ]);
-      setUsuarios(u.items.filter((x) => Number(x.activo) === 1));
-      setRopas(r.items);
-      setEmpresa({ nombre: e.empresa.nombre, logo: e.empresa.logo });
-    } catch { setError("No se pudieron cargar los datos"); }
+      const r = await api.get<{ items: Row[] }>("/api/ropa-entregas");
+      setList(r.items);
+    } catch { setError("No se pudo cargar el registro de entregas"); }
+    finally { setLoading(false); }
   }, []);
-  useEffect(() => { void load(); }, [load]);
 
-  const marcas = [...new Set(ropas.map((r) => String(r.marca ?? "—")))];
-  const modelos = [...new Set(ropas.filter((r) => String(r.marca ?? "—") === marcaSel).map((r) => String(r.modelo ?? "—")))];
-  const tallasOpts = ropas.filter((r) => String(r.marca ?? "—") === marcaSel && String(r.modelo ?? "—") === modeloSel);
+  useEffect(() => {
+    void api.get<{ items: Row[] }>("/api/centros").then((r) => setCentros(r.items)).catch(() => setCentros([]));
+    void load();
+    if (user.centro_id) void loadTrabajadores(String(user.centro_id));
+  }, [load, loadTrabajadores, user.centro_id]);
 
-  const addLinea = () => {
-    setError(null);
-    const r = ropas.find((x) => Number(x.id) === Number(ropaSel));
-    const n = Number(cant);
-    if (!r) { setError("Elige marca, modelo y talla para añadir la prenda"); return; }
-    if (!Number.isInteger(n) || n < 1) { setError("La cantidad debe ser un número entero positivo"); return; }
-    const stock = Number(r.stock ?? 0);
-    const enCurso = lineas.filter((l) => l.ropaId === Number(r.id)).reduce((s, l) => s + l.cantidad, 0);
-    if (stock - enCurso < n) { setError(`Stock insuficiente: quedan ${stock - enCurso} uds. de esa prenda`); return; }
-    const marca = String(r.marca ?? "—"), modelo = String(r.modelo ?? "—");
-    const talla = r.talla ? String(r.talla) : null;
-    const label = `${marca !== "—" ? marca + " " : ""}${modelo !== "—" ? modelo : String(r.prenda)}`;
-    setLineas((prev) => {
-      const exist = prev.find((l) => l.ropaId === Number(r.id));
-      if (exist) return prev.map((l) => l.ropaId === Number(r.id) ? { ...l, cantidad: l.cantidad + n } : l);
-      return [...prev, { ropaId: Number(r.id), label, marca, modelo, talla, cantidad: n }];
-    });
-    setRopaSel(""); setCant("1");
+  const onChangeCentro = (valor: string) => {
+    setCentroId(valor); setUsuarioId(""); setTrabajadores([]);
+    void loadTrabajadores(valor);
   };
 
-  const removeLinea = (ropaId: number) => setLineas((prev) => prev.filter((l) => l.ropaId !== ropaId));
+  const lineaConDatos = (l: Linea): boolean =>
+    Boolean(l.talla.trim() || l.color.trim() || l.av || l.aux || l.manga);
 
-  const registrar = async () => {
-    if (!usuarioId) { setError("Elige el operario destinatario"); return; }
-    if (!lineas.length) { setError("Añade al menos una prenda a la entrega"); return; }
-    setBusy(true); setError(null);
+  const guardar = async () => {
+    setError(null);
+    if (!centroId) { setError("Elige el centro de trabajo"); return; }
+    if (!usuarioId) { setError("Elige el trabajador de ese centro"); return; }
+    const enviadas = PRENDAS.filter((p) => lineaConDatos(lineas[p])).map((p) => {
+      const l = lineas[p];
+      return {
+        prenda: p,
+        talla: l.talla.trim() || null,
+        alta_visibilidad: flagDe(l.av),
+        auxiliar_servicios: flagDe(l.aux),
+        manga_larga: flagDe(l.manga),
+        color: l.color.trim() || null,
+      };
+    });
+    if (!enviadas.length) { setError("Rellena los datos de al menos una prenda"); return; }
+    setBusy(true);
     try {
-      for (const l of lineas) {
-        await api.post("/api/entregas", { usuario_id: Number(usuarioId), ropa_id: l.ropaId, cantidad: l.cantidad, notas: notas || null });
-      }
-      const operario = usuarios.find((x) => Number(x.id) === Number(usuarioId));
-      setInforme({ operario: String(operario?.nombre ?? ""), lineas, fecha: new Date().toISOString().slice(0, 10) });
-      setLineas([]); setNotas(""); setToast("Entregas registradas · stock descontado");
+      const r = await api.post<{ creadas: number; actualizadas: number }>("/api/ropa-entregas", {
+        centro_id: Number(centroId), usuario_id: Number(usuarioId), fecha, lineas: enviadas,
+      });
+      const total = r.creadas + r.actualizadas;
+      setToast(`Entrega guardada · ${total} prenda${total === 1 ? "" : "s"}`);
+      setLineas(Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()])));
+      // La vista pasa a mostrar al operario recién guardado, tabulado.
+      setRegCentro(centroId); setRegOperario(usuarioId);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "No se pudieron registrar las entregas"); }
+    } catch (e) { setError(e instanceof Error ? e.message : "No se pudo guardar la entrega"); }
     finally { setBusy(false); }
   };
 
+  const editar = async (row: Row) => {
+    setError(null);
+    const centro = String(row.centro_id ?? "");
+    setCentroId(centro);
+    setUsuarioId(String(row.usuario_id ?? ""));
+    setFecha(String(row.fecha ?? hoy()).slice(0, 10));
+    if (centro) await loadTrabajadores(centro);
+    const nuevas: Record<string, Linea> = Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()]));
+    nuevas[String(row.prenda)] = {
+      talla: row.talla == null ? "" : String(row.talla),
+      av: flagA(row.alta_visibilidad),
+      aux: flagA(row.auxiliar_servicios),
+      manga: flagA(row.manga_larga),
+      color: row.color == null ? "" : String(row.color),
+    };
+    setLineas(nuevas);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const borrar = async (row: Row) => {
+    if (!window.confirm(`¿Eliminar la entrega de «${String(row.prenda)}» a ${String(row.usuario_nombre ?? "este operario")}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await api.del(`/api/ropa-entregas/${String(row.id)}`);
+      setToast("Entrega eliminada");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "No se pudo eliminar"); }
+  };
+
+  // Vista tabulada por operario (filtros opcionales de centro y trabajador).
+  const filtradas = useMemo(() => list.filter((r) =>
+    (regCentro === "all" || String(r.centro_id) === regCentro) &&
+    (regOperario === "all" || String(r.usuario_id) === regOperario)), [list, regCentro, regOperario]);
+  const grupos = useMemo(() => {
+    const porId = new Map<string, Row[]>();
+    for (const r of [...filtradas].sort((a, b) =>
+      String(b.fecha).localeCompare(String(a.fecha)) ||
+      PRENDAS.indexOf(String(a.prenda)) - PRENDAS.indexOf(String(b.prenda)))) {
+      const key = String(r.usuario_id);
+      if (!porId.has(key)) porId.set(key, []);
+      porId.get(key)!.push(r);
+    }
+    return [...porId.entries()].map(([id, rows]) => ({ id, rows }));
+  }, [filtradas]);
+  const operariosOpts = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of filtradas) seen.set(String(r.usuario_id), String(r.usuario_nombre ?? `#${r.usuario_id}`));
+    return [...seen.entries()].map(([id, nombre]) => ({ id, nombre }));
+  }, [filtradas]);
+
+  const selCls = "input";
+  const flagOpts = (v: string, onChange: (x: string) => void) => (
+    <select className={selCls} value={v} onChange={(e) => onChange(e.target.value)} aria-label="Sí / No">
+      <option value="">—</option>
+      <option value="sí">Sí</option>
+      <option value="no">No</option>
+    </select>
+  );
+
   return <>
-    <div className="card card-pad" style={{ maxWidth: 720 }}>
-      <div className="section-head"><h3>Nueva entrega de ropa</h3></div>
-      <p style={{ color: "var(--muted)", marginTop: 0 }}>Selecciona el operario y todas las prendas a entregar; al registrarlas se descuenta el stock y se genera el informe imprimible.</p>
+    {canWrite && <div className="card card-pad">
+      <div className="section-head"><h3>Nueva entrega de ropa</h3>
+        <span className="badge muted">Prenda · talla · A/V · auxiliar · manga larga · color</span></div>
+      <p style={{ color: "var(--muted)", marginTop: 0 }}>Elige el centro de trabajo y el trabajador; después rellena la tabla con los datos de cada prenda.</p>
       {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
-      <div className="form-grid">
-        <div className="full"><div className="field"><label htmlFor="en-op">Operario</label>
-          <select id="en-op" className="input" value={usuarioId} onChange={(e) => setUsuarioId(e.target.value)}>
-            <option value="">— Elige un operario —</option>
-            {usuarios.map((u) => <option key={String(u.id)} value={String(u.id)}>{String(u.nombre)} ({String(u.username)})</option>)}
-          </select></div></div>
-        <div><div className="field"><label htmlFor="en-marca">Marca</label>
-          <select id="en-marca" className="input" value={marcaSel} onChange={(e) => { setMarcaSel(e.target.value); setModeloSel(""); setRopaSel(""); }}>
-            <option value="">— Marca —</option>
-            {marcas.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select></div></div>
-        <div><div className="field"><label htmlFor="en-modelo">Modelo</label>
-          <select id="en-modelo" className="input" value={modeloSel} onChange={(e) => { setModeloSel(e.target.value); setRopaSel(""); }} disabled={!marcaSel}>
-            <option value="">— Modelo —</option>
-            {modelos.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select></div></div>
-        <div><div className="field"><label htmlFor="en-ropa">Talla</label>
-          <select id="en-ropa" className="input" value={ropaSel} onChange={(e) => setRopaSel(e.target.value)} disabled={!modeloSel}>
-            <option value="">— Talla —</option>
-            {tallasOpts.map((r) => <option key={String(r.id)} value={String(r.id)} disabled={Number(r.stock) <= 0}>T. {String(r.talla ?? "—")} · {String(r.codigo)} — stock {String(r.stock)}</option>)}
-          </select></div></div>
-        <div style={{ maxWidth: 130 }}><div className="field"><label htmlFor="en-cant">Cantidad</label>
-          <input id="en-cant" className="input" type="number" min={1} step={1} value={cant} onChange={(e) => setCant(e.target.value)} /></div></div>
-        <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 2 }}><button className="btn secondary" onClick={addLinea}>＋ Añadir</button></div>
-        <div className="full"><div className="field"><label htmlFor="en-notas">Notas de la entrega (opcional)</label>
-          <input id="en-notas" className="input" value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej. Equipación para el turno de noche" /></div></div>
+      <div className="form-grid" style={{ marginBottom: 14 }}>
+        <div className="field"><label htmlFor="en-centro">Centro de trabajo<span className="req">*</span></label>
+          <select id="en-centro" className={selCls} value={centroId} onChange={(e) => onChangeCentro(e.target.value)}>
+            <option value="">— Elige un centro —</option>
+            {centros.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
+          </select></div>
+        <div className="field"><label htmlFor="en-trab">Trabajador<span className="req">*</span></label>
+          <select id="en-trab" className={selCls} value={usuarioId} onChange={(e) => setUsuarioId(e.target.value)} disabled={!centroId}>
+            <option value="">{centroId ? (trabajadores.length ? "— Elige un trabajador —" : "Sin trabajadores en ese centro") : "Primero elige un centro"}</option>
+            {trabajadores.map((t) => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)} ({String(t.username)})</option>)}
+          </select></div>
+        <div className="field"><label htmlFor="en-fecha">Fecha de entrega</label>
+          <input id="en-fecha" className={selCls} type="date" value={fecha} onChange={(e) => setFecha(e.target.value || hoy())} /></div>
       </div>
-      {lineas.length > 0 && <table style={{ marginTop: 8 }}><thead><tr><th>Prenda</th><th>Marca</th><th>Modelo</th><th>Talla</th><th className="right">Cantidad</th><th className="right"></th></tr></thead>
-        <tbody>{lineas.map((l) => <tr key={l.ropaId}><td>{l.label}</td><td>{l.marca}</td><td>{l.modelo}</td><td>{l.talla ?? "—"}</td><td className="right">{l.cantidad}</td>
-          <td className="right"><button className="btn danger small" onClick={() => removeLinea(l.ropaId)}>✕ Quitar</button></td></tr>)}</tbody></table>}
-      <div className="modal-footer"><button className="btn" onClick={() => void registrar()} disabled={busy || !lineas.length}>{busy ? "Registrando…" : "Registrar entrega y generar informe"}</button></div>
-    </div>
-    {toast && <div className="banner" style={{ maxWidth: 720 }}>{toast}</div>}
-    {informe && <Modal title="Informe de entrega de ropa" subtitle={`${informe.fecha} · ${informe.operario}`} onClose={() => setInforme(null)}>
-      <div className="report">
-        <div className="report-head">
-          {empresa.logo ? <img src={empresa.logo} alt="Logo" className="report-logo" /> : <span className="report-logo placeholder">📦</span>}
-          <div><strong>{empresa.nombre ?? "Inventarios"}</strong><div className="report-sub">Informe de entrega de ropa de trabajo</div></div>
+      <div className="table-scroll">
+        <table className="entrega-table entrega-form">
+          <thead><tr>
+            <th>Prenda</th><th>Talla</th><th>A/V (si/No)</th><th>Auxiliar servicios (si/No)</th><th>Manga larga (si/no)</th><th>Color (indicar)</th>
+          </tr></thead>
+          <tbody>{PRENDAS.map((p) => {
+            const l = lineas[p];
+            const set = (patch: Partial<Linea>) => setLineas((prev) => ({ ...prev, [p]: { ...prev[p], ...patch } }));
+            return <tr key={p}>
+              <td><strong>{p}</strong></td>
+              <td><input className={selCls} value={l.talla} maxLength={40} placeholder="Ej. M, 42…" onChange={(e) => set({ talla: e.target.value })} /></td>
+              <td>{flagOpts(l.av, (v) => set({ av: v }))}</td>
+              <td>{flagOpts(l.aux, (v) => set({ aux: v }))}</td>
+              <td>{flagOpts(l.manga, (v) => set({ manga: v }))}</td>
+              <td><input className={selCls} value={l.color} maxLength={40} placeholder="Ej. Azul…" onChange={(e) => set({ color: e.target.value })} /></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+      <div className="modal-footer">
+        <button className="btn secondary" onClick={() => setLineas(Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()])) as Record<string, Linea>)}>Limpiar tabla</button>
+        <button className="btn" onClick={() => void guardar()} disabled={busy}>{busy ? "Guardando…" : "💾 Guardar entrega"}</button>
+      </div>
+    </div>}
+
+    <div className="card card-pad">
+      <div className="section-head"><h3>Entregas registradas</h3>
+        <div className="toolbar">
+          <select className={selCls} style={{ width: 170 }} value={regCentro} onChange={(e) => { setRegCentro(e.target.value); setRegOperario("all"); }}>
+            <option value="all">Todos los centros</option>
+            {centros.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
+          </select>
+          <select className={selCls} style={{ width: 190 }} value={regOperario} onChange={(e) => setRegOperario(e.target.value)}>
+            <option value="all">Todos los trabajadores</option>
+            {operariosOpts.map((o) => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+          </select>
         </div>
-        <table><tbody>
-          <tr><th>Operario</th><td>{informe.operario}</td></tr>
-          <tr><th>Fecha</th><td>{formatFecha(informe.fecha)}</td></tr>
-          <tr><th>Entregado por</th><td>{user.nombre}</td></tr>
-        </tbody></table>
-        <table style={{ marginTop: 10 }}><thead><tr><th>Marca</th><th>Modelo</th><th>Talla</th><th className="right">Cantidad</th></tr></thead>
-          <tbody>{informe.lineas.map((l) => <tr key={l.ropaId}><td>{l.marca}</td><td>{l.modelo}</td><td>{l.talla ?? "—"}</td><td className="right">{l.cantidad}</td></tr>)}
-          <tr><th>Total prendas</th><td></td><td></td><td className="right"><strong>{informe.lineas.reduce((s, l) => s + l.cantidad, 0)}</strong></td></tr></tbody></table>
-        <div className="firma-row"><div className="firma">Firma del operario</div><div className="firma">Firma de quien entrega</div></div>
       </div>
-      <div className="modal-footer print-hide">
-        <button className="btn secondary" onClick={() => setInforme(null)}>Cerrar</button>
-        <button className="btn" onClick={() => { document.body.classList.add("print-report"); window.print(); document.body.classList.remove("print-report"); }}>🖨️ Imprimir informe</button>
-      </div>
-    </Modal>}
+      {loading ? <div className="loading">Cargando…</div> : !grupos.length
+        ? <div className="empty"><span className="icon">👕</span><strong>No hay entregas registradas</strong><p>{regCentro !== "all" || regOperario !== "all" ? "Prueba con otros filtros." : "Rellena el formulario para registrar la primera entrega."}</p></div>
+        : grupos.map((g) => <div className="entrega-grupo" key={g.id}>
+            <div className="section-head" style={{ marginTop: 6 }}>
+              <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span aria-hidden="true">👷</span>{String(g.rows[0].usuario_nombre ?? `#${g.id}`)}
+                <span className="badge muted" style={{ fontWeight: 500 }}>{String(g.rows[0].centro_nombre ?? "—")}</span>
+              </h3>
+              <span className="muted" style={{ fontSize: 12.5 }}>{g.rows.length} prendas</span>
+            </div>
+            <div className="table-scroll">
+              <table className="entrega-table">
+                <thead><tr>
+                  <th>Prenda</th><th>Talla</th><th>A/V (si/No)</th><th>Auxiliar servicios (si/No)</th><th>Manga larga (si/no)</th><th>Color (indicar)</th><th>Fecha</th>
+                  {canWrite && <th className="right">Acciones</th>}
+                </tr></thead>
+                <tbody>{g.rows.map((r) => <tr key={String(r.id)}>
+                  <td>{String(r.prenda)}</td>
+                  <td>{r.talla == null ? "—" : String(r.talla)}</td>
+                  <td>{fmtFlag(r.alta_visibilidad)}</td>
+                  <td>{fmtFlag(r.auxiliar_servicios)}</td>
+                  <td>{fmtFlag(r.manga_larga)}</td>
+                  <td>{r.color == null ? "—" : String(r.color)}</td>
+                  <td>{String(r.fecha ?? "—").slice(0, 10).split("-").reverse().join("/")}</td>
+                  {canWrite && <td className="right"><div className="row-actions">
+                    <button className="btn secondary small" onClick={() => void editar(r)}>✏️ Editar</button>
+                    <button className="btn danger small" onClick={() => void borrar(r)}>🗑️ Borrar</button>
+                  </div></td>}
+                </tr>)}</tbody>
+              </table>
+            </div>
+          </div>)}
+    </div>
+    {toast && <Toast message={toast} kind="ok" onClose={() => setToast(null)} />}
   </>;
 }

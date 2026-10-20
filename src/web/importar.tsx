@@ -8,22 +8,20 @@ const MAX_ROWS = 500;
 
 const RECURSOS = [
   { key: "quimicos", endpoint: "/api/quimicos", label: "Productos químicos",
-    columns: ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_caducidad", "stock_minimo", "coste_unitario", "centro", "notas"] },
+    columns: ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_caducidad", "stock_minimo", "centro", "notas"] },
   { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza",
-    columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "coste_unitario", "centro", "notas"] },
+    columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "centro", "notas"] },
   { key: "maquinaria", endpoint: "/api/maquinaria", label: "Maquinaria",
     columns: ["nombre", "tipo", "marca", "modelo", "cantidad", "numero_serie", "estado", "centro", "notas"] },
   { key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo",
-    columns: ["codigo", "prenda", "marca", "fabricante", "modelo", "talla", "alta_visibilidad", "manga_larga", "descripcion", "color", "stock", "stock_minimo", "coste_unitario", "centro"] },
+    columns: ["codigo", "prenda", "marca", "fabricante", "modelo", "talla", "alta_visibilidad", "manga_larga", "descripcion", "color", "stock", "stock_minimo", "centro"] },
   { key: "epis", endpoint: "/api/epis", label: "EPIs",
-    columns: ["codigo", "marca", "modelo", "talla", "descripcion", "color", "stock", "stock_minimo", "fecha_revision", "coste_unitario", "centro"] },
+    columns: ["codigo", "marca", "modelo", "talla", "descripcion", "color", "stock", "stock_minimo", "fecha_revision", "centro"] },
   { key: "tallas_operarios", endpoint: "/api/tallas", label: "Tallas de operarios",
     columns: ["operario", "prenda", "talla", "notas"] },
-  { key: "entregas_ropa", endpoint: "/api/entregas", label: "Entregas de ropa",
-    columns: ["operario", "prenda", "cantidad", "fecha", "notas"] },
 ] as const;
 
-interface Catalogos { centros: Row[]; usuarios: Row[]; ropas: Row[]; }
+interface Catalogos { centros: Row[]; usuarios: Row[]; }
 
 function splitCsvLine(line: string): string[] {
   const out: string[] = []; let cur = ""; let inQ = false;
@@ -49,7 +47,6 @@ function toBool(v: string | undefined): number {
   const s = (v ?? "").toLowerCase().trim();
   return ["1", "true", "si", "sí", "s", "x", "verdadero"].includes(s) ? 1 : 0;
 }
-const hoy = () => new Date().toISOString().slice(0, 10);
 
 /** Resuelve un identificador por id, código o nombre (insensible a mayúsculas). */
 function resolver(valor: string, filas: Row[], claves: string[]): Row | undefined {
@@ -94,7 +91,6 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       }
       out.marca = g("marca") ?? null;
       out.stock_minimo = id("stock_minimo") ?? 0;
-      out.coste_unitario = id("coste_unitario");
       out.centro_id = centro();
       out.notas = g("notas") ?? null;
       if (out.centro_id === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
@@ -130,7 +126,6 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       out.marca = g("marca") ?? null; out.modelo = g("modelo") ?? null;
       out.talla = g("talla") ?? null; out.color = g("color") ?? null;
       out.stock_minimo = id("stock_minimo") ?? 0;
-      out.coste_unitario = id("coste_unitario");
       out.centro_id = centro();
       if (out.centro_id === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
       return out;
@@ -141,20 +136,6 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       const prenda = g("prenda"); if (!prenda) return fallo(fila, "falta la columna 'prenda'");
       const talla = g("talla"); if (!talla) return fallo(fila, "falta la columna 'talla'");
       return { usuario_id: operarioId, prenda, talla, notas: g("notas") ?? null };
-    }
-    case "entregas_ropa": {
-      const operarioId = operario(); if (operarioId === null) return fallo(fila, "falta la columna 'operario'");
-      if (operarioId === -1) return fallo(fila, `el operario «${g("operario")}» no existe`);
-      const prendaRef = g("prenda"); if (!prendaRef) return fallo(fila, "falta la columna 'prenda' (código o id de la prenda)");
-      const prenda = resolver(prendaRef, cat.ropas, ["codigo", "id"]);
-      if (!prenda) return fallo(fila, `la prenda «${prendaRef}» no existe`);
-      const cantidad = id("cantidad"); if (cantidad === null || cantidad < 1) return fallo(fila, "'cantidad' debe ser un entero ≥ 1");
-      const fecha = g("fecha");
-      return {
-        usuario_id: operarioId, ropa_id: Number(prenda.id), cantidad,
-        fecha: fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : hoy(),
-        notas: g("notas") ?? null,
-      };
     }
     default: return "recurso no soportado";
   }
@@ -168,7 +149,7 @@ export function ImportarPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cat, setCat] = useState<Catalogos>({ centros: [], usuarios: [], ropas: [] });
+  const [cat, setCat] = useState<Catalogos>({ centros: [], usuarios: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
 
@@ -183,11 +164,10 @@ export function ImportarPage() {
   useEffect(() => { setRows([]); setErroresParse([]); setError(null); setDone(null); }, [recurso]);
 
   const ensureCat = useCallback(async (): Promise<Catalogos> => {
-    const needUsers = cfg.key === "tallas_operarios" || cfg.key === "entregas_ropa";
+    const needUsers = cfg.key === "tallas_operarios";
     const next: Catalogos = { ...cat };
     if (!next.centros.length) next.centros = (await api.get<{ items: Row[] }>("/api/centros")).items;
     if (needUsers && !next.usuarios.length) next.usuarios = (await api.get<{ items: Row[] }>("/api/usuarios")).items;
-    if (cfg.key === "entregas_ropa" && !next.ropas.length) next.ropas = (await api.get<{ items: Row[] }>("/api/ropa-trabajo")).items;
     setCat(next);
     return next;
   }, [cat, cfg.key]);
@@ -220,13 +200,12 @@ export function ImportarPage() {
 
   const plantilla = () => {
     const ejemplos: Record<string, string[]> = {
-      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2027-06-30", "3", "18,50", "Planta Norte", ""],
-      material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "4,20", "Planta Norte", ""],
+      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2027-06-30", "3", "Planta Norte", ""],
+      material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "Planta Norte", ""],
       maquinaria: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "2", "F80-0012", "Operativa", "Planta Norte", ""],
-      ropa_trabajo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "29,90", "Planta Norte"],
-      epis: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "2,50", "Planta Norte"],
+      ropa_trabajo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "Planta Norte"],
+      epis: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "Planta Norte"],
       tallas_operarios: ["operario", "Chaqueta", "L", "Prefiere talla M"],
-      entregas_ropa: ["operario", "RT-001", "2", hoy(), "Equipación turno de noche"],
     };
     const csv = [cfg.columns.join(","), (ejemplos[cfg.key] ?? []).join(",")].join("\n");
     const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));

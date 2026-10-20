@@ -1,12 +1,12 @@
 import type { CrudSpec } from "./crud";
 import { createCrud, ValidationError, hashPasswordField } from "./crud";
 import { requireAuth } from "./auth";
-import { logMovimiento, movimientosSpec } from "./movimientos";
+import { movimientosSpec } from "./movimientos";
 
 export const COLORES = ["Rojo", "Azul", "Verde", "Amarillo", "Blanco", "Negro", "Naranja", "Morado", "Gris", "Marrón", "Otro"];
 export const TIPOS_MAQUINARIA = ["Fregadora", "Aspiradora", "Monobrocha", "Hidrolavadora", "Barredora", "Robot", "Carro de limpieza", "Otro"];
 export const ESTADOS_MAQUINARIA = ["Operativa", "En reparación", "Averiada", "Baja"];
-export const ROLES = ["admin", "usuario"];
+export const ROLES = ["admin", "admin_centros", "usuario"];
 const centro = { name: "centro_id", label: "Centro", type: "integer" as const, required: false, placeholder: "Sin centro asignado" };
 const notas = { name: "notas", label: "Notas", type: "textarea" as const, required: false, maxLength: 2000 };
 // Foto en base64 (el cliente la recimensiona antes de enviarla).
@@ -25,7 +25,6 @@ export const quimicosSpec: CrudSpec = {
     { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true, min: 0 },
     { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: true },
     stockMinimo, centro, notas, foto,
-    { name: "coste_unitario", label: "Coste por garrafa (€)", type: "number", required: false, min: 0 },
   ],
 };
 export const materialSpec: CrudSpec = {
@@ -37,7 +36,6 @@ export const materialSpec: CrudSpec = {
     { name: "color", label: "Color", type: "enum", required: true, enumValues: COLORES },
     { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true, min: 0 },
     stockMinimo, centro, notas, foto,
-    { name: "coste_unitario", label: "Coste por unidad (€)", type: "number", required: false, min: 0 },
   ],
 };
 export const maquinariaSpec: CrudSpec = {
@@ -61,7 +59,7 @@ export const maquinariaSpec: CrudSpec = {
   },
 };
 export const centrosSpec: CrudSpec = {
-  table: "centros", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "centros", orderBy: "id", read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "nombre", label: "Nombre del centro", type: "text", required: true, unique: true, maxLength: 120 },
     { name: "direccion", label: "Dirección", type: "text", required: false, maxLength: 200 },
@@ -96,10 +94,11 @@ export const usuariosSpec: CrudSpec = {
     if (Number(row.id) === user.id) return "No puedes eliminar tu propia cuenta";
     const n = await db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?").bind(Number(row.id)).first();
     if (n && Number(n.n) > 0) await db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(Number(row.id)).run();
-    // Limpia tallas, centros asignados e historial de entregas del operario eliminado.
+    // Limpia tallas, centros asignados y la auditoría que tenía como autor
+    // (movimientos.usuario_id es FK a usuarios: sin esto el borrado viola la clave).
+    await db.prepare("DELETE FROM movimientos WHERE usuario_id = ?").bind(Number(row.id)).run();
     await db.prepare("DELETE FROM tallas_operarios WHERE usuario_id = ?").bind(Number(row.id)).run();
     await db.prepare("DELETE FROM usuario_centros WHERE usuario_id = ?").bind(Number(row.id)).run();
-    await db.prepare("DELETE FROM ropa_entregas WHERE usuario_id = ?").bind(Number(row.id)).run();
     return null;
   },
 };
@@ -116,7 +115,7 @@ export const episSpec: CrudSpec = {
     { name: "stock", label: "Stock", type: "integer", required: true, min: 0 },
     stockMinimo,
     { name: "fecha_revision", label: "Próxima revisión", type: "date", required: false },
-    { name: "coste_unitario", label: "Coste por unidad (€)", type: "number", required: false, min: 0 }, centro,
+    centro,
   ],
 };
 // ---- Ropa de trabajo de los centros ----
@@ -135,13 +134,8 @@ export const ropaSpec: CrudSpec = {
     { name: "color", label: "Color", type: "enum", required: false, enumValues: COLORES },
     { name: "stock", label: "Stock", type: "integer", required: true, min: 0 },
     stockMinimo,
-    { name: "coste_unitario", label: "Coste por unidad (€)", type: "number", required: false, min: 0 }, centro,
+    centro,
   ],
-  beforeDelete: async (db, _user, row) => {
-    const n = await db.prepare("SELECT COUNT(*) AS n FROM ropa_entregas WHERE ropa_id = ?").bind(Number(row.id)).first();
-    if (n && Number(n.n) > 0) return `No se puede eliminar: hay ${n.n} entregas registradas de esta prenda`;
-    return null;
-  },
 };
 // ---- Talla de cada operario ----
 export const tallasSpec: CrudSpec = {
@@ -155,53 +149,6 @@ export const tallasSpec: CrudSpec = {
   beforeWrite: async (_db, data) => {
     if (!data.fecha) data.fecha = new Date().toISOString().slice(0, 10);
     return data;
-  },
-};
-// ---- Historial de ropa entregada a cada operario ----
-export const entregasSpec: CrudSpec = {
-  table: "ropa_entregas", orderBy: "id", refUsuario: true,
-  extraJoins: [" LEFT JOIN ropa_trabajo r ON r.id = t.ropa_id", " LEFT JOIN usuarios p ON p.id = t.entregado_por"],
-  extraSelect: ["r.prenda AS ropa_prenda", "r.codigo AS ropa_codigo", "r.marca AS ropa_marca", "r.modelo AS ropa_modelo", "r.talla AS ropa_talla", "r.coste_unitario AS ropa_coste", "p.nombre AS entregado_por_nombre"],
-  extraSearchCols: ["u.nombre", "r.prenda", "r.codigo"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
-  fields: [
-    { name: "usuario_id", label: "Operario", type: "integer", required: true, min: 1 },
-    { name: "ropa_id", label: "Prenda de ropa", type: "integer", required: true, min: 1 },
-    { name: "cantidad", label: "Cantidad", type: "integer", required: true, min: 1 },
-    { name: "fecha", label: "Fecha de entrega", type: "date", required: false, placeholder: "Hoy si se deja en blanco" },
-    { name: "notas", label: "Notas", type: "textarea", required: false, maxLength: 2000 },
-  ],
-  // La entrega descuenta stock de la prenda; editar o borrar la entrega
-  // ajusta el stock de forma simétrica.
-  beforeWrite: async (db, data, mode, existing) => {
-    const toInt = (v: unknown): number => Number(v ?? 0);
-    if (mode === "insert" && !data.fecha) data.fecha = new Date().toISOString().slice(0, 10);
-    const oldRopa = existing ? toInt(existing.ropa_id) : 0;
-    const oldCant = existing ? toInt(existing.cantidad) : 0;
-    const newRopa = toInt(data.ropa_id), newCant = toInt(data.cantidad);
-    if (mode === "update" && existing && (oldRopa !== newRopa || oldCant !== newCant)) {
-      await db.prepare("UPDATE ropa_trabajo SET stock = stock + ?, updated_at = datetime('now') WHERE id = ?").bind(oldCant, oldRopa).run();
-    }
-    if (mode === "insert" || (mode === "update" && existing && (oldRopa !== newRopa || oldCant !== newCant))) {
-      const stock = await db.prepare("SELECT stock FROM ropa_trabajo WHERE id = ?").bind(newRopa).first();
-      if (!stock) throw new ValidationError("La prenda de ropa seleccionada no existe");
-      if (Number(stock.stock) < newCant) throw new ValidationError(`Stock insuficiente: quedan ${Number(stock.stock)} uds. de esa prenda`);
-      await db.prepare("UPDATE ropa_trabajo SET stock = stock - ?, updated_at = datetime('now') WHERE id = ?").bind(newCant, newRopa).run();
-    }
-    return data;
-  },
-  beforeDelete: async (db, _user, row) => {
-    await db.prepare("UPDATE ropa_trabajo SET stock = stock + ?, updated_at = datetime('now') WHERE id = ?").bind(Number(row.cantidad), Number(row.ropa_id)).run();
-    return null;
-  },
-  afterWrite: async (db, user, row, mode) => {
-    const costeUnit = Number(row.ropa_coste ?? 0) || 0;
-    const coste = Number((costeUnit * Number(row.cantidad || 0)).toFixed(2));
-    await logMovimiento(db, user, mode === "insert" ? "entrega" : "entrega_editada", "ropa_trabajo", Number(row.ropa_id) || null,
-      `${String(row.ropa_prenda ?? "Prenda")} → ${String(row.usuario_nombre ?? "operario")} (#${row.id})`, Number(row.cantidad) || null, coste, null);
-  },
-  afterDelete: async (db, user, row) => {
-    await logMovimiento(db, user, "entrega_anulada", "ropa_trabajo", Number(row.ropa_id) || null, `Entrega #${row.id} anulada`, Number(row.cantidad) || null);
   },
 };
 export const centrosSpecForDelete: CrudSpec = {
@@ -222,7 +169,6 @@ export const usuarios = createCrud(usuariosSpec);
 export const epis = createCrud(episSpec);
 export const ropa = createCrud(ropaSpec);
 export const tallas = createCrud(tallasSpec);
-export const entregas = createCrud(entregasSpec);
 // ---- Tipos de maquinaria (CRUD gestionado) ----
 export const tiposSpec: CrudSpec = {
   table: "tipos_maquinaria", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
@@ -243,47 +189,20 @@ export const tiposSpec: CrudSpec = {
     return null;
   },
 };
-// ---- Puntos de consumo (centro → zona → subzona, con su producto) ----
-export const puntosSpec: CrudSpec = {
-  table: "puntos_consumo", orderBy: "id", refCentro: true,
-  extraJoins: [
-    " LEFT JOIN quimicos q ON q.id = t.producto_id AND t.producto_tipo = 'quimicos'",
-    " LEFT JOIN material_limpieza m ON m.id = t.producto_id AND t.producto_tipo = 'material_limpieza'",
-  ],
-  extraSelect: [
-    "(t.producto_tipo || ':' || t.producto_id) AS producto",
-    "COALESCE(q.nombre, m.nombre) AS producto_nombre",
-    "COALESCE(q.num_garrafas, m.cantidad) AS producto_stock",
-    "q.numero_lote AS producto_lote", "m.color AS producto_color",
-    "COALESCE((SELECT s2.nombre FROM subzonas s2 WHERE s2.id = t.subzona_id), t.subzona) AS subzona_nombre",
-    "(SELECT z2.nombre FROM zonas z2 WHERE z2.id = (SELECT s3.zona_id FROM subzonas s3 WHERE s3.id = t.subzona_id)) AS zona_nombre",
-  ],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+// ---- Soportes (dónde se instala una estación de consumo) ----
+export const soportesSpec: CrudSpec = {
+  table: "soportes", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
-    { name: "nombre", label: "Nombre del punto", type: "text", required: true, maxLength: 120 },
-    centro,
-    { name: "subzona_id", label: "Subzona (de «Zonas y subzonas»)", type: "integer", required: false, min: 1 },
-    { name: "producto", label: "Producto del punto", type: "text", required: true, maxLength: 60, writeOnly: true, placeholder: "quimicos:1" },
+    { name: "nombre", label: "Nombre del soporte", type: "text", required: true, unique: true, maxLength: 80 },
   ],
-  beforeWrite: async (db, data) => {
-    if (data.subzona_id !== undefined && data.subzona_id !== null && data.subzona_id !== "") {
-      const s = await db.prepare("SELECT id FROM subzonas WHERE id = ?").bind(Number(data.subzona_id)).first();
-      if (!s) throw new ValidationError("La subzona seleccionada no existe");
-    }
-    if (typeof data.producto === "string") {
-      const [tipo, idStr] = data.producto.split(":");
-      const id = Number(idStr);
-      if (!(tipo === "quimicos" || tipo === "material_limpieza") || !Number.isInteger(id) || id < 1) {
-        throw new ValidationError("El producto del punto no es válido");
-      }
-      const tabla = tipo === "quimicos" ? "quimicos" : "material_limpieza";
-      const row = await db.prepare(`SELECT id FROM ${tabla} WHERE id = ?`).bind(id).first();
-      if (!row) throw new ValidationError("El producto seleccionado no existe");
-      data.producto_tipo = tipo; data.producto_id = id;
-      delete data.producto;
-    }
-    return data;
-  },
+};
+// ---- Tipos de consumible (qué artículo consume cada estación) ----
+export const consumiblesTiposSpec: CrudSpec = {
+  table: "consumibles_tipos", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
+  fields: [
+    { name: "nombre", label: "Nombre del tipo", type: "text", required: true, unique: true, maxLength: 80 },
+    { name: "articulo_tipo", label: "Tipo de artículo", type: "enum", required: true, enumValues: ["quimicos", "material_limpieza", "epis", "ropa_trabajo", "maquinaria"] },
+  ],
 };
 // ---- Zonas y subzonas por centro ----
 export const zonasSpec: CrudSpec = {
@@ -301,6 +220,11 @@ export const zonasSpec: CrudSpec = {
       }
     }
     return data;
+  },
+  beforeDelete: async (db, _user, row) => {
+    const n = await db.prepare("SELECT (SELECT COUNT(*) FROM subzonas WHERE zona_id = ?) + (SELECT COUNT(*) FROM estaciones WHERE zona_id = ?) AS n").bind(Number(row.id), Number(row.id)).first();
+    if (n && Number(n.n) > 0) return `No se puede eliminar: ${n.n} subzonas o estaciones usan esta zona`;
+    return null;
   },
 };
 export const subzonasSpec: CrudSpec = {
@@ -321,8 +245,8 @@ export const subzonasSpec: CrudSpec = {
     return data;
   },
   beforeDelete: async (db, _user, row) => {
-    const n = await db.prepare("SELECT COUNT(*) AS n FROM puntos_consumo WHERE subzona_id = ?").bind(Number(row.id)).first();
-    if (n && Number(n.n) > 0) return `No se puede eliminar: ${n.n} puntos de consumo usan esta subzona`;
+    const n = await db.prepare("SELECT COUNT(*) AS n FROM estaciones WHERE subzona_id = ?").bind(Number(row.id)).first();
+    if (n && Number(n.n) > 0) return `No se puede eliminar: ${n.n} estaciones usan esta subzona`;
     return null;
   },
 };
@@ -349,33 +273,6 @@ usuarios.put("/:id/centros", requireAuth, async (c) => {
   return c.json({ ok: true, centros: ids });
 });
 export const tipos = createCrud(tiposSpec);
-// Punto de consumo: al escanear su QR se descuenta 1 unidad del producto.
-export const puntos = createCrud(puntosSpec);
-puntos.post("/:id/consumir", requireAuth, async (c) => {
-  const id = Number(c.req.param("id"));
-  const p = await c.env.DB.prepare(`SELECT p.nombre, p.zona, p.subzona, p.producto_tipo, p.producto_id,
-    (SELECT s.nombre FROM subzonas s WHERE s.id = p.subzona_id) AS subzona_nombre,
-    (SELECT z.nombre FROM zonas z WHERE z.id = (SELECT s2.zona_id FROM subzonas s2 WHERE s2.id = p.subzona_id)) AS zona_nombre
-    FROM puntos_consumo p WHERE p.id = ?`).bind(id).first();
-  if (!p) return c.json({ error: "Punto de consumo no encontrado" }, 404);
-  let body: { cantidad?: unknown };
-  try { body = await c.req.json(); } catch { body = {}; }
-  const cantidad = body.cantidad === undefined ? 1 : Number(body.cantidad);
-  if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 100) return c.json({ error: "La cantidad debe ser un número entero entre 1 y 100" }, 400);
-  const tipo = String(p.producto_tipo), productoId = Number(p.producto_id);
-  const tabla = tipo === "quimicos" ? "quimicos" : "material_limpieza";
-  const columna = tipo === "quimicos" ? "num_garrafas" : "cantidad";
-  const upd = await c.env.DB.prepare(
-    `UPDATE ${tabla} SET ${columna} = ${columna} - ?, updated_at = datetime('now') WHERE id = ? AND ${columna} >= ?`,
-  ).bind(cantidad, productoId, cantidad).run();
-  if (Number((upd.meta as { changes?: number }).changes ?? 0) === 0) {
-    const row = await c.env.DB.prepare(`SELECT ${columna} AS stock FROM ${tabla} WHERE id = ?`).bind(productoId).first();
-    const restantes = Number(row?.stock ?? 0);
-    return c.json({ error: `Stock insuficiente: queda${restantes === 1 ? "" : "n"} ${restantes}` }, 400);
-  }
-  const prod = await c.env.DB.prepare(`SELECT id, nombre, ${columna} AS stock, coste_unitario FROM ${tabla} WHERE id = ?`).bind(productoId).first();
-  const ubicacion = [p.nombre, p.zona_nombre ?? p.zona, p.subzona_nombre ?? p.subzona].filter(Boolean).join(" · ");
-  const coste = Number(((Number(prod?.coste_unitario ?? 0) || 0) * cantidad).toFixed(2));
-  await logMovimiento(c.env.DB, c.get("user"), "consumo", tabla, productoId, `${String(prod?.nombre ?? "Producto")} → punto ${ubicacion}`, cantidad, coste, null);
-  return c.json({ ok: true, item: prod, mensaje: `Descontada${cantidad === 1 ? "" : "s"} ${cantidad} unidad${cantidad === 1 ? "" : "es"} en ${ubicacion}` });
-});
+// ---- Soportes y tipos de consumible (listas gestionadas de estaciones) ----
+export const soportes = createCrud(soportesSpec);
+export const consumiblesTipos = createCrud(consumiblesTiposSpec);

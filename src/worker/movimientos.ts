@@ -1,42 +1,31 @@
 import { Hono } from "hono";
 import type { CrudSpec } from "./crud";
-import type { Env, D1Database } from "./d1";
+import type { Env } from "./d1";
 import type { Variables } from "./types";
-import type { SessionUser } from "./auth";
 import { requireAuth, requireAdmin } from "./auth";
+import { logMovimiento } from "./audit";
 
-// Registro de auditoría: quién consumió, entregó o ajustó qué, cuándo y a qué coste.
-export async function logMovimiento(
-  db: D1Database,
-  user: SessionUser,
-  accion: string,
-  tabla: string | null,
-  registroId: number | null,
-  descripcion: string,
-  cantidad: number | null,
-  coste: number | null = null,
-  motivo: string | null = null,
-): Promise<void> {
-  await db.prepare(
-    "INSERT INTO movimientos (usuario_id, accion, tabla, registro_id, descripcion, cantidad, coste, motivo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(user.id, accion, tabla, registroId, descripcion, cantidad, coste, motivo).run();
-}
-
+// Auditoría: quién consumió o ajustó qué, cuándo y con qué cantidad.
+// (Sin costes: solo interesa la cantidad de producto consumida.)
+export { logMovimiento };
 export const movimientosSpec: CrudSpec = {
-  table: "movimientos", orderBy: "id", refUsuario: true,
-  extraSelect: ["t.accion", "t.tabla", "t.registro_id", "t.descripcion", "t.cantidad", "t.coste", "t.motivo"],
+  table: "movimientos", orderBy: "id", refUsuario: true, noAudit: true,
+  extraSelect: ["t.accion", "t.tabla", "t.registro_id", "t.estacion_id", "t.descripcion", "t.cantidad", "t.motivo"],
   extraSearchCols: ["t.accion", "t.descripcion", "t.motivo"],
   read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [],
 };
 
-// Recursos con stock que admiten entrada/salida/ajuste manual.
-const STOCK: Record<string, { tabla: string; columna: string; nombre: string }> = {
+// Recursos con stock que admiten entrada/salida/ajuste manual y consumo en
+// estaciones: la clave es el tipo de artículo (`articulo_tipo` de estaciones).
+export const STOCK_TABLA: Record<string, { tabla: string; columna: string; nombre: string }> = {
   quimicos: { tabla: "quimicos", columna: "num_garrafas", nombre: "químico" },
-  material_limpieza: { tabla: "material_limpieza", columna: "cantidad", nombre: "material" },
+  material_limpieza: { tabla: "material_limpieza", columna: "cantidad", nombre: "material de limpieza" },
   epis: { tabla: "epis", columna: "stock", nombre: "EPI" },
   ropa_trabajo: { tabla: "ropa_trabajo", columna: "stock", nombre: "prenda" },
+  maquinaria: { tabla: "maquinaria", columna: "cantidad", nombre: "máquina" },
 };
+const STOCK = STOCK_TABLA;
 
 // Entradas, salidas y ajustes de stock (solo administradores).
 export const movimientosRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -53,9 +42,8 @@ export const movimientosRoutes: Hono<{ Bindings: Env; Variables: Variables }> = 
     if (!Number.isInteger(id) || id < 1) return c.json({ error: "Registro no válido" }, 400);
     if (!Number.isInteger(cantidad) || cantidad < 0 || (tipo !== "ajuste" && cantidad < 1)) return c.json({ error: "La cantidad debe ser un número entero válido" }, 400);
     const motivo = typeof body.motivo === "string" && body.motivo.trim() ? body.motivo.trim().slice(0, 300) : null;
-    const item = await c.env.DB.prepare(`SELECT nombre, coste_unitario FROM ${target.tabla} WHERE id = ?`).bind(id).first();
+    const item = await c.env.DB.prepare(`SELECT nombre FROM ${target.tabla} WHERE id = ?`).bind(id).first();
     if (!item) return c.json({ error: "Registro no encontrado" }, 404);
-    const costeUnit = Number(item.coste_unitario ?? 0) || 0;
     if (tipo === "ajuste") {
       await c.env.DB.prepare(`UPDATE ${target.tabla} SET ${target.columna} = ?, updated_at = datetime('now') WHERE id = ?`).bind(cantidad, id).run();
     } else {
@@ -68,7 +56,6 @@ export const movimientosRoutes: Hono<{ Bindings: Env; Variables: Variables }> = 
       }
     }
     const row = await c.env.DB.prepare(`SELECT ${target.columna} AS stock FROM ${target.tabla} WHERE id = ?`).bind(id).first();
-    const coste = tipo === "ajuste" ? null : Number((costeUnit * cantidad).toFixed(2));
-    await logMovimiento(c.env.DB, c.get("user"), tipo, target.tabla, id, `${String(item.nombre)} (${target.nombre})`, tipo === "ajuste" ? null : cantidad, coste, motivo);
+    await logMovimiento(c.env.DB, c.get("user"), tipo, target.tabla, id, `${String(item.nombre)} (${target.nombre})`, tipo === "ajuste" ? null : cantidad, motivo);
     return c.json({ ok: true, stock: row?.stock ?? null, mensaje: `Movimiento registrado. Stock actual: ${Number(row?.stock ?? 0)}` });
   });

@@ -4,7 +4,7 @@ import { ColorSwatch, Field, Modal, Toast, diasHasta, downloadCsv, formatFecha, 
 import { QrModal } from "./qr";
 
 type Row = Record<string, unknown>;
-type Permission = "all" | "admin";
+type Permission = "all" | "admin" | "centros";
 type Column = { key: string; label: string; align?: "right"; render?: (row: Row) => ReactNode; csv?: (row: Row) => string | number };
 export interface ResourceConfig {
   title: string; subtitle: string; endpoint: string; csvName: string; searchKeys: string[]; centroFilter?: boolean;
@@ -18,7 +18,7 @@ export interface ResourceConfig {
   // Columna con botones de asignación de 1 o varios centros (Usuarios).
   centrosToggle?: boolean;
 }
-const allow = (role: string, p: Permission) => p === "all" || role === "admin";
+const allow = (role: string, p: Permission) => p === "all" || role === "admin" || (p === "centros" && role === "admin_centros");
 const center = { name: "centro_id", label: "Centro", type: "select" as const };
 const notes = { name: "notas", label: "Notas", type: "textarea" as const };
 const colors = ["Rojo", "Azul", "Verde", "Amarillo", "Blanco", "Negro", "Naranja", "Morado", "Gris", "Marrón", "Otro"];
@@ -33,14 +33,14 @@ const fotoCol = (endpoint: string): Column => ({ key: "foto", label: "Foto", ren
 // Badge de próxima revisión de EPI (verde, ámbar a 30 días, rojo si caducada).
 const revisionBadge = (r: Row) => { const f = r.fecha_revision; if (typeof f !== "string" || f.length < 10) return "—"; const n = diasHasta(f); const cls = n === null ? "" : n < 0 ? "danger" : n <= 30 ? "warn" : "ok"; const text = n !== null && n < 0 ? `Caducada (${formatFecha(f)})` : formatFecha(f); return cls ? <span className={`badge ${cls}`}>{text}</span> : text; };
 export const QUIMICOS: ResourceConfig = {
-  title: "Productos químicos", subtitle: "Lote, litros por garrafa, número de garrafas y fecha de caducidad", endpoint: "/api/quimicos", csvName: "quimicos", searchKeys: ["nombre", "numero_lote", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" }, qrTipo: "quimicos",
-  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Producto", type: "text", required: true }, { name: "numero_lote", label: "Nº de lote", type: "text", required: true }, { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true }, { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true }, { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: true }, center, notes, stockMin, fotoField, { name: "coste_unitario", label: "Coste por garrafa (€)", type: "number" }],
-  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Producto" }, { key: "numero_lote", label: "Lote" }, { key: "litros_por_garrafa", label: "L/garrafa", align: "right", render: r => formatNum(r.litros_por_garrafa, 2) }, { key: "num_garrafas", label: "Garrafas", align: "right", render: r => stockCell(r, "num_garrafas") }, { key: "total_litros", label: "Total litros", align: "right", render: r => <strong>{formatNum(r.total_litros, 2)}</strong> }, { key: "coste_unitario", label: "Coste/ud. (€)", align: "right", render: r => r.coste_unitario == null ? "—" : formatNum(r.coste_unitario, 2) }, { key: "fecha_caducidad", label: "Caducidad", render: dateBadge }, centerCol, fotoCol("/api/quimicos")],
+  title: "Productos químicos", subtitle: "Lote, litros por garrafa, número de garrafas y fecha de caducidad", endpoint: "/api/quimicos", csvName: "quimicos", searchKeys: ["nombre", "numero_lote", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Producto", type: "text", required: true }, { name: "numero_lote", label: "Nº de lote", type: "text", required: true }, { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true }, { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true }, { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: true }, center, notes, stockMin, fotoField],
+  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Producto" }, { key: "numero_lote", label: "Lote" }, { key: "litros_por_garrafa", label: "L/garrafa", align: "right", render: r => formatNum(r.litros_por_garrafa, 2) }, { key: "num_garrafas", label: "Garrafas", align: "right", render: r => stockCell(r, "num_garrafas") }, { key: "total_litros", label: "Total litros", align: "right", render: r => <strong>{formatNum(r.total_litros, 2)}</strong> }, { key: "fecha_caducidad", label: "Caducidad", render: dateBadge }, centerCol, fotoCol("/api/quimicos")],
 };
 export const MATERIAL: ResourceConfig = {
-  title: "Material de limpieza", subtitle: "Segregado por colores (código de zona de uso)", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["nombre", "color", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" }, qrTipo: "material_limpieza",
-  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Material", type: "text", required: true }, { name: "color", label: "Color", type: "enum", required: true, enumValues: colors }, { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true }, center, notes, stockMin, fotoField, { name: "coste_unitario", label: "Coste por unidad (€)", type: "number" }],
-  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Material" }, { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> }, { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") }, { key: "coste_unitario", label: "Coste/ud. (€)", align: "right", render: r => r.coste_unitario == null ? "—" : formatNum(r.coste_unitario, 2) }, centerCol, { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") }, fotoCol("/api/material-limpieza")],
+  title: "Material de limpieza", subtitle: "Segregado por colores (código de zona de uso)", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["nombre", "color", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Material", type: "text", required: true }, { name: "color", label: "Color", type: "enum", required: true, enumValues: colors }, { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true }, center, notes, stockMin, fotoField],
+  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Material" }, { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> }, { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") }, centerCol, { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") }, fotoCol("/api/material-limpieza")],
 };
 export const MAQUINARIA: ResourceConfig = {
   title: "Maquinaria de limpieza", subtitle: "Segregada por tipo de máquina", endpoint: "/api/maquinaria", csvName: "maquinaria", searchKeys: ["nombre", "tipo", "estado", "numero_serie", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -49,14 +49,14 @@ export const MAQUINARIA: ResourceConfig = {
   columns: [{ key: "nombre", label: "Máquina" }, { key: "tipo", label: "Tipo" }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "modelo", label: "Modelo", render: r => String(r.modelo ?? "—") }, { key: "cantidad", label: "Unidades", align: "right", render: r => formatNum(r.cantidad) }, { key: "numero_serie", label: "Nº de serie", render: r => String(r.numero_serie ?? "—") }, { key: "estado", label: "Estado", render: r => <span className={`badge ${r.estado === "Operativa" ? "ok" : r.estado === "En reparación" ? "warn" : r.estado === "Averiada" ? "danger" : "muted"}`}>{String(r.estado ?? "—")}</span> }, centerCol, fotoCol("/api/maquinaria")],
 };
 export const CENTROS: ResourceConfig = {
-  title: "Centros", subtitle: "Plantas o ubicaciones donde se guarda el material", endpoint: "/api/centros", csvName: "centros", searchKeys: ["nombre", "ciudad", "responsable", "direccion"], perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  title: "Centros", subtitle: "Plantas o ubicaciones donde se guarda el material", endpoint: "/api/centros", csvName: "centros", searchKeys: ["nombre", "ciudad", "responsable", "direccion"], perms: { read: "all", create: "centros", update: "centros", delete: "centros" },
   fields: [{ name: "nombre", label: "Nombre del centro", type: "text", required: true }, { name: "direccion", label: "Dirección", type: "text" }, { name: "ciudad", label: "Ciudad", type: "text" }, { name: "responsable", label: "Responsable", type: "text" }, { name: "telefono", label: "Teléfono", type: "text" }],
   columns: [{ key: "nombre", label: "Centro" }, ...["direccion", "ciudad", "responsable", "telefono"].map(key => ({ key, label: key[0].toUpperCase() + key.slice(1), render: (r: Row) => String(r[key] ?? "—") }))],
 };
 export const USUARIOS: ResourceConfig = {
   title: "Usuarios", subtitle: "Administradores y usuarios de la aplicación", endpoint: "/api/usuarios", csvName: "usuarios", searchKeys: ["username", "nombre", "email", "centros_nombre"], perms: { read: "admin", create: "admin", update: "admin", delete: "admin" }, centrosToggle: true,
-  fields: [{ name: "username", label: "Usuario (login)", type: "text", required: true }, { name: "nombre", label: "Nombre completo", type: "text", required: true }, { name: "email", label: "Email", type: "text" }, { name: "password", label: "Contraseña", type: "password", writeOnly: true, help: "Al crear es obligatoria (mínimo 6 caracteres); al editar, en blanco la conserva." }, { name: "rol", label: "Rol", type: "enum", required: true, enumValues: ["admin", "usuario"] }, { name: "activo", label: "Usuario activo", type: "boolean" }],
-  columns: [{ key: "username", label: "Login" }, { key: "nombre", label: "Nombre" }, { key: "email", label: "Email", render: r => String(r.email ?? "—") }, { key: "rol", label: "Rol", render: r => <span className={`badge ${r.rol === "admin" ? "info" : "muted"}`}>{r.rol === "admin" ? "Administrador" : "Usuario"}</span> }, { key: "activo", label: "Estado", render: r => Number(r.activo) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Desactivado</span> }, { key: "centros_nombre", label: "Centros asignados", render: r => String(r.centros_nombre ?? "—") }],
+  fields: [{ name: "username", label: "Usuario (login)", type: "text", required: true }, { name: "nombre", label: "Nombre completo", type: "text", required: true }, { name: "email", label: "Email", type: "text" }, { name: "password", label: "Contraseña", type: "password", writeOnly: true, help: "Al crear es obligatoria (mínimo 6 caracteres); al editar, en blanco la conserva." }, { name: "rol", label: "Rol", type: "select", required: true, options: [{ value: "admin", label: "Administrador" }, { value: "admin_centros", label: "Administrador de centros" }, { value: "usuario", label: "Usuario" }] }, { name: "activo", label: "Usuario activo", type: "boolean" }],
+  columns: [{ key: "username", label: "Login" }, { key: "nombre", label: "Nombre" }, { key: "email", label: "Email", render: r => String(r.email ?? "—") }, { key: "rol", label: "Rol", render: r => <span className={`badge ${r.rol === "admin" ? "info" : r.rol === "admin_centros" ? "warn" : "muted"}`}>{r.rol === "admin" ? "Administrador" : r.rol === "admin_centros" ? "Adm. de centros" : "Usuario"}</span> }, { key: "activo", label: "Estado", render: r => Number(r.activo) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Desactivado</span> }, { key: "centros_nombre", label: "Centros asignados", render: r => String(r.centros_nombre ?? "—") }],
 };
 export const EPIS: ResourceConfig = {
   title: "EPIs", subtitle: "Equipos de protección individual con stock por centro", endpoint: "/api/epis", csvName: "epis", searchKeys: ["codigo", "marca", "modelo", "talla", "color", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -69,7 +69,7 @@ export const EPIS: ResourceConfig = {
     { name: "color", label: "Color", type: "enum", enumValues: colors },
     { name: "stock", label: "Stock", type: "integer", required: true }, stockMin,
     { name: "fecha_revision", label: "Próxima revisión", type: "date" },
-    { name: "coste_unitario", label: "Coste por unidad (€)", type: "number" }, center,
+    center,
   ],
   columns: [
     { key: "codigo", label: "Código" },
@@ -96,7 +96,7 @@ export const ROPA: ResourceConfig = {
     { name: "descripcion", label: "Descripción", type: "textarea" },
     { name: "color", label: "Color", type: "enum", enumValues: colors },
     { name: "stock", label: "Stock", type: "integer", required: true }, stockMin,
-    { name: "coste_unitario", label: "Coste por unidad (€)", type: "number" }, center,
+    center,
   ],
   columns: [
     { key: "codigo", label: "Código" },
@@ -128,31 +128,6 @@ export const TALLAS: ResourceConfig = {
     { key: "fecha", label: "Fecha", render: r => formatFecha(String(r.fecha ?? "")) },
   ],
 };
-export const ENTREGAS: ResourceConfig = {
-  title: "Entregas de ropa", subtitle: "Historial de ropa entregada a cada operario", endpoint: "/api/entregas", csvName: "entregas-ropa", searchKeys: ["usuario_nombre", "ropa_marca", "ropa_modelo", "ropa_talla", "ropa_prenda", "notas"], perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  links: {
-    usuario_id: { endpoint: "/api/usuarios", label: r => `${String(r.nombre)} (${String(r.username)})` },
-    ropa_id: { endpoint: "/api/ropa-trabajo", label: r => `${String(r.codigo)} · ${String(r.prenda)}` },
-  },
-  fields: [
-    { name: "usuario_id", label: "Operario", type: "select", required: true },
-    { name: "ropa_id", label: "Prenda de ropa", type: "select", required: true },
-    { name: "cantidad", label: "Cantidad", type: "integer", required: true },
-    { name: "fecha", label: "Fecha de entrega", type: "date", help: "En blanco, hoy" },
-    { name: "notas", label: "Notas", type: "textarea" },
-  ],
-  columns: [
-    { key: "fecha", label: "Fecha de entrega", render: r => formatFecha(String(r.fecha ?? "")) },
-    { key: "usuario_nombre", label: "Operario", render: r => String(r.usuario_nombre ?? "—") },
-    { key: "ropa_marca", label: "Marca", render: r => String(r.ropa_marca ?? "—") },
-    { key: "ropa_modelo", label: "Modelo", render: r => String(r.ropa_modelo ?? "—") },
-    { key: "ropa_talla", label: "Talla", render: r => String(r.ropa_talla ?? "—") },
-    { key: "ropa_prenda", label: "Prenda", render: r => String(r.ropa_prenda ?? "—") },
-    { key: "cantidad", label: "Cantidad", align: "right", render: r => formatNum(r.cantidad) },
-    { key: "entregado_por_nombre", label: "Entregado por", render: r => String(r.entregado_por_nombre ?? "—") },
-    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
-  ],
-};
 export const TIPOS: ResourceConfig = {
   title: "Tipos de maquinaria", subtitle: "Lista gestionada de tipos disponibles en Maquinaria", endpoint: "/api/tipos-maquinaria", csvName: "tipos-maquinaria", searchKeys: ["nombre", "notas"],
   perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -165,74 +140,35 @@ export const TIPOS: ResourceConfig = {
     { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
   ],
 };
-export const PUNTOS: ResourceConfig = {
-  title: "Zonas de consumo", subtitle: "Puntos con QR por subzona; al escanear descuentan 1 unidad de su producto", endpoint: "/api/puntos-consumo", csvName: "puntos-consumo", searchKeys: ["nombre", "zona_nombre", "subzona_nombre", "producto_nombre", "centro_nombre"], centroFilter: true,
-  perms: { read: "all", create: "admin", update: "admin", delete: "admin" }, qrTipo: "punto",
-  links: {
-    producto: {
-      endpoints: ["/api/quimicos", "/api/material-limpieza"],
-      label: r => `${r._tipo === "quimicos" ? "Químico" : "Material"}: ${String(r.nombre)}`,
-      value: r => `${String(r._tipo)}:${Number(r.id)}`,
-    },
-    subzona_id: { endpoint: "/api/subzonas", label: r => `${String(r.zona_nombre)} · ${String(r.nombre)} · ${String(r.centro_nombre ?? "—")}` },
-  },
+export const SOPORTES: ResourceConfig = {
+  title: "Soportes", subtitle: "Dónde se instalan las estaciones de consumo", endpoint: "/api/soportes", csvName: "soportes", searchKeys: ["nombre"],
+  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [{ name: "nombre", label: "Nombre del soporte", type: "text", required: true }],
+  columns: [{ key: "nombre", label: "Soporte" }, { key: "created_at", label: "Alta", render: r => formatFecha(String(r.created_at ?? "")) }],
+};
+export const TIPOS_CONSUMIBLES: ResourceConfig = {
+  title: "Tipos de consumible", subtitle: "Qué tipo de artículo consume cada estación", endpoint: "/api/consumibles-tipos", csvName: "tipos-consumible", searchKeys: ["nombre", "articulo_tipo"],
+  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
   fields: [
-    { name: "nombre", label: "Nombre del punto", type: "text", required: true },
-    center,
-    { name: "subzona_id", label: "Subzona", type: "select" },
-    { name: "producto", label: "Producto del punto", type: "select", required: true },
+    { name: "nombre", label: "Nombre del tipo", type: "text", required: true },
+    { name: "articulo_tipo", label: "Tipo de artículo", type: "enum", required: true, enumValues: ["quimicos", "material_limpieza", "epis", "ropa_trabajo", "maquinaria"] },
   ],
   columns: [
-    { key: "nombre", label: "Punto" },
-    { key: "zona_nombre", label: "Zona", render: r => String(r.zona_nombre ?? "—") },
-    { key: "subzona_nombre", label: "Subzona", render: r => String(r.subzona_nombre ?? "—") },
-    centerCol,
-    { key: "producto_nombre", label: "Producto", render: r => String(r.producto_nombre ?? "—") },
-    { key: "producto_stock", label: "Stock", align: "right", render: r => formatNum(r.producto_stock) },
+    { key: "nombre", label: "Tipo de consumible" },
+    { key: "articulo_tipo", label: "Artículos que consume", render: r => <span className="badge info">{String(r.articulo_tipo ?? "—")}</span> },
   ],
 };
 export const MOVIMIENTOS: ResourceConfig = {
-  title: "Auditoría de movimientos", subtitle: "Entradas, salidas, consumos y entregas con coste y motivo", endpoint: "/api/movimientos", csvName: "movimientos", searchKeys: ["usuario_nombre", "accion", "descripcion", "motivo"], readOnlyPage: true,
+  title: "Auditoría de movimientos", subtitle: "Entradas, salidas, consumos, altas, ediciones y borrados con su motivo", endpoint: "/api/movimientos", csvName: "movimientos", searchKeys: ["usuario_nombre", "accion", "descripcion", "motivo"], readOnlyPage: true,
   perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
   fields: [],
   columns: [
     { key: "created_at", label: "Fecha y hora", render: r => String(r.created_at ?? "—").replace("T", " ").slice(0, 16) },
     { key: "usuario_nombre", label: "Usuario", render: r => String(r.usuario_nombre ?? "—") },
-    { key: "accion", label: "Tipo de movimiento", render: r => <span className={`badge ${String(r.accion ?? "").startsWith("consumo") ? "info" : String(r.accion) === "entrada" ? "ok" : "warn"}`}>{String(r.accion ?? "—").replaceAll("_", " ")}</span> },
+    { key: "accion", label: "Tipo de movimiento", render: r => { const a = String(r.accion ?? ""); const cls = a === "alta" ? "ok" : a === "edicion" ? "info" : a === "borrado" ? "danger" : a === "salida" ? "warn" : a === "ajuste" ? "muted" : a.startsWith("deshacer") ? "warn" : "info"; return <span className={`badge ${cls}`}>{(a || "—").replaceAll("_", " ")}</span>; } },
     { key: "descripcion", label: "Detalle", render: r => String(r.descripcion ?? "—") },
     { key: "cantidad", label: "Cant.", align: "right", render: r => r.cantidad == null ? "—" : formatNum(r.cantidad) },
-    { key: "coste", label: "Coste (€)", align: "right", render: r => r.coste == null ? "—" : formatNum(Number(r.coste), 2) },
     { key: "motivo", label: "Motivo", render: r => String(r.motivo ?? "—") },
-  ],
-};
-export const ZONAS: ResourceConfig = {
-  title: "Zonas y subzonas", subtitle: "Zonas de cada centro (gestiona las subzonas en su pestaña)", endpoint: "/api/zonas", csvName: "zonas", searchKeys: ["nombre", "centro_nombre", "notas"],
-  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  fields: [
-    { name: "centro_id", label: "Centro", type: "select", required: true },
-    { name: "nombre", label: "Nombre de la zona", type: "text", required: true },
-    { name: "notas", label: "Notas", type: "textarea" },
-  ],
-  columns: [
-    { key: "nombre", label: "Zona" },
-    centerCol,
-    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
-  ],
-};
-export const SUBZONAS: ResourceConfig = {
-  title: "Subzonas", subtitle: "Subzona de cada zona", endpoint: "/api/subzonas", csvName: "subzonas", searchKeys: ["nombre", "zona_nombre", "centro_nombre"],
-  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  links: { zona_id: { endpoint: "/api/zonas", label: r => `${String(r.nombre)} · ${String(r.centro_nombre ?? "—")}` } },
-  fields: [
-    { name: "zona_id", label: "Zona", type: "select", required: true },
-    { name: "nombre", label: "Nombre de la subzona", type: "text", required: true },
-    { name: "notas", label: "Notas", type: "textarea" },
-  ],
-  columns: [
-    { key: "nombre", label: "Subzona" },
-    { key: "zona_nombre", label: "Zona", render: r => String(r.zona_nombre ?? "—") },
-    centerCol,
-    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
   ],
 };
 // Botones de asignación de centros a un usuario: cada clic guarda al momento

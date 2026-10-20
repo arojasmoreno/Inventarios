@@ -14,7 +14,6 @@ interface Informe {
     epis: { registros: number; unidades: number };
     ropa: { registros: number; unidades: number };
   };
-  valor: { quimicos: number; material: number; epis: number; ropa: number; total: number };
   stock_bajo: { quimicos: number; material: number; epis: number; ropa: number; total: number };
   caducidad: { vencidas: number; en30: number; en90: number };
   quimicos: Row[]; material: Row[]; maquinaria: Row[]; epis: Row[]; ropas: Row[];
@@ -47,21 +46,20 @@ export function Informes() {
   if (error || !data) return <div className="card empty"><span className="icon">⚠️</span>{error ?? "No hay datos"}</div>;
   const r = data.resumen, stamp = new Date().toISOString().slice(0, 10), alcance = data.centro ? data.centro.nombre : "todos los centros";
   const csvQuimicos = () => downloadCsv(`informe-quimicos-${stamp}.csv`,
-    ["Código", "Marca", "Producto", "Lote", "L/garrafa", "Garrafas", "Total litros", "Coste/ud. (€)", "Valor (€)", "Caducidad", "Estado", "Centro"],
-    data.quimicos.map(q => [String(q.codigo ?? ""), String(q.marca ?? ""), String(q.nombre ?? ""), String(q.numero_lote ?? ""), formatNum(q.litros_por_garrafa, 2), formatNum(q.num_garrafas), formatNum(q.total_litros, 2), formatNum(q.coste_unitario ?? "", 2), formatNum((Number(q.coste_unitario ?? 0) || 0) * Number(q.num_garrafas ?? 0), 2), formatFecha(q.fecha_caducidad), estadoCaducidad(q).label, String(q.centro_nombre ?? "—")]));
+    ["Código", "Marca", "Producto", "Lote", "L/garrafa", "Garrafas", "Total litros", "Caducidad", "Estado", "Centro"],
+    data.quimicos.map(q => [String(q.codigo ?? ""), String(q.marca ?? ""), String(q.nombre ?? ""), String(q.numero_lote ?? ""), formatNum(q.litros_por_garrafa, 2), formatNum(q.num_garrafas), formatNum(q.total_litros, 2), formatFecha(q.fecha_caducidad), estadoCaducidad(q).label, String(q.centro_nombre ?? "—")]));
   const csvMaterial = () => downloadCsv(`informe-material-${stamp}.csv`,
-    ["Código", "Marca", "Material", "Color", "Unidades", "Coste/ud. (€)", "Valor (€)", "Centro"],
-    data.material.map(m => [String(m.codigo ?? ""), String(m.marca ?? ""), String(m.nombre ?? ""), String(m.color ?? ""), formatNum(m.cantidad), formatNum(m.coste_unitario ?? "", 2), formatNum((Number(m.coste_unitario ?? 0) || 0) * Number(m.cantidad ?? 0), 2), String(m.centro_nombre ?? "—")]));
+    ["Código", "Marca", "Material", "Color", "Unidades", "Centro"],
+    data.material.map(m => [String(m.codigo ?? ""), String(m.marca ?? ""), String(m.nombre ?? ""), String(m.color ?? ""), formatNum(m.cantidad), String(m.centro_nombre ?? "—")]));
   const csvMaquinaria = () => downloadCsv(`informe-maquinaria-${stamp}.csv`,
     ["Máquina", "Tipo", "Unidades", "Nº serie", "Estado", "Centro"],
     data.maquinaria.map(m => [String(m.nombre ?? ""), String(m.tipo ?? ""), formatNum(m.cantidad), String(m.numero_serie ?? "—"), String(m.estado ?? ""), String(m.centro_nombre ?? "—")]));
   const csvEpis = () => downloadCsv(`informe-epis-${stamp}.csv`,
-    ["Código", "Marca", "Modelo", "Talla", "Descripción", "Stock", "Coste/ud. (€)", "Valor (€)", "Próxima revisión", "Centro"],
-    data.epis.map(e => [String(e.codigo ?? ""), String(e.marca ?? ""), String(e.modelo ?? ""), String(e.talla ?? ""), String(e.descripcion ?? ""), formatNum(e.stock), formatNum(e.coste_unitario ?? "", 2), formatNum((Number(e.coste_unitario ?? 0) || 0) * Number(e.stock ?? 0), 2), formatFecha(e.fecha_revision), String(e.centro_nombre ?? "—")]));
+    ["Código", "Marca", "Modelo", "Talla", "Descripción", "Stock", "Próxima revisión", "Centro"],
+    data.epis.map(e => [String(e.codigo ?? ""), String(e.marca ?? ""), String(e.modelo ?? ""), String(e.talla ?? ""), String(e.descripcion ?? ""), formatNum(e.stock), formatFecha(e.fecha_revision), String(e.centro_nombre ?? "—")]));
   const csvRopa = () => downloadCsv(`informe-ropa-${stamp}.csv`,
-    ["Código", "Prenda", "Marca", "Modelo", "Talla", "Stock", "Coste/ud. (€)", "Valor (€)", "Centro"],
-    data.ropas.map(p => [String(p.codigo ?? ""), String(p.prenda ?? ""), String(p.marca ?? ""), String(p.modelo ?? ""), String(p.talla ?? ""), formatNum(p.stock), formatNum(p.coste_unitario ?? "", 2), formatNum((Number(p.coste_unitario ?? 0) || 0) * Number(p.stock ?? 0), 2), String(p.centro_nombre ?? "—")]));
-  const kpiValor = `${formatNum(data.valor.total, 2)} €`;
+    ["Código", "Prenda", "Marca", "Modelo", "Talla", "Stock", "Centro"],
+    data.ropas.map(p => [String(p.codigo ?? ""), String(p.prenda ?? ""), String(p.marca ?? ""), String(p.modelo ?? ""), String(p.talla ?? ""), formatNum(p.stock), String(p.centro_nombre ?? "—")]));
   return <>
     <div className="toolbar no-print">
       <label htmlFor="centro-informe" style={{ fontWeight: 600 }}>Centro / planta:</label>
@@ -84,18 +82,16 @@ export function Informes() {
       <div className="kpi"><div className="label">Material de limpieza</div><div className="value">{formatNum(r.material.unidades)} uds.</div><div style={{ color: "var(--muted)" }}>{formatNum(r.material.registros)} referencias</div></div>
       <div className="kpi"><div className="label">Maquinaria</div><div className="value">{formatNum(r.maquinaria.unidades)} uds.</div><div style={{ color: "var(--muted)" }}>{formatNum(r.maquinaria.registros)} tipos de máquina</div></div>
       <div className="kpi"><div className="label">EPIs · Ropa</div><div className="value">{formatNum(r.epis.unidades + r.ropa.unidades)} uds.</div><div style={{ color: "var(--muted)" }}>{formatNum(r.epis.registros)} EPIs · {formatNum(r.ropa.registros)} prendas</div></div>
-      <div className="kpi"><div className="label">Valor del inventario</div><div className="value">{kpiValor}</div><div style={{ color: "var(--muted)" }}>químicos {formatNum(data.valor.quimicos, 2)} € · material {formatNum(data.valor.material, 2)} € · EPIs {formatNum(data.valor.epis, 2)} € · ropa {formatNum(data.valor.ropa, 2)} €</div></div>
       <div className={"kpi" + (data.stock_bajo.total > 0 || data.caducidad.vencidas > 0 ? " alert" : "")}><div className="label">Alertas</div><div className="value">{formatNum(data.stock_bajo.total + data.caducidad.vencidas)}</div><div style={{ color: "var(--muted)" }}>stock bajo + caducidades vencidas ({formatNum(data.caducidad.en90)} en ≤90 d)</div></div>
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🧴 Productos químicos ({formatNum(data.quimicos.length)})</h3><button className="btn secondary small no-print" onClick={csvQuimicos}>⬇️ CSV</button></div>
       {!data.quimicos.length ? <div className="empty">Sin productos químicos en {alcance}.</div> : <div className="table-scroll"><table>
-        <thead><tr><th>Código</th><th>Marca</th><th>Producto</th><th>Lote</th><th className="right">L/garrafa</th><th className="right">Garrafas</th><th className="right">Total litros</th><th className="right">Valor (€)</th><th>Caducidad</th><th>Estado</th><th>Centro</th></tr></thead>
+        <thead><tr><th>Código</th><th>Marca</th><th>Producto</th><th>Lote</th><th className="right">L/garrafa</th><th className="right">Garrafas</th><th className="right">Total litros</th><th>Caducidad</th><th>Estado</th><th>Centro</th></tr></thead>
         <tbody>{data.quimicos.map(q => { const est = estadoCaducidad(q); return <tr key={String(q.id)}>
           <td>{String(q.codigo ?? "—")}</td><td>{String(q.marca ?? "—")}</td><td>{String(q.nombre ?? "")}</td><td>{String(q.numero_lote ?? "")}</td>
           <td className="right">{formatNum(q.litros_por_garrafa, 2)}</td>
           <td className="right">{stockAlerta(q, "num_garrafas")}</td>
           <td className="right"><strong>{formatNum(q.total_litros, 2)}</strong></td>
-          <td className="right">{q.coste_unitario == null ? "—" : formatNum((Number(q.coste_unitario) || 0) * Number(q.num_garrafas ?? 0), 2)}</td>
           <td>{formatFecha(q.fecha_caducidad)}</td>
           <td><span className={"badge " + est.kind}>{est.label}</span></td>
           <td>{String(q.centro_nombre ?? "—")}</td></tr>; })}</tbody></table></div>}
@@ -103,12 +99,11 @@ export function Informes() {
     <div className="card"><div className="card-pad section-head"><h3>🧽 Material de limpieza por color</h3><button className="btn secondary small no-print" onClick={csvMaterial}>⬇️ CSV</button></div>
       <div className="card-pad" style={{ paddingTop: 0 }}><div className="chips">{data.por_color.map(c => <span key={c.color} className="badge"><ColorSwatch color={c.color} />{c.color}: {formatNum(c.unidades)} uds.</span>)}{!data.por_color.length && <span style={{ color: "var(--muted)" }}>Sin material registrado.</span>}</div></div>
       {data.material.length > 0 && <div className="table-scroll"><table>
-        <thead><tr><th>Código</th><th>Marca</th><th>Material</th><th>Color</th><th className="right">Unidades</th><th className="right">Valor (€)</th><th>Centro</th></tr></thead>
+        <thead><tr><th>Código</th><th>Marca</th><th>Material</th><th>Color</th><th className="right">Unidades</th><th>Centro</th></tr></thead>
         <tbody>{data.material.map(m => <tr key={String(m.id)}>
           <td>{String(m.codigo ?? "—")}</td><td>{String(m.marca ?? "—")}</td><td>{String(m.nombre ?? "")}</td>
           <td><ColorSwatch color={String(m.color ?? "")} />{String(m.color ?? "")}</td>
           <td className="right">{stockAlerta(m, "cantidad")}</td>
-          <td className="right">{m.coste_unitario == null ? "—" : formatNum((Number(m.coste_unitario) || 0) * Number(m.cantidad ?? 0), 2)}</td>
           <td>{String(m.centro_nombre ?? "—")}</td></tr>)}</tbody></table></div>}
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🧹 Maquinaria por tipo</h3><button className="btn secondary small no-print" onClick={csvMaquinaria}>⬇️ CSV</button></div>
@@ -123,23 +118,21 @@ export function Informes() {
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🦺 EPIs ({formatNum(data.epis.length)})</h3><button className="btn secondary small no-print" onClick={csvEpis}>⬇️ CSV</button></div>
       {!data.epis.length ? <div className="empty">Sin EPIs en {alcance}.</div> : <div className="table-scroll"><table>
-        <thead><tr><th>Código</th><th>Marca</th><th>Modelo</th><th>Talla</th><th>Descripción</th><th className="right">Stock</th><th className="right">Valor (€)</th><th>Próxima revisión</th><th>Centro</th></tr></thead>
+        <thead><tr><th>Código</th><th>Marca</th><th>Modelo</th><th>Talla</th><th>Descripción</th><th className="right">Stock</th><th>Próxima revisión</th><th>Centro</th></tr></thead>
         <tbody>{data.epis.map(e => <tr key={String(e.id)}>
           <td>{String(e.codigo ?? "")}</td><td>{String(e.marca ?? "—")}</td><td>{String(e.modelo ?? "—")}</td><td>{String(e.talla ?? "—")}</td>
           <td>{String(e.descripcion ?? "—")}</td>
           <td className="right">{stockAlerta(e, "stock")}</td>
-          <td className="right">{e.coste_unitario == null ? "—" : formatNum((Number(e.coste_unitario) || 0) * Number(e.stock ?? 0), 2)}</td>
           <td>{formatFecha(e.fecha_revision)}</td>
           <td>{String(e.centro_nombre ?? "—")}</td></tr>)}</tbody></table></div>}
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🥼 Ropa de trabajo ({formatNum(data.ropas.length)})</h3><button className="btn secondary small no-print" onClick={csvRopa}>⬇️ CSV</button></div>
       {!data.ropas.length ? <div className="empty">Sin ropa de trabajo en {alcance}.</div> : <div className="table-scroll"><table>
-        <thead><tr><th>Código</th><th>Prenda</th><th>Marca</th><th>Modelo</th><th>Talla</th><th className="right">Stock</th><th className="right">Valor (€)</th><th>Centro</th></tr></thead>
+        <thead><tr><th>Código</th><th>Prenda</th><th>Marca</th><th>Modelo</th><th>Talla</th><th className="right">Stock</th><th>Centro</th></tr></thead>
         <tbody>{data.ropas.map(p => <tr key={String(p.id)}>
           <td>{String(p.codigo ?? "")}</td><td>{String(p.prenda ?? "")}</td><td>{String(p.marca ?? "—")}</td><td>{String(p.modelo ?? "—")}</td>
           <td>{String(p.talla ?? "—")}</td>
           <td className="right">{stockAlerta(p, "stock")}</td>
-          <td className="right">{p.coste_unitario == null ? "—" : formatNum((Number(p.coste_unitario) || 0) * Number(p.stock ?? 0), 2)}</td>
           <td>{String(p.centro_nombre ?? "—")}</td></tr>)}</tbody></table></div>}
     </div>
   </>;

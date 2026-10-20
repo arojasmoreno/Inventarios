@@ -1,0 +1,163 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api } from "./api";
+import { Modal, Toast } from "./ui";
+
+type Row = Record<string, unknown>;
+
+/**
+ * Zonas y subzonas por centro (estilo de la web de referencia):
+ * cada centro despliega sus zonas y, dentro, sus subzonas.
+ * Altas, ediciones y borrados con el mismo CRUD modal del resto de secciones.
+ */
+export function ZonasCentroPage({ user }: { user: { rol: string } }) {
+  const [centros, setCentros] = useState<Row[]>([]);
+  const [zonas, setZonas] = useState<Row[]>([]);
+  const [subzonas, setSubzonas] = useState<Row[]>([]);
+  const [centroId, setCentroId] = useState<string>("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ kind: "zona" | "subzona"; mode: "create" | "edit"; values: Row } | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
+  const canWrite = user.rol === "admin";
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const [c, z, s] = await Promise.all([
+        api.get<{ items: Row[] }>("/api/centros"),
+        api.get<{ items: Row[] }>("/api/zonas"),
+        api.get<{ items: Row[] }>("/api/subzonas"),
+      ]);
+      setCentros(c.items); setZonas(z.items); setSubzonas(s.items);
+    } catch (e) { setError(e instanceof Error ? e.message : "Error cargando zonas"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const filtradas = useMemo(
+    () => zonas.filter((z) => centroId === "all" || String(z.centro_id) === centroId),
+    [zonas, centroId],
+  );
+  const subsDe = (zonaId: number) => subzonas.filter((s) => String(s.zona_id) === String(zonaId));
+
+  const openZona = (zona?: Row) => {
+    setFormError(null);
+    setEditing({ kind: "zona", mode: zona ? "edit" : "create", values: zona ? { ...zona } : { nombre: "", notas: "", centro_id: centroId === "all" ? String(centros[0]?.id ?? "") : centroId } });
+  };
+  const openSub = (zona: Row, sub?: Row) => {
+    setFormError(null);
+    setEditing({ kind: "subzona", mode: sub ? "edit" : "create", values: sub ? { ...sub } : { nombre: "", notas: "", zona_id: zona.id, zona_ref: zona.nombre } });
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    setSaving(true); setFormError(null);
+    const esZona = editing.kind === "zona";
+    const endpoint = esZona ? "/api/zonas" : "/api/subzonas";
+    const payload: Row = {
+      nombre: String(editing.values.nombre ?? "").trim(),
+      notas: String(editing.values.notas ?? "").trim() || null,
+      ...(esZona ? { centro_id: Number(editing.values.centro_id) } : { zona_id: Number(editing.values.zona_id) }),
+    };
+    if (!payload.nombre) { setFormError("El nombre es obligatorio"); setSaving(false); return; }
+    try {
+      const etiqueta = esZona ? "Zona" : "Subzona";
+      if (editing.mode === "create") { await api.post(endpoint, payload); setToast({ message: `${etiqueta} «${String(payload.nombre)}» creada`, kind: "ok" }); }
+      else { await api.put(`${endpoint}/${String(editing.values.id)}`, payload); setToast({ message: `${etiqueta} «${String(payload.nombre)}» actualizada`, kind: "ok" }); }
+      setEditing(null);
+      await load();
+    } catch (e) { setFormError(e instanceof Error ? e.message : "No se pudo guardar"); }
+    finally { setSaving(false); }
+  };
+
+  const remove = async (kind: "zona" | "subzona", row: Row) => {
+    const etiqueta = kind === "zona" ? "la zona" : "la subzona";
+    if (!window.confirm(`¿Eliminar ${etiqueta} «${String(row.nombre)}»? Esta acción no se puede deshacer.`)) return;
+    try {
+      await api.del(`${kind === "zona" ? "/api/zonas" : "/api/subzonas"}/${String(row.id)}`);
+      setToast({ message: "Elemento eliminado", kind: "ok" });
+      await load();
+    } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo eliminar", kind: "error" }); }
+  };
+
+  const nombreCentro = (id: unknown) => String(centros.find((c) => String(c.id) === String(id))?.nombre ?? "—");
+
+  if (loading) return <div className="loading">Cargando zonas…</div>;
+  if (error) return <div className="card empty">⚠️ {error}</div>;
+
+  const nombreZona = editing?.kind === "subzona" && editing.values.zona_ref ? String(editing.values.zona_ref) : "";
+  return <>
+    <div className="toolbar no-print">
+      <select className="input" style={{ maxWidth: 240 }} value={centroId} onChange={(e) => setCentroId(e.target.value)}>
+        <option value="all">Todos los centros</option>
+        {centros.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
+      </select>
+      <div className="spacer" />
+      {canWrite && <button className="btn" onClick={() => openZona()}>＋ Nueva zona</button>}
+    </div>
+
+    {!filtradas.length
+      ? <div className="card empty"><span className="icon">🗺️</span><strong>No hay zonas</strong><p>Pulsa «Nueva zona» para crear la primera zona de este centro.</p></div>
+      : filtradas.map((z) => {
+        const subs = subsDe(Number(z.id));
+        return <div className="card card-pad" key={String(z.id)}>
+          <div className="section-head">
+            <h3>🗺️ {String(z.nombre)}</h3>
+            <div className="row-actions">
+              <span className="badge muted">{nombreCentro(z.centro_id)}</span>
+              {canWrite && <>
+                <button className="btn secondary small" onClick={() => openZona(z)}>✏️ Editar</button>
+                <button className="btn danger small" onClick={() => void remove("zona", z)}>🗑️ Borrar</button>
+              </>}
+            </div>
+          </div>
+          {z.notas ? <p style={{ color: "var(--muted)", margin: "0 0 10px" }}>{String(z.notas)}</p> : null}
+          <div className="chips" style={{ marginBottom: canWrite ? 8 : 0 }}>
+            {subs.map((s) => <span className="chip" key={String(s.id)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 12px" }}>
+              🧱 {String(s.nombre)}
+              {canWrite && <>
+                <button className="icon-btn" title="Editar subzona" onClick={() => openSub(z, s)}>✏️</button>
+                <button className="icon-btn" title="Borrar subzona" onClick={() => void remove("subzona", s)}>🗑️</button>
+              </>}
+            </span>)}
+            {!subs.length && <span style={{ color: "var(--muted)", fontSize: 13 }}>Sin subzonas todavía.</span>}
+          </div>
+          {canWrite && <button className="btn secondary small" onClick={() => openSub(z)}>＋ Añadir subzona</button>}
+        </div>;
+      })}
+
+    {editing && <Modal
+      title={editing.mode === "create"
+        ? (editing.kind === "zona" ? "Nueva zona" : `Nueva subzona · ${nombreZona}`)
+        : (editing.kind === "zona" ? "Editar zona" : "Editar subzona")}
+      subtitle="Centro → zona → subzona"
+      onClose={() => setEditing(null)}
+    >
+      {formError && <div className="form-error">{formError}</div>}
+      <div className="form-grid">
+        <div className="full"><div className="field">
+          <label htmlFor="z-nombre">Nombre <span className="req">*</span></label>
+          <input id="z-nombre" className="input" value={String(editing.values.nombre ?? "")} onChange={(e) => setEditing({ ...editing, values: { ...editing.values, nombre: e.target.value } })} autoFocus />
+        </div></div>
+        {editing.kind === "zona" && <div className="full"><div className="field">
+          <label htmlFor="z-centro">Centro <span className="req">*</span></label>
+          <select id="z-centro" className="input" value={String(editing.values.centro_id ?? "")} onChange={(e) => setEditing({ ...editing, values: { ...editing.values, centro_id: e.target.value } })} disabled={editing.mode === "edit"}>
+            {centros.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
+          </select>
+          {editing.mode === "edit" && <small>El centro de una zona no se puede cambiar; créala de nuevo si necesitas moverla.</small>}
+        </div></div>}
+        <div className="full"><div className="field">
+          <label htmlFor="z-notas">Notas</label>
+          <textarea id="z-notas" className="input" rows={3} value={String(editing.values.notas ?? "")} onChange={(e) => setEditing({ ...editing, values: { ...editing.values, notas: e.target.value } })} />
+        </div></div>
+      </div>
+      <div className="modal-footer">
+        <button className="btn secondary" onClick={() => setEditing(null)}>Cancelar</button>
+        <button className="btn" onClick={() => void save()} disabled={saving}>{saving ? "Guardando…" : "Guardar"}</button>
+      </div>
+    </Modal>}
+    {toast && <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} />}
+  </>;
+}

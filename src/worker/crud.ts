@@ -3,21 +3,52 @@ import type { Context } from "hono";
 import type { Env, D1Database } from "./d1";
 import type { Variables } from "./types";
 import { requireAuth, hashPassword, toHex, type SessionUser } from "./auth";
+import { logMovimiento } from "./audit";
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export class ValidationError extends Error {}
 export type FieldType = "text" | "textarea" | "number" | "integer" | "date" | "boolean" | "enum" | "password";
 export interface FieldSpec { name: string; label: string; type: FieldType; required?: boolean; enumValues?: string[]; min?: number; unique?: boolean; writeOnly?: boolean; maxLength?: number; placeholder?: string; }
-export type PermLevel = "all" | "admin";
+export type PermLevel = "all" | "admin" | "centros";
 export interface CrudSpec {
   table: string; orderBy: string; fields: FieldSpec[]; refCentro?: boolean; refUsuario?: boolean; computed?: string;
   extraJoins?: string[]; extraSelect?: string[]; extraSearchCols?: string[];
   read: PermLevel; create: PermLevel; update: PermLevel; delete: PermLevel;
+  // La tabla de auditoría no genera registros de auditoría (evita bucles).
+  noAudit?: boolean;
   beforeWrite?: (db: D1Database, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>) => Promise<Record<string, unknown>>;
   beforeDelete?: (db: D1Database, user: SessionUser, row: Record<string, unknown>) => Promise<string | null>;
   afterWrite?: (db: D1Database, user: SessionUser, row: Record<string, unknown>, mode: "insert" | "update") => Promise<void>;
   afterDelete?: (db: D1Database, user: SessionUser, row: Record<string, unknown>) => Promise<void>;
 }
-export function allowed(user: SessionUser, level: PermLevel): boolean { return level === "all" || user.rol === "admin"; }
+export function allowed(user: SessionUser, level: PermLevel): boolean {
+  if (level === "all") return true;
+  if (level === "admin") return user.rol === "admin";
+  // Nivel «centros»: administrador o administrador de centros.
+  return user.rol === "admin" || user.rol === "admin_centros";
+}
+const TABLA_NOMBRE: Record<string, string> = {
+  centros: "Centro", usuarios: "Usuario", quimicos: "Químico", material_limpieza: "Material de limpieza",
+  maquinaria: "Maquinaria", epis: "EPI", ropa_trabajo: "Ropa de trabajo", tallas_operarios: "Talla de operario",
+  tipos_maquinaria: "Tipo de maquinaria", zonas: "Zona", subzonas: "Subzona", estaciones: "Estación",
+  soportes: "Soporte", consumibles_tipos: "Tipo de consumible",
+};
+function nombreDe(spec: CrudSpec, row: Record<string, unknown>): string {
+  const n = row.nombre ?? row.username ?? row.codigo ?? row.prenda ?? row.email;
+  const label = n != null && String(n) !== "" ? `«${String(n)}»` : `#${String(row.id)}`;
+  return `${TABLA_NOMBRE[spec.table] ?? spec.table} ${label}`;
+}
+// Auditoría genérica de altas, ediciones y borrados de cada sección.
+async function audit(c: Ctx, spec: CrudSpec, accion: "alta" | "edicion" | "borrado", row: Record<string, unknown>): Promise<void> {
+  if (spec.noAudit) return;
+  await logMovimiento(c.env.DB, c.get("user"), accion, spec.table, Number(row.id) || null, nombreDe(spec, row), null, null);
+}
+// Alcance del rol «administrador de centros»: solo puede editar y borrar los
+// centros que tiene asignados (un centro nuevo creado por él se le asigna solo).
+async function centroScope(c: Ctx, user: SessionUser, id: number, _mode: "update" | "delete"): Promise<string | null> {
+  if (user.rol !== "admin_centros") return null;
+  const own = await c.env.DB.prepare("SELECT 1 AS x FROM usuario_centros WHERE usuario_id = ? AND centro_id = ?").bind(user.id, id).first();
+  return own ? null : "Solo puedes modificar los centros asignados a tu usuario";
+}
 function parseValue(f: FieldSpec, raw: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
   if (raw === null) return { ok: true, value: null };
   switch (f.type) {
@@ -107,29 +138,39 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "insert");
     const keys = Object.keys(data); if (!keys.length) throw new ValidationError("No hay datos que guardar");
     const result = await c.env.DB.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
-    const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind((result.meta as { last_row_id?: number }).last_row_id).first();
+    const newId = Number((result.meta as { last_row_id?: number }).last_row_id);
+    const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(newId).first();
     if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), row ?? data, "insert");
+    // El «administrador de centros» pasa a gestionar el centro que acaba de crear.
+    if (spec.table === "centros" && c.get("user").rol === "admin_centros") {
+      await c.env.DB.prepare("INSERT OR IGNORE INTO usuario_centros (usuario_id, centro_id) VALUES (?, ?)").bind(c.get("user").id, newId).run();
+    }
+    await audit(c, spec, "alta", row ?? { ...data, id: newId });
     return c.json({ item: row }, 201);
   });
   app.put("/:id", async (c: Ctx): Promise<Response> => {
     if (!allowed(c.get("user"), spec.update)) return c.json({ error: "No tienes permiso para editar registros" }, 403);
     const id = Number(c.req.param("id")), existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(id).first();
     if (!existing) return c.json({ error: "Registro no encontrado" }, 404);
+    if (spec.table === "centros") { const err = await centroScope(c, c.get("user"), id, "update"); if (err) return c.json({ error: err }, 403); }
     const body = await readBody(c); let data = validate(spec, body, "update"); await checkUnique(c.env.DB, spec, data, id);
     if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "update", existing); const keys = Object.keys(data); if (!keys.length) return c.json({ item: existing });
     const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
     await c.env.DB.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), id).run();
     const updated = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(id).first();
     if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), updated ?? existing, "update");
+    await audit(c, spec, "edicion", updated ?? existing);
     return c.json({ item: updated });
   });
   app.delete("/:id", async c => {
     const user = c.get("user"); if (!allowed(user, spec.delete)) return c.json({ error: "No tienes permiso para borrar registros" }, 403);
     const id = Number(c.req.param("id")), row = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(id).first();
     if (!row) return c.json({ error: "Registro no encontrado" }, 404);
+    if (spec.table === "centros") { const err = await centroScope(c, user, id, "delete"); if (err) return c.json({ error: err }, 403); }
     if (spec.beforeDelete) { const error = await spec.beforeDelete(c.env.DB, user, row); if (error) return c.json({ error }, 400); }
     await c.env.DB.prepare(`DELETE FROM ${spec.table} WHERE id = ?`).bind(id).run();
     if (spec.afterDelete) await spec.afterDelete(c.env.DB, user, row);
+    await audit(c, spec, "borrado", row);
     return c.json({ ok: true });
   });
   // Importación masiva (CSV): upsert por el campo único (código/username).
@@ -167,6 +208,10 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
             existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
           }
         }
+        if (spec.table === "centros" && mode === "update") {
+          const err = await centroScope(c, c.get("user"), Number(existing?.id), "update");
+          if (err) { if (errores.length < 8) errores.push(`Fila ${i + 1}: ${err}`); continue; }
+        }
         await checkUnique(c.env.DB, spec, data, mode === "update" ? Number(existing?.id) : null);
         if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, mode, existing);
         const keys = Object.keys(data); if (!keys.length) { errores.push(`Fila ${i + 1}: sin datos que guardar`); continue; }
@@ -183,6 +228,10 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
         }
         const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(rowId).first();
         if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), row ?? data, mode);
+        if (spec.table === "centros" && mode === "insert" && c.get("user").rol === "admin_centros") {
+          await c.env.DB.prepare("INSERT OR IGNORE INTO usuario_centros (usuario_id, centro_id) VALUES (?, ?)").bind(c.get("user").id, rowId).run();
+        }
+        await audit(c, spec, mode === "insert" ? "alta" : "edicion", row ?? { ...data, id: rowId });
         if (mode === "insert" && uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
           existingByCode.set(String(data[uniqueField.name]), { id: rowId, [uniqueField.name]: data[uniqueField.name] });
         }
