@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "./api";
 import { Field, Toast } from "./ui";
-import { CENTROS, EPIS, ENTREGAS, MAQUINARIA, MATERIAL, MOVIMIENTOS, QUIMICOS, ResourcePage, ROPA, TALLAS, USUARIOS, type ResourceConfig } from "./resources";
+import { CENTROS, EPIS, ENTREGAS, MAQUINARIA, MATERIAL, MOVIMIENTOS, PUNTOS, QUIMICOS, ResourcePage, ROPA, SUBZONAS, TALLAS, TIPOS, USUARIOS, ZONAS, type ResourceConfig } from "./resources";
 import { ConsumoPage } from "./qr";
+import { StockPage } from "./stock";
+import { ConsumosCostesPage } from "./costes";
+import { ImportarPage } from "./importar";
 import { EntregaPage } from "./entrega";
 import { EmpresaPage } from "./empresa";
 import { Informes } from "./Informes";
@@ -29,17 +32,24 @@ const NAV: NavItem[] = [
   { hash: "#/quimicos", label: "Químicos", icon: "🧴", resource: QUIMICOS },
   { hash: "#/material", label: "Material de limpieza", icon: "🧽", resource: MATERIAL },
   { hash: "#/maquinaria", label: "Maquinaria", icon: "🧹", resource: MAQUINARIA },
+  { hash: "#/tipos", label: "Tipos de maquinaria", icon: "🧩", resource: TIPOS },
   { hash: "#/epis", label: "EPIs", icon: "🦺", resource: EPIS },
   { hash: "#/ropa", label: "Ropa de trabajo", icon: "🥼", resource: ROPA },
   { hash: "#/tallas", label: "Tallas operarios", icon: "📏", resource: TALLAS },
   { hash: "#/entregas", label: "Entregas de ropa", icon: "🧺", resource: ENTREGAS },
   { hash: "#/entrega", label: "Entregar ropa", icon: "🧾", adminOnly: true },
+  { hash: "#/zonas", label: "Zonas y subzonas", icon: "🗂️", resource: ZONAS },
+  { hash: "#/subzonas", label: "Subzonas", icon: "🧱", resource: SUBZONAS },
+  { hash: "#/puntos", label: "Zonas de consumo", icon: "📍", resource: PUNTOS },
   { hash: "#/consumo", label: "Consumo QR", icon: "📱" },
-  { hash: "#/movimientos", label: "Movimientos", icon: "📜" },
+  { hash: "#/entradas", label: "Entradas / Salidas", icon: "📥", adminOnly: true },
+  { hash: "#/costes", label: "Consumos y costes", icon: "💶" },
+  { hash: "#/movimientos", label: "Auditoría", icon: "📜" },
   { hash: "#/empresa", label: "Empresa", icon: "🏢", adminOnly: true },
   { hash: "#/centros", label: "Centros", icon: "🏭", resource: CENTROS },
   { hash: "#/usuarios", label: "Usuarios", icon: "👥", adminOnly: true, resource: USUARIOS },
   { hash: "#/informes", label: "Informes", icon: "📊" },
+  { hash: "#/importar", label: "Importar CSV", icon: "📤", adminOnly: true },
 ];
 
 export function App() {
@@ -172,6 +182,9 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   else if (route === "#/consumo" || route.startsWith("#/consumo")) page = <ConsumoPage user={user} />;
   else if (route === "#/entrega") page = <EntregaPage user={user} />;
   else if (route === "#/empresa") page = <EmpresaPage />;
+  else if (route === "#/entradas") page = user.rol === "admin" ? <StockPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden registrar entradas y salidas.</p></div>;
+  else if (route === "#/costes") page = <ConsumosCostesPage />;
+  else if (route === "#/importar") page = user.rol === "admin" ? <ImportarPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden importar datos.</p></div>;
   else if (route === "#/movimientos") page = <ResourcePage key={route} config={MOVIMIENTOS} user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;
   else page = <ResourcePage key="#/quimicos" config={QUIMICOS} user={user} />;

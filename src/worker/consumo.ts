@@ -33,8 +33,9 @@ export const consumoRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new 
       const restantes = Number(row.stock);
       return c.json({ error: `Stock insuficiente: queda${restantes === 1 ? "" : "n"} ${restantes} ${restantes === 1 ? target.singular : target.etiqueta}` }, 400);
     }
-    const row = await c.env.DB.prepare(`SELECT id, nombre, ${target.columna} AS stock FROM ${target.table} WHERE id = ?`).bind(id).first();
+    const row = await c.env.DB.prepare(`SELECT id, nombre, ${target.columna} AS stock, coste_unitario FROM ${target.table} WHERE id = ?`).bind(id).first();
     const descripcion = `${String(row?.nombre ?? `#${id}`)} (${target.nombre})`;
-    await logMovimiento(c.env.DB, c.get("user"), "consumo", target.table, id, descripcion, cantidad);
+    const coste = Number(((Number(row?.coste_unitario ?? 0) || 0) * cantidad).toFixed(2));
+    await logMovimiento(c.env.DB, c.get("user"), "consumo", target.table, id, descripcion, cantidad, coste, null);
     return c.json({ ok: true, item: row, mensaje: `Descontada${cantidad === 1 ? "" : "s"} ${cantidad} ${cantidad === 1 ? target.singular : target.etiqueta}` });
   });

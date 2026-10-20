@@ -53,7 +53,7 @@ export function ConsumoPage({ user }: { user: { rol: string } }) {
 
   const loadItem = useCallback(async (t: string, id: number) => {
     setError(null); setItem(null);
-    const endpoint = t === "quimicos" ? "/api/quimicos" : "/api/material-limpieza";
+    const endpoint = t === "quimicos" ? "/api/quimicos" : t === "material_limpieza" ? "/api/material-limpieza" : "/api/puntos-consumo";
     try { const r = await api.get<{ item: Row }>(`${endpoint}/${id}`); setItem(r.item); }
     catch (e) { setError(e instanceof Error ? e.message : "Consumible no encontrado"); }
   }, []);
@@ -62,7 +62,8 @@ export function ConsumoPage({ user }: { user: { rol: string } }) {
   useEffect(() => {
     const m = /tipo=([^&]+)&id=(\d+)/.exec(window.location.hash);
     if (m) {
-      const t = decodeURIComponent(m[1]) === "material_limpieza" ? "material_limpieza" : "quimicos";
+      const raw = decodeURIComponent(m[1]);
+      const t = raw === "material_limpieza" || raw === "punto" ? raw : "quimicos";
       setTipo(t); void loadItem(t, Number(m[2]));
     }
   }, [loadItem]);
@@ -76,7 +77,8 @@ export function ConsumoPage({ user }: { user: { rol: string } }) {
   const handleCode = (raw: string) => {
     const m = /tipo=([^&]+)&id=(\d+)/.exec(raw);
     if (!m) { setError("Ese QR no contiene un enlace de consumo válido"); return; }
-    const t = decodeURIComponent(m[1]) === "material_limpieza" ? "material_limpieza" : "quimicos";
+    const val = decodeURIComponent(m[1]);
+    const t = val === "material_limpieza" || val === "punto" ? val : "quimicos";
     setTipo(t); setManual(raw); void loadItem(t, Number(m[2]));
   };
 
@@ -127,7 +129,9 @@ export function ConsumoPage({ user }: { user: { rol: string } }) {
     if (!item) return;
     setBusy(true); setError(null); setMsg(null);
     try {
-      const r = await api.post<{ mensaje?: string }>("/api/consumo", { tipo, id: Number(item.id), cantidad: Number(cantidad) });
+      const url = tipo === "punto" ? `/api/puntos-consumo/${String(item.id)}/consumir` : "/api/consumo";
+      const body = tipo === "punto" ? { cantidad: Number(cantidad) } : { tipo, id: Number(item.id), cantidad: Number(cantidad) };
+      const r = await api.post<{ mensaje?: string }>(url, body);
       setMsg({ message: r.mensaje ?? "Stock descontado", kind: "ok" });
       await loadItem(tipo, Number(item.id));
     } catch (e) { setMsg({ message: e instanceof Error ? e.message : "No se pudo descontar el stock", kind: "error" }); }
@@ -158,11 +162,14 @@ export function ConsumoPage({ user }: { user: { rol: string } }) {
     {item && <div className="card card-pad" style={{ marginTop: 16 }}>
       <table><tbody>
         <tr><th>Consumible</th><td>{String(item.nombre ?? "—")}</td></tr>
-        {tipo === "quimicos"
-          ? <tr><th>Lote</th><td>{String(item.numero_lote ?? "—")}</td></tr>
-          : <tr><th>Color</th><td>{String(item.color ?? "—")}</td></tr>}
+        {tipo === "quimicos" && <tr><th>Lote</th><td>{String(item.numero_lote ?? "—")}</td></tr>}
+        {tipo === "material_limpieza" && <tr><th>Color</th><td>{String(item.color ?? "—")}</td></tr>}
+        {tipo === "punto" && <>
+          <tr><th>Zona · subzona</th><td>{[String(item.zona ?? "—"), String(item.subzona ?? "")].filter(v => v && v !== "—").join(" · ") || "—"}</td></tr>
+          <tr><th>Producto del punto</th><td>{String(item.producto_nombre ?? "—")}</td></tr>
+        </>}
         <tr><th>Centro</th><td>{String(item.centro_nombre ?? "—")}</td></tr>
-        <tr><th>Stock actual</th><td><strong>{formatNum(item[tipo === "quimicos" ? "num_garrafas" : "cantidad"])}</strong> {stockLabel}</td></tr>
+        <tr><th>Stock actual</th><td><strong>{formatNum(item[tipo === "quimicos" ? "num_garrafas" : tipo === "punto" ? "producto_stock" : "cantidad"])}</strong> {stockLabel}</td></tr>
       </tbody></table>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginTop: 12 }}>
         <div className="field" style={{ width: 150 }}><label htmlFor="cq-cant">Cantidad a descontar</label>

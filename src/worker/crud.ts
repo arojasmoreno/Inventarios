@@ -132,6 +132,68 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     if (spec.afterDelete) await spec.afterDelete(c.env.DB, user, row);
     return c.json({ ok: true });
   });
+  // Importación masiva (CSV): upsert por el campo único (código/username).
+  // Cada fila se valida con las mismas reglas que el alta individual; los fallos
+  // de una fila no detienen el resto (se devuelven acumulados).
+  app.post("/import", async c => {
+    if (!allowed(c.get("user"), spec.create)) return c.json({ error: "No tienes permiso para importar registros" }, 403);
+    let body: { rows?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
+    if (body.rows.length > 500) return c.json({ error: "Máximo 500 registros por importación" }, 400);
+    const uniqueField = spec.fields.find(f => f.unique);
+    const existingByCode = new Map<string, Record<string, unknown>>();
+    if (uniqueField) {
+      const rows = (await c.env.DB.prepare(`SELECT id, ${uniqueField.name} FROM ${spec.table} WHERE ${uniqueField.name} IS NOT NULL`).all()).results as Record<string, unknown>[];
+      for (const r of rows) existingByCode.set(String(r[uniqueField.name]), r);
+    }
+    let creados = 0, actualizados = 0;
+    const errores: string[] = [];
+    for (let i = 0; i < body.rows.length; i++) {
+      let raw = body.rows[i];
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) { errores.push(`Fila ${i + 1}: no es un registro válido`); continue; }
+      // Comodidad: una columna «id» de texto se interpreta como el código/clave única.
+      if (uniqueField && (raw as Record<string, unknown>)[uniqueField.name] === undefined && typeof (raw as Record<string, unknown>).id === "string" && (raw as Record<string, unknown>).id !== "") {
+        raw = { ...(raw as Record<string, unknown>), [uniqueField.name]: (raw as Record<string, unknown>).id };
+      }
+      try {
+        let data = validate(spec, raw as Record<string, unknown>, "insert");
+        let mode: "insert" | "update" = "insert";
+        let existing: Record<string, unknown> | undefined;
+        if (uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
+          const found = existingByCode.get(String(data[uniqueField.name]));
+          if (found) {
+            mode = "update";
+            existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
+          }
+        }
+        await checkUnique(c.env.DB, spec, data, mode === "update" ? Number(existing?.id) : null);
+        if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, mode, existing);
+        const keys = Object.keys(data); if (!keys.length) { errores.push(`Fila ${i + 1}: sin datos que guardar`); continue; }
+        let rowId: number;
+        if (mode === "insert") {
+          const res = await c.env.DB.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
+          rowId = Number((res.meta as { last_row_id?: number }).last_row_id);
+          creados++;
+        } else {
+          const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
+          await c.env.DB.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), Number(existing?.id)).run();
+          rowId = Number(existing?.id);
+          actualizados++;
+        }
+        const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(rowId).first();
+        if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), row ?? data, mode);
+        if (mode === "insert" && uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
+          existingByCode.set(String(data[uniqueField.name]), { id: rowId, [uniqueField.name]: data[uniqueField.name] });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "registro no válido";
+        if (errores.length < 8) errores.push(`Fila ${i + 1}: ${msg}`);
+      }
+    }
+    if (!creados && !actualizados && errores.length) return c.json({ error: errores[0], errores }, 400);
+    return c.json({ creados, actualizados, errores });
+  });
   // Foto del artículo (base64) sin cargarla en el listado.
   if (spec.fields.some(f => f.name === "foto")) {
     app.get("/:id/foto", async c => {
