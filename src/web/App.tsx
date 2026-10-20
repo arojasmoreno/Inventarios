@@ -55,20 +55,97 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"login" | "recover">("login");
   const submit = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setError(null);
     try { const r = await api.post<{ user: User }>("/api/auth/login", { username, password }); onLoggedIn(r.user); }
     catch (err) { setError(err instanceof Error ? err.message : "Error de acceso"); }
     finally { setBusy(false); }
   };
+  if (view === "recover") return <Recover onBack={() => setView("login")} />;
   return <div className="login-wrap"><form className="login-card" onSubmit={submit}>
     <h1>Inventarios</h1><p className="sub">Químicos · Material de limpieza · Maquinaria</p>
     {error && <div className="form-error">{error}</div>}
     <div className="field" style={{ marginBottom: 12 }}><label htmlFor="u">Usuario</label><input id="u" className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
     <div className="field" style={{ marginBottom: 16 }}><label htmlFor="p">Contraseña</label><input id="p" className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
     <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button>
+    <button type="button" className="login-link" onClick={() => setView("recover")}>¿Has olvidado tu contraseña?</button>
     <div className="login-hint">Primer acceso: <strong>admin / admin123</strong> (administrador) y <strong>operario / operario123</strong> (usuario). Cambia las contraseñas desde <em>Usuarios</em> o <em>Mi cuenta</em>.</div>
   </form></div>;
+}
+
+function Recover({ onBack }: { onBack: () => void }) {
+  const [step, setStep] = useState<"email" | "code" | "password" | "done">("email");
+  const [email, setEmail] = useState("");
+  const [token, setToken] = useState("");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [info, setInfo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const sendCode = async (e: FormEvent) => {
+    e.preventDefault(); setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ token: string; message?: string }>("/api/auth/request-password-reset", { email });
+      setToken(r.token);
+      setInfo(r.message ?? "Si el correo existe en el sistema, recibirás un código de verificación.");
+      setStep("code");
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al enviar el código"); }
+    finally { setBusy(false); }
+  };
+
+  const verifyCode = async (e: FormEvent) => {
+    e.preventDefault(); setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ message?: string }>("/api/auth/verify-password-reset", { token, code });
+      setInfo(r.message ?? "Código verificado.");
+      setStep("password");
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al verificar el código"); }
+    finally { setBusy(false); }
+  };
+
+  const savePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (password !== confirm) { setError("Las contraseñas no coinciden"); return; }
+    setBusy(true); setError(null);
+    try {
+      await api.post<{ message?: string }>("/api/auth/finish-password-reset", { token, password });
+      setStep("done");
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al guardar la contraseña"); }
+    finally { setBusy(false); }
+  };
+
+  const subtitle = step === "email" ? "Paso 1 de 3 · Te enviaremos un código por correo"
+    : step === "code" ? "Paso 2 de 3 · Introduce el código recibido"
+    : step === "password" ? "Paso 3 de 3 · Elige una nueva contraseña"
+    : "Contraseña restablecida";
+
+  return <div className="login-wrap"><div className="login-card">
+    <h1>Recuperar contraseña</h1><p className="sub">{subtitle}</p>
+    {error && <div className="form-error">{error}</div>}
+    {step === "email" && <form onSubmit={sendCode}>
+      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="re">Correo electrónico</label><input id="re" className="input" type="email" autoComplete="email" placeholder="tu@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+      <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Enviando…" : "Enviar código"}</button>
+      <button type="button" className="login-link" onClick={onBack}>Volver al inicio de sesión</button>
+    </form>}
+    {step === "code" && <form onSubmit={verifyCode}>
+      {info && <div className="login-hint" style={{ marginTop: 0, marginBottom: 14 }}>{info}</div>}
+      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="rc">Código de verificación</label><input id="rc" className="input" autoComplete="one-time-code" maxLength={8} placeholder="XXXXXXXX" style={{ textTransform: "uppercase", letterSpacing: "3px", fontWeight: 600 }} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required /></div>
+      <button className="btn" style={{ width: "100%" }} disabled={busy || code.trim().length < 4}>{busy ? "Verificando…" : "Verificar código"}</button>
+      <button type="button" className="login-link" onClick={() => { setStep("email"); setError(null); }}>Usar otro correo</button>
+    </form>}
+    {step === "password" && <form onSubmit={savePassword}>
+      <div className="field" style={{ marginBottom: 12 }}><label htmlFor="np">Nueva contraseña</label><input id="np" className="input" type="password" autoComplete="new-password" minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
+      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="np2">Repite la contraseña</label><input id="np2" className="input" type="password" autoComplete="new-password" minLength={6} value={confirm} onChange={(e) => setConfirm(e.target.value)} required /></div>
+      <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Guardando…" : "Guardar contraseña"}</button>
+    </form>}
+    {step === "done" && <div>
+      <div className="login-hint" style={{ marginTop: 0, marginBottom: 16 }}>La contraseña se ha restablecido correctamente. Ya puedes iniciar sesión con tu nueva contraseña.</div>
+      <button className="btn" style={{ width: "100%" }} onClick={onBack}>Ir al inicio de sesión</button>
+    </div>}
+  </div></div>;
 }
 
 function Shell({ user, route, onUserChange }: { user: User; route: string; onUserChange: (u: User | null) => void }) {

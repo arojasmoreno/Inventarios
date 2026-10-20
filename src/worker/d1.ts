@@ -26,4 +26,8 @@ export interface AssetsBinding {
 export interface Env {
   DB: D1Database;
   ASSETS: AssetsBinding;
+  // Twilio SendGrid. En local las lee wrangler dev desde .env (o .dev.vars);
+  // en producción se inyectan como secretos del Worker.
+  SENDGRID_API_KEY?: string;
+  SENDGRID_FROM_EMAIL?: string;
 }

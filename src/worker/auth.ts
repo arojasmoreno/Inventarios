@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Env } from "./d1";
 import type { Variables } from "./types";
+import { sendPasswordResetCode } from "./email";
 
 export type App = Hono<{ Bindings: Env; Variables: Variables }>;
 
@@ -64,12 +65,9 @@ export async function getUserByToken(db: Env["DB"], token: string): Promise<Sess
      WHERE s.token = ? AND s.expires_at > datetime('now') AND u.activo = 1`,
   ).bind(token).first();
   if (!row) return null;
-  return { id: Number(row.id), username: String(row.username), nombre: String(row.nombre), rol: row.rol === "admin" ? "admin" : "usuario" };
+  return { id: Number(row.id), username: String(row.username), nombre: String(row.nombre), rol: (row.rol as "admin" | "usuario") };
 }
 
-// En producción (https) la API vive en otro dominio que el frontend, así que
-// la cookie de sesión necesita SameSite=None (implica Secure). En local (http)
-// se mantiene SameSite=Strict.
 function sessionCookieOptions(c: Context<{ Bindings: Env; Variables: Variables }>): { path: string; secure: boolean; sameSite: "Strict" | "None" } {
   const secure = new URL(c.req.url).protocol === "https:";
   return { path: "/", secure, sameSite: secure ? "None" : "Strict" };
@@ -95,6 +93,34 @@ export const requireAdmin = async (c: Context<{ Bindings: Env; Variables: Variab
   if (!user || user.rol !== "admin") return c.json({ error: "Requiere permisos de administrador" }, 403);
   await next();
 };
+
+// ---------------------------------------------------------------------------
+// Recuperación de contraseña por correo.
+// Flujo en tres pasos:
+//   1) /request-password-reset  → crea un token + código (10 min) y lo envía
+//      por correo con SendGrid. Respuesta uniforme exista o no el correo.
+//   2) /verify-password-reset   → comprueba el código y marca el token como
+//      verificado.
+//   3) /finish-password-reset   → solo acepta tokens ya verificados y vigentes
+//      y fija la contraseña nueva.
+// ---------------------------------------------------------------------------
+
+const RESET_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateResetCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let out = "";
+  for (const b of bytes) out += RESET_CODE_CHARS[b % RESET_CODE_CHARS.length];
+  return out;
+}
+
+async function findActiveReset(db: Env["DB"], token: string): Promise<{ userId: number; code: string } | null> {
+  const row = await db.prepare(
+    "SELECT user_id, code FROM password_recovery_tokens WHERE token = ? AND expires_at > datetime('now')",
+  ).bind(token).first();
+  if (!row) return null;
+  return { userId: Number(row.user_id), code: String(row.code ?? "") };
+}
 
 export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>()
   .post("/login", async (c) => {
@@ -142,4 +168,65 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     const nuevoHash = await hashPassword(nueva, salt);
     await c.env.DB.prepare("UPDATE usuarios SET password_hash = ?, salt = ? WHERE id = ?").bind(nuevoHash, salt, user.id).run();
     return c.json({ ok: true });
+  })
+  .post("/request-password-reset", async (c) => {
+    let body: { email?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!email) return c.json({ error: "Indica un correo electrónico" }, 400);
+    // Respuesta uniforme exista o no el correo, para no revelar cuentas.
+    const token = randomToken();
+    const row = await c.env.DB.prepare(
+      "SELECT id, username, nombre, email FROM usuarios WHERE email = ? AND activo = 1",
+    ).bind(email).first();
+    if (row) {
+      const code = generateResetCode();
+      await c.env.DB.prepare("DELETE FROM password_recovery_tokens WHERE user_id = ?").bind(Number(row.id)).run();
+      await c.env.DB.prepare(
+        "INSERT INTO password_recovery_tokens (user_id, token, code, expires_at) VALUES (?, ?, ?, datetime('now', '+10 minutes'))",
+      ).bind(Number(row.id), token, code).run();
+      try {
+        await sendPasswordResetCode(c.env, String(row.email), String(row.username), String(row.nombre), code);
+      } catch (err) {
+        console.error("No se pudo enviar el correo de recuperación:", err);
+        await c.env.DB.prepare("DELETE FROM password_recovery_tokens WHERE token = ?").bind(token).run();
+        return c.json({ error: "No se pudo enviar el correo de verificación. Inténtalo más tarde." }, 503);
+      }
+    }
+    return c.json({ ok: true, token, message: "Si el correo existe en el sistema, recibirás un código de verificación." });
+  })
+  .post("/verify-password-reset", async (c) => {
+    let body: { token?: unknown; code?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    const token = typeof body.token === "string" ? body.token : "";
+    const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
+    if (!token || !code) return c.json({ error: "Indica el código de verificación" }, 400);
+    const active = await findActiveReset(c.env.DB, token);
+    if (!active) return c.json({ error: "El código no es válido o ha caducado" }, 400);
+    if (active.code) {
+      if (active.code !== code) return c.json({ error: "El código no es válido o ha caducado" }, 400);
+      // Marca el token como verificado (código vacío) para el paso siguiente.
+      await c.env.DB.prepare("UPDATE password_recovery_tokens SET code = '' WHERE token = ?").bind(token).run();
+    }
+    return c.json({ ok: true, message: "Código verificado. Ahora puedes crear una nueva contraseña." });
+  })
+  .post("/finish-password-reset", async (c) => {
+    let body: { token?: unknown; password?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    const token = typeof body.token === "string" ? body.token : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!token) return c.json({ error: "Petición inválida" }, 400);
+    if (password.length < 6) return c.json({ error: "La contraseña debe tener al menos 6 caracteres" }, 400);
+    // Solo tokens con el código ya verificados y aún vigentes. No se modifica
+    // `activo`: una cuenta desactivada no puede recuperar el acceso por aquí.
+    const row = await c.env.DB.prepare(
+      "SELECT user_id FROM password_recovery_tokens WHERE token = ? AND code = '' AND expires_at > datetime('now')",
+    ).bind(token).first();
+    if (!row) return c.json({ error: "Verifica el código primero o el enlace ha caducado" }, 400);
+    const userId = Number(row.user_id);
+    const salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
+    const hash = await hashPassword(password, salt);
+    await c.env.DB.prepare("UPDATE usuarios SET password_hash = ?, salt = ? WHERE id = ?").bind(hash, salt, userId).run();
+    await c.env.DB.prepare("DELETE FROM password_recovery_tokens WHERE user_id = ?").bind(userId).run();
+    return c.json({ ok: true, message: "La contraseña se ha restablecido correctamente." });
   });
