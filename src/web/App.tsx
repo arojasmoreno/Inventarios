@@ -10,6 +10,8 @@ import { Informes } from "./Informes";
 import { ZonasCentroPage } from "./zonas";
 import { EstacionesPage } from "./estaciones";
 import { EntregaPage } from "./entrega";
+import { PanelPage } from "./panel";
+import { GlobalSearch } from "./busqueda";
 
 export interface User {
   id: number;
@@ -35,6 +37,12 @@ interface NavGroup {
 
 // Menú lateral agrupado por secciones (iconos de la web de referencia).
 const NAV: NavGroup[] = [
+  {
+    section: "Resumen",
+    items: [
+      { hash: "#/panel", label: "Panel de control", icon: "🏠" },
+    ],
+  },
   {
     section: "Consumibles",
     items: [
@@ -89,9 +97,9 @@ const rolBadge = (rol: string) => (rol === "admin" ? "info" : rol === "admin_cen
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [route, setRoute] = useState<string>(() => window.location.hash || "#/quimicos");
+  const [route, setRoute] = useState<string>(() => window.location.hash || "#/panel");
   useEffect(() => {
-    const onHash = () => setRoute(window.location.hash || "#/quimicos");
+    const onHash = () => setRoute(window.location.hash || "#/panel");
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -100,6 +108,8 @@ export function App() {
     api.get<{ user: User }>("/api/auth/me").then((r) => { if (!cancelled) setUser(r.user); }).catch(() => { if (!cancelled) setUser(null); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+  // Con sesión iniciada y sin sección concreta, la URL refleja el panel de control.
+  useEffect(() => { if (user && !window.location.hash) window.location.hash = "#/panel"; }, [user]);
   if (loading) return <div className="loading">Cargando Inventarios…</div>;
   if (!user) return <Login onLoggedIn={setUser} />;
   return <Shell user={user} route={route} onUserChange={setUser} />;
@@ -212,6 +222,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   const active = NAV_FLAT.find((n) => n.hash === route || route.startsWith(`${n.hash}?`)) ?? NAV_FLAT[0];
   let page: ReactNode;
   if (route === "#/cuenta") page = <MiCuenta user={user} />;
+  else if (route === "#/panel") page = <PanelPage />;
   else if (route.startsWith("#/estaciones")) page = <EstacionesPage user={user} />;
   else if (route === "#/zonas") page = <ZonasCentroPage user={user} />;
   else if (route === "#/entregas") page = <EntregaPage user={user} />;
@@ -235,7 +246,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       <div className="nav-section">Cuenta</div><a className={"nav-item" + (route === "#/cuenta" ? " active" : "")} href="#/cuenta"><span>⚙️</span> Mi cuenta</a>
       <div className="sidebar-footer"><div className="who">{user.nombre}</div><div>{rolLabel(user.rol)}</div><button className="btn secondary small" style={{ marginTop: 10 }} onClick={logout}>Cerrar sesión</button></div>
     </aside>
-    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="no-print"><span className={`badge ${rolBadge(user.rol)}`}>{rolLabel(user.rol)}</span></div></header><div className="content">{page}</div></main>
+    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print"><GlobalSearch /><span className={`badge ${rolBadge(user.rol)}`}>{rolLabel(user.rol)}</span></div></header><div className="content">{page}</div></main>
     {logoutToast && <Toast message="Sesión cerrada. Hasta pronto." kind="ok" onClose={() => setLogoutToast(false)} />}
   </div>;
 }

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { api } from "./api";
 import { Modal, Toast, downloadCsv, formatNum } from "./ui";
-import { QrModal } from "./qr";
+import { QrLoteModal, QrModal } from "./qr";
 
 type Row = Record<string, unknown>;
 
@@ -55,9 +55,20 @@ export function EstacionesPage({ user }: { user: { rol: string; nombre: string }
 // ---------------------------------------------------------------- Lista CRUD
 function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id: number) => void }) {
   const [items, setItems] = useState<Row[]>([]);
+  const [centros, setCentros] = useState<Row[]>([]);
+  const [zonas, setZonas] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  // Filtros: la lista puede abrirse ya filtrada desde «Zonas» (#/estaciones?zona=ID).
+  const [fCentro, setFCentro] = useState("all");
+  const [fZona, setFZona] = useState<string>(() => {
+    if (typeof window === "undefined") return "all"; // render SSR
+    return /zona=(\d+)/.exec(window.location.hash)?.[1] ?? "all";
+  });
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [fBajo, setFBajo] = useState(false);
+  const [qrLote, setQrLote] = useState<Row[] | null>(null);
   const [editing, setEditing] = useState<Row | null | "new">(null);
   const [qrRow, setQrRow] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
@@ -65,7 +76,14 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setItems((await api.get<{ items: Row[] }>("/api/estaciones")).items); }
+    try {
+      const [e, c, z] = await Promise.all([
+        api.get<{ items: Row[] }>("/api/estaciones"),
+        api.get<{ items: Row[] }>("/api/centros"),
+        api.get<{ items: Row[] }>("/api/zonas"),
+      ]);
+      setItems(e.items); setCentros(c.items); setZonas(z.items);
+    }
     catch (e) { setError(e instanceof Error ? e.message : "Error cargando estaciones"); }
     finally { setLoading(false); }
   }, []);
@@ -73,10 +91,49 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return items;
-    return items.filter((e) => [nombreEstacion(e), e.centro_nombre, e.tipo_nombre, e.articulo_nombre, e.articulo_codigo]
-      .some((v) => String(v ?? "").toLowerCase().includes(needle)));
-  }, [items, q]);
+    return items.filter((e) =>
+      (fCentro === "all" || String(e.centro_id) === fCentro) &&
+      (fZona === "all" || String(e.zona_id) === fZona) &&
+      (!fBajo || (Number(e.articulo_stock_minimo ?? 0) > 0 && Number(e.articulo_stock ?? 0) <= Number(e.articulo_stock_minimo))) &&
+      (!needle || [nombreEstacion(e), e.centro_nombre, e.tipo_nombre, e.articulo_nombre, e.articulo_codigo]
+        .some((v) => String(v ?? "").toLowerCase().includes(needle))));
+  }, [items, q, fCentro, fZona, fBajo]);
+
+  // Estaciones cuyo artículo ha llegado al stock mínimo (o por debajo).
+  const conStockBajo = useMemo(
+    () => items.filter((e) => Number(e.articulo_stock_minimo ?? 0) > 0 && Number(e.articulo_stock ?? 0) <= Number(e.articulo_stock_minimo)),
+    [items],
+  );
+
+  // Listado agrupado por centro › zona › subzona (enlazado con la página «Zonas»).
+  const grupos = useMemo(() => {
+    const map = new Map<string, { titulo: string; rows: Row[] }>();
+    for (const e of filtered) {
+      const partes = [e.centro_nombre, e.zona_nombre, e.subzona_nombre].map((v) => String(v ?? "—"));
+      const key = partes.join("¦");
+      let g = map.get(key);
+      if (!g) { g = { titulo: partes.join(" › "), rows: [] }; map.set(key, g); }
+      g.rows.push(e);
+    }
+    return [...map.values()];
+  }, [filtered]);
+
+  const zonasOptions = useMemo(
+    () => zonas.filter((z) => fCentro === "all" || String(z.centro_id) === fCentro),
+    [zonas, fCentro],
+  );
+
+  // Botón «−1»: descuenta de inmediato una unidad del consumible de la estación.
+  const descontar1 = async (row: Row) => {
+    const id = Number(row.id);
+    setBusyId(id);
+    try {
+      const r = await api.post<{ mensaje?: string }>(`/api/estaciones/${id}/consumir`, { cantidad: 1 });
+      setToast({ message: r.mensaje ?? "1 unidad descontada", kind: "ok" });
+      await load();
+    } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo descontar la unidad", kind: "error" }); }
+    finally { setBusyId(null); }
+  };
 
   const remove = async (row: Row) => {
     if (!window.confirm(`¿Eliminar la estación «${nombreEstacion(row)}»? Esta acción no se puede deshacer.`)) return;
@@ -102,44 +159,72 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
   return <>
     <div className="toolbar no-print">
       <input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar estación…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <select className="input" style={{ maxWidth: 200 }} value={fCentro} onChange={(e) => { setFCentro(e.target.value); setFZona("all"); }} aria-label="Filtrar por centro">
+        <option value="all">Todos los centros</option>
+        {centros.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
+      </select>
+      <select className="input" style={{ maxWidth: 200 }} value={fZona} onChange={(e) => setFZona(e.target.value)} aria-label="Filtrar por zona">
+        <option value="all">Todas las zonas</option>
+        {zonasOptions.map((z) => <option key={String(z.id)} value={String(z.id)}>{String(z.nombre)}</option>)}
+      </select>
+      <button className="chip" style={{ padding: "7px 12px" }} onClick={() => setFBajo((v) => !v)} aria-pressed={fBajo}>
+        📉 Stock bajo{conStockBajo.length ? ` (${conStockBajo.length})` : ""}
+      </button>
       <div className="spacer" />
+      <button className="btn secondary" onClick={() => setQrLote(filtered)} disabled={!filtered.length}>🖨️ QR ({filtered.length})</button>
       <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>
       {canWrite && <button className="btn" onClick={() => setEditing("new")}>＋ Nueva estación</button>}
     </div>
     <div className="card">
       {!filtered.length
         ? <div className="empty"><span className="icon">🚻</span><strong>No hay estaciones</strong>
-            <p>Crea estaciones de consumo: cada una apunta a una zona, subzona y soporte, y descuenta su artículo al escanear el QR.</p></div>
+            <p>{q || fCentro !== "all" || fZona !== "all" || fBajo
+              ? "Ninguna estación coincide con la búsqueda o los filtros actuales."
+              : "Crea estaciones de consumo: cada una apunta a una zona, subzona y soporte, y descuenta su artículo al escanear el QR."}</p></div>
         : <div className="table-scroll"><table>
           <thead><tr>
             <th>Estación</th><th>Centro</th><th>Tipo de consumible</th><th>Artículo</th>
             <th className="right">Stock</th><th>Estado</th><th>Último consumo</th><th className="right">Acciones</th>
           </tr></thead>
-          <tbody>{filtered.map((e) => <tr key={String(e.id)}>
+          <tbody>{grupos.map((g) => <Fragment key={g.titulo}>
+            <tr className="grp"><td colSpan={8}>📍 {g.titulo} · {g.rows.length} estación{g.rows.length === 1 ? "" : "es"}</td></tr>
+            {g.rows.map((e) => <tr key={String(e.id)}>
             <td><strong>{nombreEstacion(e)}</strong></td>
             <td>{String(e.centro_nombre ?? "—")}</td>
             <td>{String(e.tipo_nombre ?? "—")}</td>
             <td>{String(e.articulo_nombre ?? "—")}{e.articulo_codigo ? <span style={{ color: "var(--muted)" }}> · {String(e.articulo_codigo)}</span> : null}</td>
-            <td className="right">{formatNum(e.articulo_stock)}</td>
+            <td className="right">{formatNum(e.articulo_stock)}
+              {Number(e.articulo_stock_minimo ?? 0) > 0 && Number(e.articulo_stock ?? 0) <= Number(e.articulo_stock_minimo)
+                ? <> <span className="badge danger">⚠️ mín. {formatNum(e.articulo_stock_minimo)}</span></> : null}</td>
             <td>{Number(e.activo) === 1 ? <span className="badge ok">Activa</span> : <span className="badge muted">Desactivada</span>}</td>
             <td>{e.ultimo_consumo_fecha
               ? <><span style={{ color: "var(--muted)", fontSize: 12 }}>{fechaCorta(e.ultimo_consumo_fecha)}</span><br /><span style={{ fontSize: 12 }}>{String(e.ultimo_consumo_detalle ?? "—")}</span></>
               : "—"}</td>
             <td className="right"><div className="row-actions">
+              <button className="btn small" title="Descuenta ahora 1 unidad del consumible de esta estación"
+                onClick={() => void descontar1(e)}
+                disabled={busyId === Number(e.id) || Number(e.activo) !== 1 || Number(e.articulo_stock ?? 0) < 1}>
+                {busyId === Number(e.id) ? "Descontando…" : "➖ −1 ud"}
+              </button>
               <button className="btn secondary small" onClick={() => setQrRow(e)}>🏷️ QR</button>
-              <button className="btn small" onClick={() => onModo(Number(e.id))}>▶ Consumir</button>
+              <button className="btn secondary small" onClick={() => onModo(Number(e.id))}>▶ Consumir</button>
               {canWrite && <>
                 <button className="btn secondary small" onClick={() => setEditing(e)}>✏️ Editar</button>
                 <button className="btn danger small" onClick={() => void remove(e)}>🗑️ Borrar</button>
               </>}
             </div></td>
-          </tr>)}</tbody>
+          </tr>)}
+          </Fragment>)}</tbody>
         </table></div>}
     </div>
     <p className="no-print" style={{ color: "var(--muted)", margin: 0 }}>
-      {filtered.length} de {items.length} estaciones · al escanear el QR de una estación se abre el modo estación para descontar unidades y poder deshacerlo.
+      {filtered.length} de {items.length} estaciones · agrupadas por centro › zona › subzona · «➖ −1 ud» descuenta una unidad al instante y el QR abre el modo estación para descontar más unidades y poder deshacerlo.
     </p>
     {qrRow && <QrModal tipo="estacion" id={Number(qrRow.id)} title={nombreEstacion(qrRow)} onClose={() => setQrRow(null)} />}
+    {qrLote && <QrLoteModal
+      items={qrLote.map((e) => ({ id: Number(e.id), title: nombreEstacion(e) }))}
+      subtitle="Una etiqueta por estación, lista para pegar en su soporte"
+      onClose={() => setQrLote(null)} />}
     {editing && <EstacionForm initial={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async (msg) => { setEditing(null); setToast({ message: msg, kind: "ok" }); await load(); }} />}
     {toast && <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} />}
   </>;
@@ -262,6 +347,7 @@ type BarcodeDetectorCtor = new (o: { formats: string[] }) => Detector;
 
 function EstacionModo({ id, user, onExit }: { id: number; user: { nombre: string }; onExit: () => void }) {
   const [item, setItem] = useState<Row | null>(null);
+  const [historial, setHistorial] = useState<Row[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
   const [cantidad, setCantidad] = useState("1");
@@ -273,7 +359,13 @@ function EstacionModo({ id, user, onExit }: { id: number; user: { nombre: string
 
   const load = useCallback(async () => {
     setError(null);
-    try { setItem((await api.get<{ item: Row }>(`/api/estaciones/${id}`)).item); }
+    try {
+      const [it, hist] = await Promise.all([
+        api.get<{ item: Row }>(`/api/estaciones/${id}`),
+        api.get<{ items: Row[] }>(`/api/estaciones/${id}/movimientos?limit=5`).catch(() => ({ items: [] as Row[] })),
+      ]);
+      setItem(it.item); setHistorial(hist.items);
+    }
     catch (e) { setItem(null); setError(e instanceof Error ? e.message : "Estación no encontrada"); }
   }, [id]);
   useEffect(() => { void load(); }, [load]);
@@ -379,6 +471,8 @@ function EstacionModo({ id, user, onExit }: { id: number; user: { nombre: string
       <div className="station-stock-label">unidades disponibles</div>
       {item.articulo_lote ? <div className="station-muted">Lote: {String(item.articulo_lote)}</div> : null}
       {!item.articulo_lote && item.articulo_color ? <div className="station-muted">Color: {String(item.articulo_color)}</div> : null}
+      {Number(item.articulo_stock_minimo ?? 0) > 0 && Number(item.articulo_stock ?? 0) <= Number(item.articulo_stock_minimo)
+        ? <div className="station-error" style={{ marginTop: 4 }}>⚠️ Stock mínimo: {formatNum(item.articulo_stock_minimo)} ud.</div> : null}
     </div>
 
     {Number(item.activo) !== 1 && <div className="station-feedback station-error">Esta estación está desactivada: no admite consumos.</div>}
@@ -395,6 +489,12 @@ function EstacionModo({ id, user, onExit }: { id: number; user: { nombre: string
       </button>
     </div>
 
+    <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 10 }} aria-label="Cantidades rápidas">
+      <span className="station-muted" style={{ alignSelf: "center" }}>Rápida:</span>
+      {[1, 2, 5].map((n) => <button key={n} className={"btn " + (Number(cantidad) === n ? "" : "secondary")} style={{ minWidth: 58, justifyContent: "center" }}
+        onClick={() => setCantidad(String(n))}>{n} ud.</button>)}
+    </div>
+
     <div className="station-last">
       {ultimo
         ? <>
@@ -403,6 +503,17 @@ function EstacionModo({ id, user, onExit }: { id: number; user: { nombre: string
           </>
         : <div className="station-muted">Sin consumos pendientes de deshacer en esta estación.</div>}
     </div>
+
+    {historial.length > 0 && <div style={{ marginTop: 12, borderTop: "1px dashed var(--border)", paddingTop: 10 }}>
+      <div className="station-muted" style={{ marginBottom: 6 }}>Últimos movimientos</div>
+      {historial.map((h) => <div key={String(h.id)} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, padding: "2px 0" }}>
+        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{fechaCorta(h.created_at)}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
+          {String(h.descripcion ?? "—")}{h.usuario_nombre ? <span style={{ color: "var(--muted)" }}> · {String(h.usuario_nombre)}</span> : null}
+        </span>
+        <strong style={{ whiteSpace: "nowrap" }}>{String(h.accion) === "deshacer_consumo" ? "+" : "−"}{formatNum(h.cantidad)}</strong>
+      </div>)}
+    </div>}
 
     <div className="station-scan" style={{ marginTop: 14 }}>
       {scanning

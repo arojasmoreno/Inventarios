@@ -19,6 +19,8 @@ interface Informe {
   quimicos: Row[]; material: Row[]; maquinaria: Row[]; epis: Row[]; ropas: Row[];
   por_color: { color: string; unidades: number; registros: number }[];
   por_tipo: { tipo: string; unidades: number; registros: number }[];
+  consumos_por_zona: { centro: string; zona: string; movimientos: number; unidades: number; ultimo: string | null }[];
+  consumos_por_subzona: { zona: string; subzona: string; movimientos: number; unidades: number; ultimo: string | null }[];
 }
 function estadoCaducidad(row: Row): { label: string; kind: string } {
   const e = String(row.estado_caducidad ?? "ok");
@@ -57,6 +59,9 @@ export function Informes() {
   const csvEpis = () => downloadCsv(`informe-epis-${stamp}.csv`,
     ["Código", "Marca", "Modelo", "Talla", "Descripción", "Stock", "Próxima revisión", "Centro"],
     data.epis.map(e => [String(e.codigo ?? ""), String(e.marca ?? ""), String(e.modelo ?? ""), String(e.talla ?? ""), String(e.descripcion ?? ""), formatNum(e.stock), formatFecha(e.fecha_revision), String(e.centro_nombre ?? "—")]));
+  const csvZonas = () => downloadCsv(`informe-consumos-zonas-${stamp}.csv`,
+    ["Centro", "Zona", "Movimientos", "Unidades", "Último consumo"],
+    data.consumos_por_zona.map(z => [String(z.centro), String(z.zona), z.movimientos, z.unidades, String(z.ultimo ?? "")]));
   const csvRopa = () => downloadCsv(`informe-ropa-${stamp}.csv`,
     ["Código", "Prenda", "Marca", "Modelo", "Talla", "Stock", "Centro"],
     data.ropas.map(p => [String(p.codigo ?? ""), String(p.prenda ?? ""), String(p.marca ?? ""), String(p.modelo ?? ""), String(p.talla ?? ""), formatNum(p.stock), String(p.centro_nombre ?? "—")]));
@@ -83,6 +88,19 @@ export function Informes() {
       <div className="kpi"><div className="label">Maquinaria</div><div className="value">{formatNum(r.maquinaria.unidades)} uds.</div><div style={{ color: "var(--muted)" }}>{formatNum(r.maquinaria.registros)} tipos de máquina</div></div>
       <div className="kpi"><div className="label">EPIs · Ropa</div><div className="value">{formatNum(r.epis.unidades + r.ropa.unidades)} uds.</div><div style={{ color: "var(--muted)" }}>{formatNum(r.epis.registros)} EPIs · {formatNum(r.ropa.registros)} prendas</div></div>
       <div className={"kpi" + (data.stock_bajo.total > 0 || data.caducidad.vencidas > 0 ? " alert" : "")}><div className="label">Alertas</div><div className="value">{formatNum(data.stock_bajo.total + data.caducidad.vencidas)}</div><div style={{ color: "var(--muted)" }}>stock bajo + caducidades vencidas ({formatNum(data.caducidad.en90)} en ≤90 d)</div></div>
+    </div>
+    <div className="card"><div className="card-pad section-head"><h3>📍 Consumos por zona y subzona</h3><button className="btn secondary small no-print" onClick={csvZonas} disabled={!data.consumos_por_zona.length}>⬇️ CSV</button></div>
+      {data.consumos_por_zona.length ? <>
+        <div className="table-scroll"><table>
+          <thead><tr><th>Centro</th><th>Zona</th><th className="right">Movimientos</th><th className="right">Unidades</th><th>Último consumo</th></tr></thead>
+          <tbody>{data.consumos_por_zona.map((z, i) => <tr key={`${String(z.centro)}-${String(z.zona)}-${i}`}>
+            <td>{String(z.centro)}</td><td><strong>{String(z.zona)}</strong></td>
+            <td className="right">{formatNum(z.movimientos)}</td><td className="right">{formatNum(z.unidades)}</td>
+            <td>{z.ultimo ? String(z.ultimo).replace("T", " ").slice(0, 16) : "—"}</td></tr>)}</tbody></table></div>
+        {data.consumos_por_subzona.length > 0 && <div className="card-pad" style={{ paddingTop: 0 }}>
+          <div className="chips">{data.consumos_por_subzona.map((s, i) => <span className="badge" key={`${String(s.zona)}-${String(s.subzona)}-${i}`}>🧱 {String(s.zona)} › {String(s.subzona)}: {formatNum(s.unidades)} ud.</span>)}</div>
+        </div>}
+      </> : <div className="empty" style={{ padding: 20 }}>Sin consumos de estaciones registrados todavía.</div>}
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🧴 Productos químicos ({formatNum(data.quimicos.length)})</h3><button className="btn secondary small no-print" onClick={csvQuimicos}>⬇️ CSV</button></div>
       {!data.quimicos.length ? <div className="empty">Sin productos químicos en {alcance}.</div> : <div className="table-scroll"><table>

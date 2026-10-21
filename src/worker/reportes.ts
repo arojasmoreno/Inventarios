@@ -35,6 +35,19 @@ reportesRoutes.get("/", async (c) => {
   const porTipo = new Map<string, { tipo: string; unidades: number; registros: number }>();
   for (const r of maquinaria) { const tipo = String(r.tipo); const e = porTipo.get(tipo) ?? { tipo, unidades: 0, registros: 0 }; e.unidades += Number(r.cantidad ?? 0); e.registros++; porTipo.set(tipo, e); }
   const estado = (r: Row): string => String(r.estado_caducidad);
+  // Consumos de estaciones agrupados por ubicación (zona y subzona).
+  const whereMov = centroId ? " AND e.centro_id = ?" : "";
+  const bindMov = <T extends Row>(sql: string) => (centroId ? db.prepare(sql).bind(centroId).all<T>() : db.prepare(sql).all<T>());
+  const porZonaRes = await bindMov<Row>(`SELECT COALESCE(c.nombre, '(sin centro)') AS centro, COALESCE(z.nombre, '(sin zona)') AS zona,
+    COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS unidades, MAX(m.created_at) AS ultimo
+    FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
+    LEFT JOIN zonas z ON z.id = e.zona_id LEFT JOIN centros c ON c.id = e.centro_id
+    WHERE m.accion = 'consumo'${whereMov} GROUP BY centro, zona ORDER BY unidades DESC`);
+  const porSubzonaRes = await bindMov<Row>(`SELECT COALESCE(z.nombre, '(sin zona)') AS zona, COALESCE(s.nombre, '(sin subzona)') AS subzona,
+    COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS unidades, MAX(m.created_at) AS ultimo
+    FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
+    LEFT JOIN zonas z ON z.id = e.zona_id LEFT JOIN subzonas s ON s.id = e.subzona_id
+    WHERE m.accion = 'consumo'${whereMov} GROUP BY zona, subzona ORDER BY unidades DESC`);
   // Solo cantidades: los costes se han eliminado de los consumibles.
   const bajoDe = (rows: Row[], key: string): number => rows.filter((r) => Number(r.stock_minimo ?? 0) > 0 && Number(r[key] ?? 0) <= Number(r.stock_minimo)).length;
   const sQ = bajoDe(quimicos, "num_garrafas"), sM = bajoDe(material, "cantidad");
@@ -56,5 +69,7 @@ reportesRoutes.get("/", async (c) => {
     quimicos, material, maquinaria, epis, ropas,
     por_color: [...porColor.values()].sort((a, b) => b.unidades - a.unidades),
     por_tipo: [...porTipo.values()].sort((a, b) => b.unidades - a.unidades),
+    consumos_por_zona: porZonaRes.results,
+    consumos_por_subzona: porSubzonaRes.results,
   });
 });

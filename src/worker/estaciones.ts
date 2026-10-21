@@ -35,6 +35,7 @@ export const estacionesSpec: CrudSpec = {
     "COALESCE(aq.numero_lote, ae.codigo, ar.codigo) AS articulo_lote",
     "am.color AS articulo_color",
     "COALESCE(aq.num_garrafas, am.cantidad, ae.stock, ar.stock, amq.cantidad) AS articulo_stock",
+    "COALESCE(aq.stock_minimo, am.stock_minimo, ae.stock_minimo, ar.stock_minimo, 0) AS articulo_stock_minimo",
     `${ULTIMO_CONSUMO} AS ultimo_consumo_id`,
     `(SELECT m.cantidad FROM movimientos m WHERE m.id = ${ULTIMO_CONSUMO}) AS ultimo_consumo_cantidad`,
     `(SELECT m.descripcion FROM movimientos m WHERE m.id = ${ULTIMO_CONSUMO}) AS ultimo_consumo_detalle`,
@@ -100,6 +101,22 @@ function ubicacionDe(e: Record<string, unknown>): string {
 
 export const estaciones = createCrud(estacionesSpec);
 
+// Historial de la estación: últimos movimientos (consumos y deshaces) con su operario.
+estaciones.get("/:id/movimientos", requireAuth, async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id < 1) return c.json({ error: "Estación no válida" }, 400);
+  const e = await c.env.DB.prepare("SELECT id FROM estaciones WHERE id = ?").bind(id).first();
+  if (!e) return c.json({ error: "Estación no encontrada" }, 404);
+  const raw = Number(c.req.query("limit"));
+  const limit = Number.isInteger(raw) && raw >= 1 && raw <= 50 ? raw : 10;
+  const res = await c.env.DB.prepare(
+    `SELECT m.id, m.accion, m.cantidad, m.descripcion, m.created_at, u.nombre AS usuario_nombre
+     FROM movimientos m LEFT JOIN usuarios u ON u.id = m.usuario_id
+     WHERE m.estacion_id = ? ORDER BY m.id DESC LIMIT ?`,
+  ).bind(id, limit).all();
+  return c.json({ items: res.results });
+});
+
 // Al escanear el QR de la estación se descuenta el artículo que tiene asignado.
 estaciones.post("/:id/consumir", requireAuth, async (c) => {
   const id = Number(c.req.param("id"));
@@ -114,6 +131,9 @@ estaciones.post("/:id/consumir", requireAuth, async (c) => {
   const target = STOCK_TABLA[String(e.articulo_tipo)];
   if (!target) return c.json({ error: "La estación no tiene un tipo de artículo válido" }, 500);
   const productoId = Number(e.articulo_id);
+  // El nombre del artículo vive en columnas distintas según la tabla («prenda» en ropa de trabajo, «descripcion» en EPIs…).
+  const prod = await c.env.DB.prepare(`SELECT id, ${target.columnaNombre} AS nombre, ${target.columna} AS stock FROM ${target.tabla} WHERE id = ?`).bind(productoId).first();
+  if (!prod) return c.json({ error: "El artículo asignado a la estación ya no existe" }, 400);
   const upd = await c.env.DB.prepare(
     `UPDATE ${target.tabla} SET ${target.columna} = ${target.columna} - ?, updated_at = datetime('now') WHERE id = ? AND ${target.columna} >= ?`,
   ).bind(cantidad, productoId, cantidad).run();
@@ -122,13 +142,13 @@ estaciones.post("/:id/consumir", requireAuth, async (c) => {
     const restantes = Number(row?.stock ?? 0);
     return c.json({ error: `Stock insuficiente: quedan${restantes === 1 ? "" : "n"} ${restantes} unidades` }, 400);
   }
-  const prod = await c.env.DB.prepare(`SELECT id, nombre, ${target.columna} AS stock FROM ${target.tabla} WHERE id = ?`).bind(productoId).first();
+  const stockRow = await c.env.DB.prepare(`SELECT ${target.columna} AS stock FROM ${target.tabla} WHERE id = ?`).bind(productoId).first();
   const ubicacion = ubicacionDe(e);
   await logMovimiento(c.env.DB, c.get("user"), "consumo", target.tabla, productoId,
     `${String(prod?.nombre ?? "Producto")} → ${ubicacion}`, cantidad, null, id);
   return c.json({
     ok: true,
-    item: { nombre: prod?.nombre ?? null, stock: prod?.stock ?? null },
+    item: { nombre: prod.nombre ?? null, stock: stockRow?.stock ?? null },
     ubicacion,
     mensaje: `Descontada${cantidad === 1 ? "" : "s"} ${cantidad} unidad${cantidad === 1 ? "" : "es"} en ${ubicacion}`,
   });

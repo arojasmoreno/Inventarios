@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { Modal, Toast } from "./ui";
+import { QrLoteModal } from "./qr";
 
 type Row = Record<string, unknown>;
+
+// Nombre corto de un punto de consumo dentro de su zona (subzona › soporte).
+const nombrePunto = (e: Row): string => {
+  const partes = [e.subzona_nombre, e.soporte_nombre].filter((v): v is string => Boolean(v));
+  return partes.join(" › ") || `Estación #${String(e.id)}`;
+};
 
 /**
  * Zonas y subzonas por centro (estilo de la web de referencia):
@@ -13,6 +20,8 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
   const [centros, setCentros] = useState<Row[]>([]);
   const [zonas, setZonas] = useState<Row[]>([]);
   const [subzonas, setSubzonas] = useState<Row[]>([]);
+  const [estaciones, setEstaciones] = useState<Row[]>([]);
+  const [qrLote, setQrLote] = useState<{ zona: string; ests: Row[] } | null>(null);
   const [centroId, setCentroId] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,12 +34,13 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [c, z, s] = await Promise.all([
+      const [c, z, s, est] = await Promise.all([
         api.get<{ items: Row[] }>("/api/centros"),
         api.get<{ items: Row[] }>("/api/zonas"),
         api.get<{ items: Row[] }>("/api/subzonas"),
+        api.get<{ items: Row[] }>("/api/estaciones"),
       ]);
-      setCentros(c.items); setZonas(z.items); setSubzonas(s.items);
+      setCentros(c.items); setZonas(z.items); setSubzonas(s.items); setEstaciones(est.items);
     } catch (e) { setError(e instanceof Error ? e.message : "Error cargando zonas"); }
     finally { setLoading(false); }
   }, []);
@@ -102,10 +112,12 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
       ? <div className="card empty"><span className="icon">🗺️</span><strong>No hay zonas</strong><p>Pulsa «Nueva zona» para crear la primera zona de este centro.</p></div>
       : filtradas.map((z) => {
         const subs = subsDe(Number(z.id));
+        const ests = estaciones.filter((e) => String(e.zona_id) === String(z.id));
         return <div className="card card-pad" key={String(z.id)}>
           <div className="section-head">
             <h3>🗺️ {String(z.nombre)}</h3>
             <div className="row-actions">
+              <span className={`badge ${ests.length ? "info" : "muted"}`}>{ests.length} punto{ests.length === 1 ? "" : "s"} de consumo</span>
               <span className="badge muted">{nombreCentro(z.centro_id)}</span>
               {canWrite && <>
                 <button className="btn secondary small" onClick={() => openZona(z)}>✏️ Editar</button>
@@ -124,10 +136,24 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
             </span>)}
             {!subs.length && <span style={{ color: "var(--muted)", fontSize: 13 }}>Sin subzonas todavía.</span>}
           </div>
-          {canWrite && <button className="btn secondary small" onClick={() => openSub(z)}>＋ Añadir subzona</button>}
+          {ests.length > 0 && <div className="chips" style={{ marginBottom: canWrite ? 8 : 0 }}>
+            {ests.map((e) => <a className="chip" key={String(e.id)} href={`#/estaciones?consumo=${String(e.id)}`}
+              title={`Abrir el modo estación de ${nombrePunto(e)} · ${String(e.articulo_nombre ?? "")} (stock ${String(e.articulo_stock ?? 0)})`}>
+              🚻 {nombrePunto(e)}
+            </a>)}
+          </div>}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <a className="btn secondary small" href={`#/estaciones?zona=${String(z.id)}`}>🚻 Ver puntos de consumo{ests.length ? ` (${ests.length})` : ""}</a>
+            {ests.length > 0 && <button className="btn secondary small" onClick={() => setQrLote({ zona: String(z.nombre), ests })}>🖨️ Imprimir QR de la zona</button>}
+            {canWrite && <button className="btn secondary small" onClick={() => openSub(z)}>＋ Añadir subzona</button>}
+          </div>
         </div>;
       })}
 
+    {qrLote && <QrLoteModal
+      items={qrLote.ests.map((e) => ({ id: Number(e.id), title: nombrePunto(e) }))}
+      subtitle={`Zona ${qrLote.zona} · una etiqueta por estación`}
+      onClose={() => setQrLote(null)} />}
     {editing && <Modal
       title={editing.mode === "create"
         ? (editing.kind === "zona" ? "Nueva zona" : `Nueva subzona · ${nombreZona}`)
