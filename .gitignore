@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .wrangler/
+tsconfig.tsbuildinfo
 .env
 .env.*
 *.log
