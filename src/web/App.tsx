@@ -12,6 +12,7 @@ import { EstacionesPage } from "./estaciones";
 import { EntregaPage } from "./entrega";
 import { PanelPage } from "./panel";
 import { GlobalSearch } from "./busqueda";
+import { DocumentosPage } from "./documentos";
 
 export interface User {
   id: number;
@@ -72,6 +73,7 @@ const NAV: NavGroup[] = [
   {
     section: "Gestión",
     items: [
+      { hash: "#/documentacion", label: "Documentación", icon: "📚" },
       { hash: "#/entregas", label: "Entregar ropa", icon: "👕" },
       { hash: "#/tallas", label: "Tallas operarios", icon: "📏", resource: TALLAS },
       { hash: "#/tipos", label: "Tipos de maquinaria", icon: "🧩", resource: TIPOS },
@@ -120,7 +122,7 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"login" | "recover">("login");
+  const [view, setView] = useState<"login" | "recover" | "code">("login");
   const submit = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setError(null);
     try { const r = await api.post<{ user: User }>("/api/auth/login", { username, password }); onLoggedIn(r.user); }
@@ -128,15 +130,66 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
     finally { setBusy(false); }
   };
   if (view === "recover") return <Recover onBack={() => setView("login")} />;
+  if (view === "code") return <CodeLogin onLoggedIn={onLoggedIn} onBack={() => setView("login")} />;
   return <div className="login-wrap"><form className="login-card" onSubmit={submit}>
     <h1>Inventarios</h1><p className="sub">Químicos · Material de limpieza · Maquinaria</p>
     {error && <div className="form-error">{error}</div>}
     <div className="field" style={{ marginBottom: 12 }}><label htmlFor="u">Usuario</label><input id="u" className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
     <div className="field" style={{ marginBottom: 16 }}><label htmlFor="p">Contraseña</label><input id="p" className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
     <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button>
+    <button type="button" className="login-link" onClick={() => setView("code")}>🔑 Entrar con código por correo</button>
     <button type="button" className="login-link" onClick={() => setView("recover")}>¿Has olvidado tu contraseña?</button>
     <div className="login-hint">Primer acceso: <strong>admin / admin123</strong> (administrador) y <strong>operario / operario123</strong> (usuario). Cambia las contraseñas desde <em>Usuarios</em> o <em>Mi cuenta</em>.</div>
   </form></div>;
+}
+
+/** Acceso sin contraseña: pide el correo, envía un código y abre sesión. */
+function CodeLogin({ onLoggedIn, onBack }: { onLoggedIn: (u: User) => void; onBack: () => void }) {
+  const [step, setStep] = useState<"email" | "code">("email");
+  const [email, setEmail] = useState("");
+  const [token, setToken] = useState("");
+  const [code, setCode] = useState("");
+  const [info, setInfo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const sendCode = async (e: FormEvent) => {
+    e.preventDefault(); setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ token: string; message?: string }>("/api/auth/request-login-code", { email });
+      setToken(r.token);
+      setInfo(r.message ?? "Si el correo existe en el sistema, recibirás un código de verificación.");
+      setStep("code");
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al enviar el código"); }
+    finally { setBusy(false); }
+  };
+
+  const verifyCode = async (e: FormEvent) => {
+    e.preventDefault(); setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ user: User }>("/api/auth/verify-login-code", { token, code });
+      onLoggedIn(r.user);
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al verificar el código"); }
+    finally { setBusy(false); }
+  };
+
+  const subtitle = step === "email" ? "Paso 1 de 2 · Te enviaremos un código por correo" : "Paso 2 de 2 · Introduce el código recibido";
+
+  return <div className="login-wrap"><div className="login-card">
+    <h1>Entrar con código</h1><p className="sub">{subtitle}</p>
+    {error && <div className="form-error">{error}</div>}
+    {step === "email" && <form onSubmit={sendCode}>
+      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="cl">Correo electrónico</label><input id="cl" className="input" type="email" autoComplete="email" placeholder="tu@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+      <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Enviando…" : "Enviar código"}</button>
+      <button type="button" className="login-link" onClick={onBack}>Volver al inicio de sesión</button>
+    </form>}
+    {step === "code" && <form onSubmit={verifyCode}>
+      {info && <div className="login-hint" style={{ marginTop: 0, marginBottom: 14 }}>{info}</div>}
+      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="clc">Código de verificación</label><input id="clc" className="input" autoComplete="one-time-code" maxLength={8} placeholder="XXXXXXXX" style={{ textTransform: "uppercase", letterSpacing: "3px", fontWeight: 600 }} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required /></div>
+      <button className="btn" style={{ width: "100%" }} disabled={busy || code.trim().length < 4}>{busy ? "Entrando…" : "Entrar"}</button>
+      <button type="button" className="login-link" onClick={() => { setStep("email"); setError(null); setCode(""); }}>Usar otro correo</button>
+    </form>}
+  </div></div>;
 }
 
 function Recover({ onBack }: { onBack: () => void }) {
@@ -225,6 +278,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   else if (route === "#/panel") page = <PanelPage />;
   else if (route.startsWith("#/estaciones")) page = <EstacionesPage user={user} />;
   else if (route === "#/zonas") page = <ZonasCentroPage user={user} />;
+  else if (route === "#/documentacion") page = <DocumentosPage user={user} />;
   else if (route === "#/entregas") page = <EntregaPage user={user} />;
   else if (route === "#/informes") page = <Informes />;
   else if (route === "#/empresa") page = user.rol === "admin" ? <EmpresaPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden gestionar los datos de la empresa.</p></div>;

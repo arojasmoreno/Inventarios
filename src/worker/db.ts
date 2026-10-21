@@ -9,6 +9,8 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, cantidad INTEGER NOT NULL DEFAULT 1, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  // Códigos de acceso por correo (login sin contraseña).
+  `CREATE TABLE IF NOT EXISTS login_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS epis (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, marca TEXT, modelo TEXT, talla TEXT, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, fecha_revision TEXT, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS ropa_trabajo (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, prenda TEXT NOT NULL, marca TEXT, fabricante TEXT, modelo TEXT, talla TEXT, alta_visibilidad INTEGER NOT NULL DEFAULT 0, manga_larga INTEGER NOT NULL DEFAULT 0, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS tallas_operarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, prenda TEXT, talla TEXT NOT NULL, fecha TEXT NOT NULL DEFAULT (date('now')), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
@@ -26,6 +28,11 @@ const SCHEMA: string[] = [
   // Entrega de ropa por operario: una fila por prenda con talla, alta
   // visibilidad, auxiliar de servicios, manga larga y color (sin costes).
   `CREATE TABLE IF NOT EXISTS ropa_entregas (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id), fecha TEXT NOT NULL DEFAULT (date('now')), prenda TEXT NOT NULL, talla TEXT, alta_visibilidad INTEGER, auxiliar_servicios INTEGER, manga_larga INTEGER, color TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Documentación: tipos de ficha (ficha de seguridad, técnica, manual de
+  // maquinaria, instrucción de trabajo…) y fichas con URL y multi-centro.
+  `CREATE TABLE IF NOT EXISTS documento_tipos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS documentos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo_id INTEGER NOT NULL REFERENCES documento_tipos(id), url TEXT NOT NULL, descripcion TEXT, fabricante TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS documento_centros (documento_id INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (documento_id, centro_id))`,
 ];
 
 // Migraciones para tablas creadas antes de añadir estas columnas.
@@ -110,7 +117,7 @@ async function seed(db: D1Database): Promise<void> {
   await db.prepare("INSERT INTO centros (nombre, direccion, ciudad, responsable, telefono) VALUES (?, ?, ?, ?, ?)").bind("Planta Norte", "Polígono Industrial La Vega, nave 12", "Madrid", "Ana Serrano", "910 000 111").run();
   await db.prepare("INSERT INTO centros (nombre, direccion, ciudad, responsable, telefono) VALUES (?, ?, ?, ?, ?)").bind("Planta Sur", "Ctra. de Andújar km 4", "Sevilla", "Luis Cabrera", "954 000 222").run();
   await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo) VALUES (?, ?, ?, ?, ?, ?, 1)").bind("admin", "Administrador", "admin@inventarios.local", adminHash, adminSalt, "admin").run();
-  await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo) VALUES (?, ?, ?, ?, ?, ?, 1)").bind("operario", "Operario Demo", "operario@inventarios.local", userHash, userSalt, "usuario").run();
+  await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo, centro_id) VALUES (?, ?, ?, ?, ?, ?, 1, 1)").bind("operario", "Operario Demo", "operario@inventarios.local", userHash, userSalt, "usuario").run();
   const q = db.prepare("INSERT INTO quimicos (nombre, numero_lote, litros_por_garrafa, num_garrafas, fecha_caducidad, centro_id, notas) VALUES (?, ?, ?, ?, ?, ?, ?)");
   await q.bind("Detergente alcalino Q-200", "L-2024-001", 5, 12, "2027-06-30", 1, "Zona de lavado de palés").run();
   await q.bind("Desinfectante clorado CL-10", "L-2025-014", 2, 20, "2026-11-05", 1, "Caduca pronto: revisar rotación").run();
@@ -155,6 +162,12 @@ export async function bootstrap(db: D1Database): Promise<void> {
   if (!ctn || Number(ctn.n) === 0) {
     const ins = db.prepare("INSERT INTO consumibles_tipos (nombre, articulo_tipo) VALUES (?, ?)");
     for (const [nombre, tipo] of [["Químicos", "quimicos"], ["Material de limpieza", "material_limpieza"], ["EPIs", "epis"], ["Ropa de trabajo", "ropa_trabajo"], ["Maquinaria", "maquinaria"]] as Array<[string, string]>) await ins.bind(nombre, tipo).run();
+  }
+  // Tipos de ficha de la sección Documentación (también en bases existentes).
+  const dtn = await db.prepare("SELECT COUNT(*) AS n FROM documento_tipos").first();
+  if (!dtn || Number(dtn.n) === 0) {
+    const ins = db.prepare("INSERT OR IGNORE INTO documento_tipos (nombre) VALUES (?)");
+    for (const t of ["Ficha de seguridad", "Ficha técnica", "Manual de maquinaria", "Instrucción de trabajo"]) await ins.bind(t).run();
   }
   // Estaciones migradas desde los antiguos puntos pueden quedar sin tipo.
   await db.prepare("UPDATE estaciones SET tipo_consumible_id = (SELECT ct.id FROM consumibles_tipos ct WHERE ct.articulo_tipo = estaciones.articulo_tipo ORDER BY ct.id LIMIT 1) WHERE tipo_consumible_id IS NULL").run();

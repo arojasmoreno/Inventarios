@@ -13,6 +13,7 @@ import { empresaRoutes } from "./empresa";
 import { reportesRoutes } from "./reportes";
 import { panelRoutes } from "./panel";
 import { buscadorRoutes } from "./buscador";
+import { documentos, documentosTipos } from "./documentos";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -71,6 +72,8 @@ app.route("/api/empresa", empresaRoutes);
 app.route("/api/informes", reportesRoutes);
 app.route("/api/panel", panelRoutes);
 app.route("/api/buscar", buscadorRoutes);
+app.route("/api/documentos", documentos);
+app.route("/api/documentos-tipos", documentosTipos);
 app.get("/api/salud", (c) => c.json({ ok: true, app: "Inventarios" }));
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) return c.json({ error: "Ruta no encontrada" }, 404);

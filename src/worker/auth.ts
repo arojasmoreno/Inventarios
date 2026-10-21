@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Env } from "./d1";
 import type { Variables } from "./types";
-import { sendPasswordResetCode } from "./email";
+import { sendLoginCode, sendPasswordResetCode } from "./email";
 
 export type App = Hono<{ Bindings: Env; Variables: Variables }>;
 
@@ -229,4 +229,54 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     await c.env.DB.prepare("UPDATE usuarios SET password_hash = ?, salt = ? WHERE id = ?").bind(hash, salt, userId).run();
     await c.env.DB.prepare("DELETE FROM password_recovery_tokens WHERE user_id = ?").bind(userId).run();
     return c.json({ ok: true, message: "La contraseña se ha restablecido correctamente." });
+  })
+  // ---------------------------------------------------------------------------
+  // Acceso con código por correo (sin contraseña).
+  //   1) /request-login-code → crea un token + código (10 min) y lo envía por
+  //      correo. Respuesta uniforme exista o no el correo, para no revelar
+  //      cuentas.
+  //   2) /verify-login-code → comprueba el código y abre sesión directamente.
+  // ---------------------------------------------------------------------------
+  .post("/request-login-code", async (c) => {
+    let body: { email?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!email) return c.json({ error: "Indica un correo electrónico" }, 400);
+    const token = randomToken();
+    const row = await c.env.DB.prepare(
+      "SELECT id, nombre, email FROM usuarios WHERE email = ? AND activo = 1",
+    ).bind(email).first();
+    if (row) {
+      const code = generateResetCode();
+      await c.env.DB.prepare("DELETE FROM login_codes WHERE user_id = ?").bind(Number(row.id)).run();
+      await c.env.DB.prepare(
+        "INSERT INTO login_codes (user_id, token, code, expires_at) VALUES (?, ?, ?, datetime('now', '+10 minutes'))",
+      ).bind(Number(row.id), token, code).run();
+      try {
+        await sendLoginCode(c.env, String(row.email), String(row.nombre), code);
+      } catch (err) {
+        console.error("No se pudo enviar el correo de acceso:", err);
+        await c.env.DB.prepare("DELETE FROM login_codes WHERE token = ?").bind(token).run();
+        return c.json({ error: "No se pudo enviar el correo de verificación. Inténtalo más tarde." }, 503);
+      }
+    }
+    return c.json({ ok: true, token, message: "Si el correo existe en el sistema, recibirás un código de verificación." });
+  })
+  .post("/verify-login-code", async (c) => {
+    let body: { token?: unknown; code?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    const token = typeof body.token === "string" ? body.token : "";
+    const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
+    if (!token || !code) return c.json({ error: "Indica el código de verificación" }, 400);
+    const row = await c.env.DB.prepare(
+      `SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo, u.centro_id, lc.id AS lc_id
+       FROM login_codes lc JOIN usuarios u ON u.id = lc.user_id
+       WHERE lc.token = ? AND lc.code = ? AND lc.expires_at > datetime('now')`,
+    ).bind(token, code).first();
+    if (!row || Number(row.activo) !== 1) return c.json({ error: "El código no es válido o ha caducado" }, 400);
+    // El código queda usado: se elimina y se abre sesión directamente.
+    await c.env.DB.prepare("DELETE FROM login_codes WHERE id = ?").bind(Number(row.lc_id)).run();
+    const sessionToken = await createSession(c.env.DB, Number(row.id));
+    setCookie(c, SESSION_COOKIE, sessionToken, { httpOnly: true, ...sessionCookieOptions(c), maxAge: SESSION_DAYS * 24 * 3600 });
+    return c.json({ user: publicUser(row) });
   });
