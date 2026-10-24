@@ -48,8 +48,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Instalar dependencias
         run: bun install
-      - name: Build (la API apunta al Worker en producción)
-        run: bun run build
+      - name: Build (base /Inventarios/ y API hacia el Worker)
+        run: bunx vite build --base=/Inventarios/
         env:
           VITE_API_BASE: https://inventarios.arojasmoreno.workers.dev
       - uses: actions/configure-pages@v5
