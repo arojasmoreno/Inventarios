@@ -129,7 +129,10 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     const username = typeof body.username === "string" ? body.username.trim() : "";
     const password = typeof body.password === "string" ? body.password : "";
     if (!username || !password) return c.json({ error: "Indica usuario y contraseña" }, 400);
-    const row = await c.env.DB.prepare("SELECT * FROM usuarios WHERE username = ?").bind(username).first();
+    const row = await c.env.DB.prepare(
+      `SELECT u.*, (SELECT uc.centro_id FROM usuario_centros uc WHERE uc.usuario_id = u.id ORDER BY uc.centro_id LIMIT 1) AS centro_id
+       FROM usuarios u WHERE u.username = ?`,
+    ).bind(username).first();
     if (!row) return c.json({ error: "Usuario o contraseña incorrectos" }, 401);
     const hash = await hashPassword(password, String(row.salt));
     if (hash !== String(row.password_hash)) return c.json({ error: "Usuario o contraseña incorrectos" }, 401);
@@ -147,7 +150,9 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
   .get("/me", requireAuth, async (c) => {
     const token = getCookie(c, SESSION_COOKIE)!;
     const row = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo, u.centro_id FROM sessions s JOIN usuarios u ON u.id = s.user_id
+      `SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo,
+              (SELECT uc.centro_id FROM usuario_centros uc WHERE uc.usuario_id = u.id ORDER BY uc.centro_id LIMIT 1) AS centro_id
+       FROM sessions s JOIN usuarios u ON u.id = s.user_id
        WHERE s.token = ? AND s.expires_at > datetime('now')`,
     ).bind(token).first();
     if (!row) return c.json({ error: "No autenticado" }, 401);
@@ -269,7 +274,9 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
     if (!token || !code) return c.json({ error: "Indica el código de verificación" }, 400);
     const row = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo, u.centro_id, lc.id AS lc_id
+      `SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo,
+              (SELECT uc.centro_id FROM usuario_centros uc WHERE uc.usuario_id = u.id ORDER BY uc.centro_id LIMIT 1) AS centro_id,
+              lc.id AS lc_id
        FROM login_codes lc JOIN usuarios u ON u.id = lc.user_id
        WHERE lc.token = ? AND lc.code = ? AND lc.expires_at > datetime('now')`,
     ).bind(token, code).first();

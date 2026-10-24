@@ -50,15 +50,15 @@ export const entregasRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new
     ).bind(...binds).all();
     return c.json({ items: rows.results });
   })
-  // Trabajadores activos de un centro (por centro habitual o asignado).
+  // Trabajadores activos asignados a un centro.
   .get("/trabajadores", async (c) => {
     const centroId = Number(c.req.query("centro_id"));
     if (!Number.isInteger(centroId) || centroId < 1) return c.json({ error: "Falta el centro de trabajo" }, 400);
     const rows = await c.env.DB.prepare(
       `SELECT id, nombre, username FROM usuarios
-       WHERE activo = 1 AND (centro_id = ? OR id IN (SELECT usuario_id FROM usuario_centros WHERE centro_id = ?))
+       WHERE activo = 1 AND id IN (SELECT usuario_id FROM usuario_centros WHERE centro_id = ?)
        ORDER BY nombre`,
-    ).bind(centroId, centroId).all();
+    ).bind(centroId).all();
     return c.json({ items: rows.results });
   })
   // Alta/edición: recibe las prendas rellenadas y hace upsert por
@@ -76,11 +76,10 @@ export const entregasRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new
     if (!centro) return c.json({ error: "El centro seleccionado no existe" }, 400);
     const trab = await c.env.DB.prepare("SELECT id, nombre FROM usuarios WHERE id = ? AND activo = 1").bind(usuarioId).first();
     if (!trab) return c.json({ error: "El trabajador seleccionado no existe o está desactivado" }, 400);
-    // El trabajador debe pertenecer al centro elegido (centro habitual o asignado).
+    // El trabajador debe estar asignado al centro elegido.
     const pertenece = await c.env.DB.prepare(
-      `SELECT 1 AS x FROM usuarios u WHERE u.id = ? AND (u.centro_id = ?
-        OR EXISTS (SELECT 1 FROM usuario_centros uc WHERE uc.usuario_id = u.id AND uc.centro_id = ?))`,
-    ).bind(usuarioId, centroId, centroId).first();
+      `SELECT 1 AS x FROM usuario_centros WHERE usuario_id = ? AND centro_id = ?`,
+    ).bind(usuarioId, centroId).first();
     if (!pertenece) return c.json({ error: "El trabajador seleccionado no pertenece a ese centro de trabajo" }, 400);
     const fecha = typeof body.fecha === "string" && body.fecha ? body.fecha : new Date().toISOString().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return c.json({ error: "La fecha no es válida" }, 400);

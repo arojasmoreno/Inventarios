@@ -12,9 +12,7 @@ import { EstacionesPage } from "./estaciones";
 import { EntregaPage } from "./entrega";
 import { PanelPage } from "./panel";
 import { GlobalSearch } from "./busqueda";
-import { DocumentosPage } from "./documentos";
-
-export interface User {
+import { DocumentosPage } from "./documentos";export interface User {
   id: number;
   username: string;
   nombre: string;
@@ -75,7 +73,7 @@ const NAV: NavGroup[] = [
     items: [
       { hash: "#/documentacion", label: "Documentación", icon: "📚" },
       { hash: "#/entregas", label: "Entregar ropa", icon: "👕" },
-      { hash: "#/tallas", label: "Tallas operarios", icon: "📏", resource: TALLAS },
+      { hash: "#/tallas", label: "Tallas operarios", icon: "📏", adminOnly: true, resource: TALLAS },
       { hash: "#/tipos", label: "Tipos de maquinaria", icon: "🧩", resource: TIPOS },
       { hash: "#/soportes", label: "Soportes", icon: "📌", resource: SOPORTES },
       { hash: "#/consumibles-tipos", label: "Tipos de consumible", icon: "🏷️", resource: TIPOS_CONSUMIBLES },

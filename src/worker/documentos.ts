@@ -31,12 +31,11 @@ const URL_RE = /^https?:\/\/\S+$/i;
 // Escape de comodines LIKE (SQLite acepta ESCAPE '\' con el patrón escapado).
 const esc = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
 
-// Centros asignados a un usuario: centro habitual + multiasignación.
+// Centros asignados a un usuario (asignación multi usuario_centros).
 async function centrosDeUsuario(db: D1Database, userId: number): Promise<number[]> {
   const rows = (await db.prepare(
-    `SELECT centro_id FROM usuario_centros WHERE usuario_id = ?
-     UNION SELECT centro_id FROM usuarios WHERE id = ? AND centro_id IS NOT NULL`,
-  ).bind(userId, userId).all()).results as Array<{ centro_id: number }>;
+    `SELECT centro_id FROM usuario_centros WHERE usuario_id = ?`,
+  ).bind(userId).all()).results as Array<{ centro_id: number }>;
   return rows.map((r) => Number(r.centro_id));
 }
 

@@ -3,11 +3,11 @@ import { hashPassword, toHex } from "./auth";
 
 const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS centros (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, direccion TEXT, ciudad TEXT, responsable TEXT, telefono TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  `CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, email TEXT, password_hash TEXT NOT NULL, salt TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'usuario', activo INTEGER NOT NULL DEFAULT 1, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, email TEXT, password_hash TEXT NOT NULL, salt TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'usuario', activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, expires_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT NOT NULL, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, cantidad INTEGER NOT NULL DEFAULT 1, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', cantidad INTEGER NOT NULL DEFAULT 1, foto TEXT, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Códigos de acceso por correo (login sin contraseña).
   `CREATE TABLE IF NOT EXISTS login_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -25,8 +25,8 @@ const SCHEMA: string[] = [
   // Estaciones de consumo (antes «puntos de consumo»): zona/subzona, soporte,
   // tipo de consumible y artículo del almacén que se descuenta al escanear.
   `CREATE TABLE IF NOT EXISTS estaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id), zona_id INTEGER NOT NULL REFERENCES zonas(id), subzona_id INTEGER REFERENCES subzonas(id), soporte_id INTEGER REFERENCES soportes(id), tipo_consumible_id INTEGER REFERENCES consumibles_tipos(id), articulo_tipo TEXT NOT NULL DEFAULT 'material_limpieza', articulo_id INTEGER NOT NULL, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  // Entrega de ropa por operario: una fila por prenda con talla, alta
-  // visibilidad, auxiliar de servicios, manga larga y color (sin costes).
+  // Entrega de ropa por operario: una fila por prenda entregada. El catálogo
+  // de prendas (marca, fabricante, modelo) vive en ropa_trabajo.
   `CREATE TABLE IF NOT EXISTS ropa_entregas (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id), fecha TEXT NOT NULL DEFAULT (date('now')), prenda TEXT NOT NULL, talla TEXT, alta_visibilidad INTEGER, auxiliar_servicios INTEGER, manga_larga INTEGER, color TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Documentación: tipos de ficha (ficha de seguridad, técnica, manual de
   // maquinaria, instrucción de trabajo…) y fichas con URL y multi-centro.
@@ -42,12 +42,13 @@ const ALTERS: Array<[string, string]> = [
   ["maquinaria", "foto TEXT"],
   ["epis", "stock_minimo INTEGER NOT NULL DEFAULT 0"], ["epis", "fecha_revision TEXT"],
   ["ropa_trabajo", "talla TEXT"], ["ropa_trabajo", "stock_minimo INTEGER NOT NULL DEFAULT 0"],
+  ["maquinaria", "cantidad INTEGER NOT NULL DEFAULT 1"],
   ["tallas_operarios", "fecha TEXT NOT NULL DEFAULT (date('now'))"],
   ["tallas_operarios", "prenda TEXT"],
   ["movimientos", "updated_at TEXT"],
   ["quimicos", "codigo TEXT"], ["quimicos", "marca TEXT"],
   ["material_limpieza", "codigo TEXT"], ["material_limpieza", "marca TEXT"],
-  ["maquinaria", "marca TEXT"], ["maquinaria", "modelo TEXT"],
+  ["maquinaria", "marca TEXT"], ["maquinaria", "modelo TEXT"], ["maquinaria", "numero_serie TEXT"],
   ["ropa_trabajo", "marca TEXT"],
   ["movimientos", "motivo TEXT"],
   ["movimientos", "estacion_id INTEGER"],
@@ -84,9 +85,9 @@ async function migrate(db: D1Database): Promise<void> {
     ["epis", "coste_unitario"], ["ropa_trabajo", "coste_unitario"],
     ["movimientos", "coste"],
   ] as Array<[string, string]>) await dropColumnIfPresent(db, table, column);
-  // Entregas de ropa v2: la tabla antigua (ligada a ropa_trabajo con cantidad)
-  // se sustituye por el registro por prenda del formulario; los datos previos se
-  // descartan a petición del usuario.
+  // Entregas de ropa: la tabla guarda una fila por prenda entregada; las
+  // tablas de la sección Ropa de trabajo (marca, modelo, tipo) se encargan de
+  // conservar el catálogo de prendas, por lo que se eliminan las antiguas.
   if (await tableExists(db, "ropa_entregas")) {
     const info = await db.prepare("PRAGMA table_info(ropa_entregas)").all();
     if (info.results.some((r) => r.name === "ropa_id")) {
@@ -107,6 +108,23 @@ async function migrate(db: D1Database): Promise<void> {
     }
     await db.prepare("DROP TABLE puntos_consumo").run();
   }
+  // Maquinaria: las columnas zona/subzona nunca llegaron a usarse; el
+  // emplazamiento de una máquina es su centro. Entregas: marca/modelo/tipo se
+  // quedaron en el catálogo ropa_trabajo y no en la fila de entrega.
+  for (const [table, column] of [
+    ["maquinaria", "zona_id"], ["maquinaria", "subzona_id"],
+    ["ropa_entregas", "marca"], ["ropa_entregas", "modelo"], ["ropa_entregas", "tipo"],
+  ] as Array<[string, string]>) await dropColumnIfPresent(db, table, column);
+  // Usuarios: el centro único pasa a la asignación multi usuario_centros.
+  // Se copia el valor antiguo (si aún queda alguno) y se elimina la columna.
+  const ucInfo = await db.prepare("PRAGMA table_info(usuarios)").all();
+  if (ucInfo.results.some((r) => r.name === "centro_id")) {
+    const ucCount = await db.prepare("SELECT COUNT(*) AS n FROM usuario_centros").first();
+    if (!ucCount || Number(ucCount.n) === 0) {
+      await db.prepare("INSERT INTO usuario_centros (usuario_id, centro_id) SELECT id, centro_id FROM usuarios WHERE centro_id IS NOT NULL").run();
+    }
+    await dropColumnIfPresent(db, "usuarios", "centro_id");
+  }
 }
 
 async function seed(db: D1Database): Promise<void> {
@@ -117,7 +135,9 @@ async function seed(db: D1Database): Promise<void> {
   await db.prepare("INSERT INTO centros (nombre, direccion, ciudad, responsable, telefono) VALUES (?, ?, ?, ?, ?)").bind("Planta Norte", "Polígono Industrial La Vega, nave 12", "Madrid", "Ana Serrano", "910 000 111").run();
   await db.prepare("INSERT INTO centros (nombre, direccion, ciudad, responsable, telefono) VALUES (?, ?, ?, ?, ?)").bind("Planta Sur", "Ctra. de Andújar km 4", "Sevilla", "Luis Cabrera", "954 000 222").run();
   await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo) VALUES (?, ?, ?, ?, ?, ?, 1)").bind("admin", "Administrador", "admin@inventarios.local", adminHash, adminSalt, "admin").run();
-  await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo, centro_id) VALUES (?, ?, ?, ?, ?, ?, 1, 1)").bind("operario", "Operario Demo", "operario@inventarios.local", userHash, userSalt, "usuario").run();
+  await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo) VALUES (?, ?, ?, ?, ?, ?, 1)").bind("operario", "Operario Demo", "operario@inventarios.local", userHash, userSalt, "usuario").run();
+  // El operario de ejemplo queda vinculado a Planta Norte (asignación multi).
+  await db.prepare("INSERT INTO usuario_centros (usuario_id, centro_id) SELECT u.id, c.id FROM usuarios u, centros c WHERE u.username = 'operario' AND c.nombre = 'Planta Norte'").run();
   const q = db.prepare("INSERT INTO quimicos (nombre, numero_lote, litros_por_garrafa, num_garrafas, fecha_caducidad, centro_id, notas) VALUES (?, ?, ?, ?, ?, ?, ?)");
   await q.bind("Detergente alcalino Q-200", "L-2024-001", 5, 12, "2027-06-30", 1, "Zona de lavado de palés").run();
   await q.bind("Desinfectante clorado CL-10", "L-2025-014", 2, 20, "2026-11-05", 1, "Caduca pronto: revisar rotación").run();
@@ -171,47 +191,5 @@ export async function bootstrap(db: D1Database): Promise<void> {
   }
   // Estaciones migradas desde los antiguos puntos pueden quedar sin tipo.
   await db.prepare("UPDATE estaciones SET tipo_consumible_id = (SELECT ct.id FROM consumibles_tipos ct WHERE ct.articulo_tipo = estaciones.articulo_tipo ORDER BY ct.id LIMIT 1) WHERE tipo_consumible_id IS NULL").run();
-  // Zonas y subzonas de ejemplo (jerarquía centro → zona → subzona) y dos
-  // zonas de consumo, solo si la base de datos todavía no tiene ninguna.
-  const zc = await db.prepare("SELECT COUNT(*) AS n FROM zonas").first();
-  if (!zc || Number(zc.n) === 0) {
-    const cs = (await db.prepare("SELECT id FROM centros ORDER BY id").all()).results as Array<{ id: number }>;
-    const norte = cs[0] ? Number(cs[0].id) : 0;
-    const sur = cs[1] ? Number(cs[1].id) : norte;
-    const lastId = (r: { meta: unknown }): number => Number((r.meta as { last_row_id?: number }).last_row_id);
-    const mkZona = async (centroId: number, nombre: string, notas: string | null): Promise<number> =>
-      lastId(await db.prepare("INSERT INTO zonas (centro_id, nombre, notas) VALUES (?, ?, ?)").bind(centroId, nombre, notas).run());
-    const mkSub = async (zonaId: number, nombre: string): Promise<number> =>
-      lastId(await db.prepare("INSERT INTO subzonas (zona_id, nombre) VALUES (?, ?)").bind(zonaId, nombre).run());
-    if (norte) {
-      const oficina = await mkZona(norte, "Oficina", "Zona administrativa");
-      const almacen = await mkZona(norte, "Almacén", "Productos, químicos y EPIs");
-      const subRecepcion = await mkSub(oficina, "Recepción");
-      const subVestuarios = await mkSub(oficina, "Vestuarios");
-      const subEstA = await mkSub(almacen, "Estantería A");
-      await mkSub(almacen, "Estantería B");
-      if (sur && sur !== norte) {
-        const almacenSur = await mkZona(sur, "Almacén", null);
-        await mkSub(almacenSur, "Estantería A");
-      }
-      const pc = await db.prepare("SELECT COUNT(*) AS n FROM estaciones").first();
-      if (!pc || Number(pc.n) === 0) {
-        const mat = await db.prepare("SELECT id FROM material_limpieza ORDER BY id LIMIT 1").first();
-        const qui = await db.prepare("SELECT id FROM quimicos ORDER BY id LIMIT 1").first();
-        const soporte = await db.prepare("SELECT id FROM soportes ORDER BY id LIMIT 1").first();
-        const tipoMat = await db.prepare("SELECT id FROM consumibles_tipos WHERE articulo_tipo = 'material_limpieza' ORDER BY id LIMIT 1").first();
-        const tipoQui = await db.prepare("SELECT id FROM consumibles_tipos WHERE articulo_tipo = 'quimicos' ORDER BY id LIMIT 1").first();
-        const ins = db.prepare("INSERT INTO estaciones (centro_id, zona_id, subzona_id, soporte_id, tipo_consumible_id, articulo_tipo, articulo_id, activo) VALUES (?, ?, ?, ?, ?, ?, ?, 1)");
-        if (mat) await ins.bind(norte, oficina, subVestuarios, soporte ? Number(soporte.id) : null, tipoMat ? Number(tipoMat.id) : null, "material_limpieza", Number(mat.id)).run();
-        if (qui) await ins.bind(norte, almacen, subEstA, soporte ? Number(soporte.id) : null, tipoQui ? Number(tipoQui.id) : null, "quimicos", Number(qui.id)).run();
-        if (mat && subRecepcion) await ins.bind(norte, oficina, subRecepcion, soporte ? Number(soporte.id) : null, tipoMat ? Number(tipoMat.id) : null, "material_limpieza", Number(mat.id)).run();
-      }
-    }
-  }
-  // Centros asignados: traslado del antiguo centro_id único a la tabla multiasignación.
-  const uc = await db.prepare("SELECT COUNT(*) AS n FROM usuario_centros").first();
-  if (!uc || Number(uc.n) === 0) {
-    await db.prepare("INSERT INTO usuario_centros (usuario_id, centro_id) SELECT id, centro_id FROM usuarios WHERE centro_id IS NOT NULL").run();
-  }
   ready = true;
 }

@@ -38,17 +38,19 @@ export const materialSpec: CrudSpec = {
     stockMinimo, centro, notas, foto,
   ],
 };
+// Máquinas de trabajo: marca, modelo, cantidad, nº de serie, tipo (con CRUD de tipos), estado.
 export const maquinariaSpec: CrudSpec = {
-  table: "maquinaria", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "maquinaria", orderBy: "id", refCentro: true,
+  read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "nombre", label: "Máquina", type: "text", required: true, maxLength: 200 },
-    // El tipo se valida contra la tabla tipos_maquinaria (CRUD en su pestaña).
-    { name: "tipo", label: "Tipo", type: "text", required: true, maxLength: 80 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
     { name: "modelo", label: "Modelo", type: "text", required: false, maxLength: 80 },
-    { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true, min: 0 },
-    { name: "numero_serie", label: "Nº de serie", type: "text", required: false, maxLength: 60 },
-    { name: "estado", label: "Estado", type: "enum", required: true, enumValues: ESTADOS_MAQUINARIA }, centro, notas, foto,
+    { name: "tipo", label: "Tipo", type: "text", required: true, maxLength: 80 },
+    { name: "cantidad", label: "Unidades", type: "integer", required: true, min: 0 },
+    { name: "numero_serie", label: "Nº de serie (opcional)", type: "text", required: false, maxLength: 60 },
+    { name: "estado", label: "Estado", type: "enum", required: true, enumValues: ESTADOS_MAQUINARIA },
+    centro, notas, foto,
   ],
   beforeWrite: async (db, data) => {
     if (typeof data.tipo === "string" && data.tipo.trim()) {
@@ -69,7 +71,7 @@ export const centrosSpec: CrudSpec = {
   ],
 };
 export const usuariosSpec: CrudSpec = {
-  table: "usuarios", orderBy: "id", refCentro: true, read: "admin", create: "admin", update: "admin", delete: "admin",
+  table: "usuarios", orderBy: "id", read: "admin", create: "admin", update: "admin", delete: "admin",
   extraSelect: [
     "(SELECT GROUP_CONCAT(c2.nombre) FROM usuario_centros uc2 JOIN centros c2 ON c2.id = uc2.centro_id WHERE uc2.usuario_id = t.id) AS centros_nombre",
     "(SELECT GROUP_CONCAT(uc3.centro_id) FROM usuario_centros uc3 WHERE uc3.usuario_id = t.id) AS centros_ids",
@@ -94,11 +96,14 @@ export const usuariosSpec: CrudSpec = {
     if (Number(row.id) === user.id) return "No puedes eliminar tu propia cuenta";
     const n = await db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?").bind(Number(row.id)).first();
     if (n && Number(n.n) > 0) await db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(Number(row.id)).run();
-    // Limpia tallas, centros asignados y la auditoría que tenía como autor
-    // (movimientos.usuario_id es FK a usuarios: sin esto el borrado viola la clave).
+    // Limpia centros asignados, tallas/entregas, códigos de acceso y la
+    // auditoría que tenía como autor (FK a usuarios: sin esto el borrado viola la clave).
     await db.prepare("DELETE FROM movimientos WHERE usuario_id = ?").bind(Number(row.id)).run();
-    await db.prepare("DELETE FROM tallas_operarios WHERE usuario_id = ?").bind(Number(row.id)).run();
     await db.prepare("DELETE FROM usuario_centros WHERE usuario_id = ?").bind(Number(row.id)).run();
+    await db.prepare("DELETE FROM tallas_operarios WHERE usuario_id = ?").bind(Number(row.id)).run();
+    await db.prepare("DELETE FROM ropa_entregas WHERE usuario_id = ?").bind(Number(row.id)).run();
+    await db.prepare("DELETE FROM login_codes WHERE user_id = ?").bind(Number(row.id)).run();
+    await db.prepare("DELETE FROM password_recovery_tokens WHERE user_id = ?").bind(Number(row.id)).run();
     return null;
   },
 };
@@ -119,6 +124,8 @@ export const episSpec: CrudSpec = {
   ],
 };
 // ---- Ropa de trabajo de los centros ----
+// Catálogo de prendas del almacén: código, marca, fabricante, modelo, talla,
+// A/V, manga larga, color y stock (alerta por stock mínimo).
 export const ropaSpec: CrudSpec = {
   table: "ropa_trabajo", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
@@ -133,30 +140,15 @@ export const ropaSpec: CrudSpec = {
     { name: "descripcion", label: "Descripción", type: "textarea", required: false, maxLength: 2000 },
     { name: "color", label: "Color", type: "enum", required: false, enumValues: COLORES },
     { name: "stock", label: "Stock", type: "integer", required: true, min: 0 },
-    stockMinimo,
-    centro,
+    stockMinimo, centro,
   ],
-};
-// ---- Talla de cada operario ----
-export const tallasSpec: CrudSpec = {
-  table: "tallas_operarios", orderBy: "id", refUsuario: true, read: "all", create: "admin", update: "admin", delete: "admin",
-  fields: [
-    { name: "usuario_id", label: "Operario", type: "integer", required: true, min: 1 },
-    { name: "prenda", label: "Prenda", type: "text", required: true, maxLength: 120, placeholder: "Ej. Chaqueta, Pantalón, Botas…" },
-    { name: "talla", label: "Talla", type: "text", required: true, maxLength: 20 },
-    { name: "notas", label: "Notas", type: "textarea", required: false, maxLength: 2000 },
-  ],
-  beforeWrite: async (_db, data) => {
-    if (!data.fecha) data.fecha = new Date().toISOString().slice(0, 10);
-    return data;
-  },
 };
 export const centrosSpecForDelete: CrudSpec = {
   ...centrosSpec,
   beforeDelete: async (db, _user, row) => {
-    const q = await db.prepare("SELECT (SELECT COUNT(*) FROM quimicos WHERE centro_id = ?) + (SELECT COUNT(*) FROM material_limpieza WHERE centro_id = ?) + (SELECT COUNT(*) FROM maquinaria WHERE centro_id = ?) + (SELECT COUNT(*) FROM epis WHERE centro_id = ?) + (SELECT COUNT(*) FROM ropa_trabajo WHERE centro_id = ?) AS n").bind(Number(row.id), Number(row.id), Number(row.id), Number(row.id), Number(row.id)).first();
-    if (q && Number(q.n) > 0) return `No se puede eliminar: ${q.n} registros de material están asignados a este centro`;
-    const u = await db.prepare("SELECT COUNT(*) AS n FROM usuarios WHERE centro_id = ?").bind(Number(row.id)).first();
+    const q = await db.prepare("SELECT (SELECT COUNT(*) FROM quimicos WHERE centro_id = ?) + (SELECT COUNT(*) FROM material_limpieza WHERE centro_id = ?) + (SELECT COUNT(*) FROM maquinaria WHERE centro_id = ?) + (SELECT COUNT(*) FROM epis WHERE centro_id = ?) + (SELECT COUNT(*) FROM ropa_trabajo WHERE centro_id = ?) + (SELECT COUNT(*) FROM estaciones WHERE centro_id = ?) + (SELECT COUNT(*) FROM ropa_entregas WHERE centro_id = ?) AS n").bind(Number(row.id), Number(row.id), Number(row.id), Number(row.id), Number(row.id), Number(row.id), Number(row.id)).first();
+    if (q && Number(q.n) > 0) return `No se puede eliminar: ${q.n} registros de material, estaciones o entregas siguen asignados a este centro`;
+    const u = await db.prepare("SELECT COUNT(*) AS n FROM usuario_centros WHERE centro_id = ?").bind(Number(row.id)).first();
     if (u && Number(u.n) > 0) return `No se puede eliminar: ${u.n} usuarios están asignados a este centro`;
     return null;
   },
@@ -168,7 +160,8 @@ export const centros = createCrud(centrosSpecForDelete);
 export const usuarios = createCrud(usuariosSpec);
 export const epis = createCrud(episSpec);
 export const ropa = createCrud(ropaSpec);
-export const tallas = createCrud(tallasSpec);
+// 'tallas' (historial por operario) ahora vive en su propio módulo /
+// sección del frontend; no se expone desde aquí.
 // ---- Tipos de maquinaria (CRUD gestionado) ----
 export const tiposSpec: CrudSpec = {
   table: "tipos_maquinaria", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
@@ -204,7 +197,6 @@ export const consumiblesTiposSpec: CrudSpec = {
     { name: "articulo_tipo", label: "Tipo de artículo", type: "enum", required: true, enumValues: ["quimicos", "material_limpieza", "epis", "ropa_trabajo", "maquinaria"] },
   ],
 };
-// ---- Zonas y subzonas por centro ----
 export const zonasSpec: CrudSpec = {
   table: "zonas", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [

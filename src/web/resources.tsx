@@ -54,9 +54,26 @@ export const CENTROS: ResourceConfig = {
   columns: [{ key: "nombre", label: "Centro" }, ...["direccion", "ciudad", "responsable", "telefono"].map(key => ({ key, label: key[0].toUpperCase() + key.slice(1), render: (r: Row) => String(r[key] ?? "—") }))],
 };
 export const USUARIOS: ResourceConfig = {
-  title: "Usuarios", subtitle: "Administradores y usuarios de la aplicación", endpoint: "/api/usuarios", csvName: "usuarios", searchKeys: ["username", "nombre", "email", "centros_nombre"], perms: { read: "admin", create: "admin", update: "admin", delete: "admin" }, centrosToggle: true,
-  fields: [{ name: "username", label: "Usuario (login)", type: "text", required: true }, { name: "nombre", label: "Nombre completo", type: "text", required: true }, { name: "email", label: "Email", type: "text" }, { name: "password", label: "Contraseña", type: "password", writeOnly: true, help: "Al crear es obligatoria (mínimo 6 caracteres); al editar, en blanco la conserva." }, { name: "rol", label: "Rol", type: "select", required: true, options: [{ value: "admin", label: "Administrador" }, { value: "admin_centros", label: "Administrador de centros" }, { value: "usuario", label: "Usuario" }] }, { name: "activo", label: "Usuario activo", type: "boolean" }],
+  title: "Usuarios", subtitle: "Administradores, usuarios y sus centros de trabajo", endpoint: "/api/usuarios", csvName: "usuarios", searchKeys: ["username", "nombre", "email", "centros_nombre"], perms: { read: "admin", create: "admin", update: "admin", delete: "admin" }, centrosToggle: true,
+  fields: [{ name: "username", label: "Usuario (login)", type: "text", required: true }, { name: "nombre", label: "Nombre completo", type: "text", required: true }, { name: "email", label: "Email", type: "text" }, { name: "password", label: "Contraseña", type: "password", writeOnly: true, help: "Al crear es obligatoria (mínimo 6 caracteres); al editar, en blanco la conserva." }, { name: "rol", label: "Rol", type: "select", required: true, options: [{ value: "admin", label: "Administrador" }, { value: "admin_centros", label: "Administrador de centros" }, { value: "usuario", label: "Usuario" }] }, { name: "activo", label: "Activo", type: "boolean" }],
   columns: [{ key: "username", label: "Login" }, { key: "nombre", label: "Nombre" }, { key: "email", label: "Email", render: r => String(r.email ?? "—") }, { key: "rol", label: "Rol", render: r => <span className={`badge ${r.rol === "admin" ? "info" : r.rol === "admin_centros" ? "warn" : "muted"}`}>{r.rol === "admin" ? "Administrador" : r.rol === "admin_centros" ? "Adm. de centros" : "Usuario"}</span> }, { key: "activo", label: "Estado", render: r => Number(r.activo) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Desactivado</span> }, { key: "centros_nombre", label: "Centros asignados", render: r => String(r.centros_nombre ?? "—") }],
+};
+
+export const TALLAS: ResourceConfig = {
+  title: "Tallas de operarios", subtitle: "Operario · prenda · talla · notas", endpoint: "/api/tallas", csvName: "tallas-operarios", searchKeys: ["usuario_nombre", "usuario_username", "prenda", "talla"], perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  links: { usuario_id: { endpoint: "/api/usuarios", label: r => `${String(r.nombre)} (${String(r.username)})` } },
+  fields: [{ name: "usuario_id", label: "Operario", type: "select", required: true, options: [] },
+    { name: "prenda", label: "Prenda", type: "text", required: true },
+    { name: "talla", label: "Talla", type: "text", required: true },
+    { name: "notas", label: "Notas", type: "textarea" },
+  ],
+  columns: [
+    { key: "usuario_nombre", label: "Operario", render: r => String(r.usuario_nombre ?? "—") },
+    { key: "prenda", label: "Prenda", render: r => String(r.prenda ?? "—") },
+    { key: "talla", label: "Talla", render: r => <strong>{String(r.talla ?? "—")}</strong> },
+    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
+    { key: "fecha", label: "Fecha", render: r => formatFecha(String(r.fecha ?? "")) },
+  ],
 };
 export const EPIS: ResourceConfig = {
   title: "EPIs", subtitle: "Equipos de protección individual con stock por centro", endpoint: "/api/epis", csvName: "epis", searchKeys: ["codigo", "marca", "modelo", "talla", "color", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -109,23 +126,6 @@ export const ROPA: ResourceConfig = {
     { key: "manga_larga", label: "Manga larga", render: r => Number(r.manga_larga) === 1 ? <span className="badge info">Sí</span> : <span className="badge muted">No</span> },
     { key: "color", label: "Color", render: r => r.color ? <><ColorSwatch color={String(r.color)} />{String(r.color)}</> : "—" },
     { key: "stock", label: "Stock", align: "right", render: r => stockCell(r, "stock") }, centerCol,
-  ],
-};
-export const TALLAS: ResourceConfig = {
-  title: "Tallas de operarios", subtitle: "Operario · prenda · talla · notas", endpoint: "/api/tallas", csvName: "tallas-operarios", searchKeys: ["usuario_nombre", "usuario_username", "prenda", "talla"], perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  links: { usuario_id: { endpoint: "/api/usuarios", label: r => `${String(r.nombre)} (${String(r.username)})` } },
-  fields: [
-    { name: "usuario_id", label: "Operario", type: "select", required: true },
-    { name: "prenda", label: "Prenda", type: "text", required: true, placeholder: "Ej. Chaqueta, Pantalón, Botas…" },
-    { name: "talla", label: "Talla", type: "text", required: true },
-    { name: "notas", label: "Notas", type: "textarea" },
-  ],
-  columns: [
-    { key: "usuario_nombre", label: "Operario", render: r => String(r.usuario_nombre ?? "—") },
-    { key: "prenda", label: "Prenda", render: r => String(r.prenda ?? "—") },
-    { key: "talla", label: "Talla", render: r => <strong>{String(r.talla ?? "—")}</strong> },
-    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
-    { key: "fecha", label: "Fecha", render: r => formatFecha(String(r.fecha ?? "")) },
   ],
 };
 export const TIPOS: ResourceConfig = {
@@ -194,11 +194,12 @@ function CentrosCell({ centros, initial, userId, editable }: { centros: Row[]; i
 }
 
 export function ResourcePage({ config, user }: { config: ResourceConfig; user: { rol: string } }) {
-  const [items, setItems] = useState<Row[]>([]), [centros, setCentros] = useState<Row[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [q, setQ] = useState(""), [centroId, setCentroId] = useState("all"), [editing, setEditing] = useState<{ mode: "create" | "edit"; values: Row } | null>(null), [formError, setFormError] = useState<string | null>(null), [saving, setSaving] = useState(false), [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null), [linkRows, setLinkRows] = useState<Record<string, Row[]>>({}), [qrRow, setQrRow] = useState<Row | null>(null);
+  const [items, setItems] = useState<Row[]>([]), [centros, setCentros] = useState<Row[]>([]), [users, setUsers] = useState<Row[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [q, setQ] = useState(""), [centroId, setCentroId] = useState("all"), [editing, setEditing] = useState<{ mode: "create" | "edit"; values: Row } | null>(null), [formError, setFormError] = useState<string | null>(null), [saving, setSaving] = useState(false), [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null), [linkRows, setLinkRows] = useState<Record<string, Row[]>>({}), [qrRow, setQrRow] = useState<Row | null>(null);
   const canCreate = !config.readOnlyPage && allow(user.rol, config.perms.create), canUpdate = !config.readOnlyPage && allow(user.rol, config.perms.update), canDelete = !config.readOnlyPage && allow(user.rol, config.perms.delete);
   const load = useCallback(async () => { setLoading(true); setError(null); try { setItems((await api.get<{ items: Row[] }>(config.endpoint)).items); } catch (e) { setError(e instanceof Error ? e.message : "Error cargando los datos"); } finally { setLoading(false); } }, [config.endpoint]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (config.centroFilter || config.fields.some(f => f.name === "centro_id")) api.get<{ items: Row[] }>("/api/centros").then(r => setCentros(r.items)).catch(() => setCentros([])); }, [config]);
+  useEffect(() => { if (config.fields.some(f => f.name === "usuario_id")) api.get<{ items: Row[] }>("/api/usuarios").then(r => setUsers(r.items)).catch(() => setUsers([])); }, [config]);
   useEffect(() => {
     if (!config.links) return;
     for (const [name, link] of Object.entries(config.links)) {
@@ -216,10 +217,13 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
   const fields: FieldDef[] = config.fields.map(f => {
     if (f.name === "centro_id") return { ...f, options: centros.map(c => ({ value: Number(c.id), label: String(c.nombre) })) };
     const link = config.links?.[f.name];
-    return link ? { ...f, options: (linkRows[f.name] ?? []).map(r => ({ value: link.value ? link.value(r) : Number(r.id), label: link.label(r) })) } : f;
+    if (link) return { ...f, options: (linkRows[f.name] ?? []).map(r => ({ value: link.value ? link.value(r) : Number(r.id), label: link.label(r) })) };
+    if (f.name === "usuario_id") return { ...f, options: users.map(c => ({ value: Number(c.id), label: `${String(c.nombre)} (${String(c.username)})` })) };
+    return f;
   });
   const openCreate = () => { const values: Row = {}; for (const f of config.fields) values[f.name] = f.type === "boolean" ? true : ""; setFormError(null); setEditing({ mode: "create", values }); };
   const openEdit = (row: Row) => { const values: Row = { id: row.id, tiene_foto: row.tiene_foto }; for (const f of config.fields) { if (f.type === "image") continue; values[f.name] = f.name === "password" ? "" : row[f.name] ?? (f.type === "boolean" ? false : ""); } setFormError(null); setEditing({ mode: "edit", values }); };
+
   const save = async () => { if (!editing) return; setSaving(true); setFormError(null); const payload: Row = {}; for (const f of config.fields) { if (f.type === "image" && !(f.name in editing.values)) continue; let v = editing.values[f.name]; if (f.type === "number" || f.type === "integer") v = v === "" || v == null ? null : Number(String(v).replace(",", ".")); if (f.type === "boolean") v = v === true || v === 1 ? 1 : 0; payload[f.name] = v ?? null; } try { if (editing.mode === "create") await api.post(config.endpoint, payload); else await api.put(`${config.endpoint}/${String(editing.values.id)}`, payload); setEditing(null); setToast({ message: "Cambios guardados", kind: "ok" }); await load(); } catch (e) { setFormError(e instanceof Error ? e.message : "No se pudo guardar el registro"); } finally { setSaving(false); } };
   const remove = async (row: Row) => { if (!window.confirm(`¿Eliminar "${String(row.nombre ?? row.username ?? row.id)}"? Esta acción no se puede deshacer.`)) return; try { await api.del(`${config.endpoint}/${String(row.id)}`); setToast({ message: "Registro eliminado", kind: "ok" }); await load(); } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo eliminar", kind: "error" }); } };
   const exportCsv = () => { const stamp = new Date().toISOString().slice(0, 10); downloadCsv(`${config.csvName}-${stamp}.csv`, config.columns.map(c => c.label), filtered.map(row => config.columns.map(c => c.csv ? c.csv(row) : String(row[c.key] ?? "")))); };
