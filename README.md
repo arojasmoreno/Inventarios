@@ -55,7 +55,7 @@ Los permisos se validan en el servidor: los usuarios pueden consultar y dar de a
 - `sessions`: tokens de sesión con caducidad.
 - `quimicos`: nombre, nº de lote, litros por garrafa, nº de garrafas, fecha de caducidad, centro, notas. El total de litros se calcula automáticamente (`litros_por_garrafa × num_garrafas`).
 - `material_limpieza`: nombre, **color** (Rojo, Azul, Verde, Amarillo, Blanco, Negro, Naranja, Morado, Gris, Otro), cantidad, centro, notas.
-- `maquinaria`: nombre, **tipo** (Fregadora, Aspiradora, Monobrocha, Hidrolavadora, Barredora, Robot, Carro de limpieza, Otro), cantidad, nº de serie, estado (Operativa, En reparación, Averiada, Baja), centro, notas.
+- `maquinaria`: solo datos de la máquina — **tipo** (catálogo con altas propias), marca, modelo, nº de serie, centro, zona y subzona de ubicación, notas y foto. El **estado** (Operativo, En reparación, Mantenimiento preventivo, Averiado, Baja o situaciones propias) es su **último registro del histórico** (`maquinaria_historial`).
 
 Todos los artículos pueden asignarse a un **centro**, de modo que los informes se pueden filtrar por planta.
 
@@ -91,3 +91,11 @@ src/worker/   API Hono: index.ts (rutas), auth.ts (sesiones), crud.ts (CRUD gen�
 src/web/      SPA React: App.tsx (login y navegación), resources.tsx (páginas CRUD),
               Informes.tsx, ui.tsx (componentes), styles.css
 ```
+
+## CI, pruebas y despliegues
+
+- **CI** (`.github/workflows/ci.yml`): en cada push y PR ejecuta `bun tsc -b --noEmit`, `bun test` y `bun run build`.
+- **Tests**: `bun test` — tests unitarios del histórico de maquinaria (creación, idempotencia y sincronización del estado) con un shim de D1 sobre `bun:sqlite` (`tests/`).
+- **GitHub Pages** (`.github/workflows/pages.yml`): publica `dist/` en <https://arojasmoreno.github.io/Inventarios/> con la API apuntando al Worker. Si Pages no está habilitado, el workflow termina en verde con un aviso (se activa en *Settings → Pages → Source: GitHub Actions*).
+- **Producción**: el frontend se sirve en <https://inventarios.freebuff.app> (Freebuff) y la API en el Worker de Cloudflare; se despliega con `freebuff-deploy start` (frontend) y `npx wrangler deploy` (Worker). Un cron diario (06:00 UTC) envía el resumen de alertas por correo.
+- **Backup de la base de datos**: `sh ./scripts/backup-d1.sh` exporta D1 a `backups/` (carpeta ignorada por git).
