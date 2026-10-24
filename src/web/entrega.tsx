@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import { Toast, formatNum } from "./ui";
+import { Toast, downloadCsv, formatNum } from "./ui";
 
 type Row = Record<string, unknown>;
 
@@ -170,6 +170,37 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
     return [...seen.entries()].map(([id, nombre]) => ({ id, nombre }));
   }, [filtradas]);
 
+  // CSV del registro (respeta los filtros de centro y trabajador).
+  const exportCsv = () => downloadCsv(`entregas-${hoy()}.csv`,
+    ["Operario", "Centro", "Artículo", "Tipo", "Cantidad", "Talla", "Color", "Fecha"],
+    filtradas.map((r) => [
+      String(r.usuario_nombre ?? ""), String(r.centro_nombre ?? ""), String(r.prenda ?? ""),
+      tipoLabel(r.articulo_tipo), String(r.cantidad ?? 1),
+      r.talla == null ? "" : String(r.talla), r.color == null ? "" : String(r.color), String(r.fecha ?? ""),
+    ]));
+
+  // Resguardo imprimible de las entregas de un operario (para su firma).
+  const imprimirResguardo = (g: { id: string; rows: Row[] }) => {
+    const esc = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const primero = g.rows[0];
+    const filas = g.rows.map((r) =>
+      `<tr><td>${esc(r.prenda)}</td><td>${tipoLabel(r.articulo_tipo)}</td><td class="r">${formatNum(r.cantidad ?? 1)}</td><td>${r.talla == null ? "—" : esc(r.talla)}</td><td>${r.color == null ? "—" : esc(r.color)}</td><td>${esc(String(r.fecha ?? "").slice(0, 10).split("-").reverse().join("/"))}</td></tr>`
+    ).join("");
+    const win = window.open("", "_blank");
+    if (!win) { setError("Permite las ventanas emergentes para imprimir el resguardo"); return; }
+    win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8" /><title>Resguardo · ${esc(primero.usuario_nombre)}</title>
+      <style>body{font-family:"Segoe UI",system-ui,sans-serif;color:#0f172a;padding:28px;margin:0}h1{font-size:17px;margin:0 0 4px}.meta{color:#475569;font-size:13px;margin-bottom:18px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #cbd5e1;padding:7px 9px;text-align:left}th{background:#f1f5f9}.r{text-align:right}.firma{display:flex;justify-content:space-between;gap:40px;margin-top:56px;font-size:13px}.firma div{flex:1;border-top:1px solid #334155;padding-top:6px}.pie{margin-top:26px;font-size:11px;color:#94a3b8}@media print{body{padding:0}}</style></head><body>
+      <h1>Resguardo de equipación</h1>
+      <div class="meta"><strong>Operario:</strong> ${esc(primero.usuario_nombre)} · <strong>Centro:</strong> ${esc(primero.centro_nombre ?? "—")} · <strong>Fecha:</strong> ${esc(hoy().split("-").reverse().join("/"))}</div>
+      <table><thead><tr><th>Artículo</th><th>Tipo</th><th class="r">Cant.</th><th>Talla</th><th>Color</th><th>Fecha entrega</th></tr></thead><tbody>${filas}</tbody></table>
+      <div class="firma"><div>Firma del recibido</div><div>VoBo administración</div></div>
+      <div class="pie">Documento generado por Inventarios · ${esc(hoy().split("-").reverse().join("/"))}</div>
+      </body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
   const selCls = "input";
 
   return <>
@@ -239,6 +270,8 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
             <option value="all">Todos los trabajadores</option>
             {operariosOpts.map((o) => <option key={o.id} value={o.id}>{o.nombre}</option>)}
           </select>
+          <div className="spacer" />
+          <button className="btn secondary small" onClick={exportCsv} disabled={!filtradas.length}>⬇️ CSV</button>
         </div>
       </div>
       {loading ? <div className="loading">Cargando…</div> : !grupos.length
@@ -249,7 +282,10 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
                 <span aria-hidden="true">👷</span>{String(g.rows[0].usuario_nombre ?? `#${g.id}`)}
                 <span className="badge muted" style={{ fontWeight: 500 }}>{String(g.rows[0].centro_nombre ?? "—")}</span>
               </h3>
-              <span className="muted" style={{ fontSize: 12.5 }}>{g.rows.length} entrega{g.rows.length === 1 ? "s" : ""}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button className="btn secondary small" onClick={() => imprimirResguardo(g)}>🖨️ Resguardo</button>
+                <span className="muted" style={{ fontSize: 12.5 }}>{g.rows.length} entrega{g.rows.length === 1 ? "s" : ""}</span>
+              </div>
             </div>
             <div className="table-scroll">
               <table className="entrega-table">

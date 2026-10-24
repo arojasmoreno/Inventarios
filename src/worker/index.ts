@@ -16,11 +16,13 @@ import { reportesRoutes } from "./reportes";
 import { panelRoutes } from "./panel";
 import { buscadorRoutes } from "./buscador";
 import { documentos, documentosTipos } from "./documentos";
+import { alertasRoutes, enviarResumenDiario } from "./alertas";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
 const TRUSTED_ORIGINS = new Set([
   "https://inventarios.freebuff.app",
+  "https://arojasmoreno.github.io",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]);
@@ -79,6 +81,7 @@ app.route("/api/panel", panelRoutes);
 app.route("/api/buscar", buscadorRoutes);
 app.route("/api/documentos", documentos);
 app.route("/api/documentos-tipos", documentosTipos);
+app.route("/api/alertas", alertasRoutes);
 app.get("/api/salud", (c) => c.json({ ok: true, app: "Inventarios" }));
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) return c.json({ error: "Ruta no encontrada" }, 404);
@@ -89,4 +92,15 @@ app.onError((err, c) => {
   console.error("Error no controlado:", err);
   return c.json({ error: "Error interno del servidor" }, 500);
 });
-export default app;
+// Además del fetch, el Worker atiende el cron diario (06:00 UTC) que envía
+// el resumen de alertas a los administradores con correo configurado.
+export default {
+  fetch: app.fetch,
+  scheduled: (_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) => {
+    ctx.waitUntil(
+      enviarResumenDiario(env)
+        .then((r) => console.log(`[alertas] Resumen diario: ${JSON.stringify(r)}`))
+        .catch((err) => console.error("[alertas] Error en el resumen diario:", err)),
+    );
+  },
+};

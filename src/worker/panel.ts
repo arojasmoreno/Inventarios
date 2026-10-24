@@ -68,6 +68,23 @@ panelRoutes.get("/", async (c) => {
   const estacionesRes = await db.prepare(
     "SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN activo = 1 THEN 1 ELSE 0 END), 0) AS activas FROM estaciones",
   ).first<Row>();
+  // Tarjetas de alerta: máquinas fuera de servicio, revisiones de EPI
+  // próximas/vencidas y químicos caducando en los próximos 30 días.
+  const [maqNoOperativas, revisionesEpi, caducan30] = await Promise.all([
+    db.prepare(
+      `SELECT m.id, m.nombre, m.tipo, m.estado, m.numero_serie, c.nombre AS centro_nombre
+       FROM maquinaria m LEFT JOIN centros c ON c.id = m.centro_id
+       WHERE m.estado NOT IN ('Operativo', 'Operativa', 'Baja') ORDER BY m.estado, m.nombre LIMIT 20`,
+    ).all<Row>(),
+    db.prepare(
+      `SELECT e.id, COALESCE(NULLIF(e.descripcion, ''), e.codigo) AS nombre, e.fecha_revision, c.nombre AS centro_nombre,
+              CAST(julianday(e.fecha_revision) - julianday('now') AS INTEGER) AS dias
+       FROM epis e LEFT JOIN centros c ON c.id = e.centro_id
+       WHERE e.fecha_revision IS NOT NULL AND e.fecha_revision <= date('now', '+30 day')
+       ORDER BY e.fecha_revision LIMIT 20`,
+    ).all<Row>(),
+    db.prepare("SELECT COUNT(*) AS n FROM quimicos WHERE fecha_caducidad <= date('now', '+30 day')").first<Row>(),
+  ]);
   return c.json({
     generado: new Date().toISOString(),
     consumo: {
@@ -81,5 +98,8 @@ panelRoutes.get("/", async (c) => {
     sin_consumo: sinUso.results,
     stock_bajo: bajoMin.results,
     quimicos_vencidos: Number(vencidos?.n ?? 0),
+    maquinas_no_operativas: maqNoOperativas.results,
+    revisiones_epis: revisionesEpi.results,
+    quimicos_caducan30: Number(caducan30?.n ?? 0),
   });
 });

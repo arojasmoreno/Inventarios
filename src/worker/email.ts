@@ -143,6 +143,17 @@ export async function sendLoginCode(env: Env, to: string, nombre: string, code: 
   await sendViaSendGrid(env, { to, subject: LOGIN_SUBJECT, html, text });
 }
 
+// Envío genérico para el resumen diario de alertas. Devuelve "simulado"
+// cuando no hay clave (desarrollo local), igual que el resto de correos.
+export async function sendResumen(env: Env, to: string, subject: string, html: string, text: string): Promise<"enviado" | "simulado"> {
+  if (!(env.SENDGRID_API_KEY ?? "").trim()) {
+    console.warn(`[email-dev] Sin SENDGRID_API_KEY. Resumen para ${to} no enviado.`);
+    return "simulado";
+  }
+  await sendViaSendGrid(env, { to, subject, html, text });
+  return "enviado";
+}
+
 export async function sendPasswordResetCode(env: Env, to: string, username: string, nombre: string, code: string): Promise<void> {
   if (!(env.SENDGRID_API_KEY ?? "").trim()) {
     // Sin clave (desarrollo local): no hay envío real, se registra el código

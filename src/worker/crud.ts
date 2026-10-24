@@ -39,9 +39,22 @@ function nombreDe(spec: CrudSpec, row: Record<string, unknown>): string {
   return `${TABLA_NOMBRE[spec.table] ?? spec.table} ${label}`;
 }
 // Auditoría genérica de altas, ediciones y borrados de cada sección.
-async function audit(c: Ctx, spec: CrudSpec, accion: "alta" | "edicion" | "borrado", row: Record<string, unknown>): Promise<void> {
+// En ediciones se añaden los campos cambiados con su valor anterior → nuevo.
+async function audit(c: Ctx, spec: CrudSpec, accion: "alta" | "edicion" | "borrado", row: Record<string, unknown>, before?: Record<string, unknown>): Promise<void> {
   if (spec.noAudit) return;
-  await logMovimiento(c.env.DB, c.get("user"), accion, spec.table, Number(row.id) || null, nombreDe(spec, row), null, null);
+  let descripcion = nombreDe(spec, row);
+  if (accion === "edicion" && before) {
+    const cambios: string[] = [];
+    for (const f of spec.fields) {
+      if (f.writeOnly || f.type === "password" || f.name === "foto") continue;
+      const a = before[f.name] ?? null, b = row[f.name] ?? null;
+      if (String(a ?? "") === String(b ?? "")) continue;
+      cambios.push(`${f.label}: «${String(a ?? "—")}» → «${String(b ?? "—")}»`);
+      if (cambios.length >= 8) break;
+    }
+    if (cambios.length) descripcion += ` · ${cambios.join("; ")}`;
+  }
+  await logMovimiento(c.env.DB, c.get("user"), accion, spec.table, Number(row.id) || null, descripcion, null, null);
 }
 // Alcance del rol «administrador de centros»: solo puede editar y borrar los
 // centros que tiene asignados (un centro nuevo creado por él se le asigna solo).
@@ -160,7 +173,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     await c.env.DB.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), id).run();
     const updated = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(id).first();
     if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), updated ?? existing, "update");
-    await audit(c, spec, "edicion", updated ?? existing);
+    await audit(c, spec, "edicion", updated ?? existing, existing);
     return c.json({ item: updated });
   });
   app.delete("/:id", async c => {
@@ -232,7 +245,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
         if (spec.table === "centros" && mode === "insert" && c.get("user").rol === "admin_centros") {
           await c.env.DB.prepare("INSERT OR IGNORE INTO usuario_centros (usuario_id, centro_id) VALUES (?, ?)").bind(c.get("user").id, rowId).run();
         }
-        await audit(c, spec, mode === "insert" ? "alta" : "edicion", row ?? { ...data, id: rowId });
+        await audit(c, spec, mode === "insert" ? "alta" : "edicion", row ?? { ...data, id: rowId }, mode === "update" ? existing : undefined);
         if (mode === "insert" && uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
           existingByCode.set(String(data[uniqueField.name]), { id: rowId, [uniqueField.name]: data[uniqueField.name] });
         }

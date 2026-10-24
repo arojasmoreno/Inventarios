@@ -21,6 +21,7 @@ interface Informe {
   por_tipo: { tipo: string; unidades: number; registros: number }[];
   consumos_por_zona: { centro: string; zona: string; movimientos: number; unidades: number; ultimo: string | null }[];
   consumos_por_subzona: { zona: string; subzona: string; movimientos: number; unidades: number; ultimo: string | null }[];
+  entregas_por_operario: { operario_id: number; operario: string; username: string; entregas: number; unidades: number; ultima: string | null }[];
 }
 function estadoCaducidad(row: Row): { label: string; kind: string } {
   const e = String(row.estado_caducidad ?? "ok");
@@ -47,6 +48,9 @@ export function Informes() {
   if (loading) return <div className="loading">Generando informe…</div>;
   if (error || !data) return <div className="card empty"><span className="icon">⚠️</span>{error ?? "No hay datos"}</div>;
   const r = data.resumen, stamp = new Date().toISOString().slice(0, 10), alcance = data.centro ? data.centro.nombre : "todos los centros";
+  // Máquinas agrupadas por situación actual (último registro del histórico).
+  const porSituacion = new Map<string, number>();
+  for (const m of data.maquinaria) { const e = String(m.estado ?? "Sin estado"); porSituacion.set(e, (porSituacion.get(e) ?? 0) + 1); }
   const csvQuimicos = () => downloadCsv(`informe-quimicos-${stamp}.csv`,
     ["Código", "Marca", "Producto", "Lote", "L/garrafa", "Garrafas", "Total litros", "Caducidad", "Estado", "Centro"],
     data.quimicos.map(q => [String(q.codigo ?? ""), String(q.marca ?? ""), String(q.nombre ?? ""), String(q.numero_lote ?? ""), formatNum(q.litros_por_garrafa, 2), formatNum(q.num_garrafas), formatNum(q.total_litros, 2), formatFecha(q.fecha_caducidad), estadoCaducidad(q).label, String(q.centro_nombre ?? "—")]));
@@ -62,6 +66,9 @@ export function Informes() {
   const csvZonas = () => downloadCsv(`informe-consumos-zonas-${stamp}.csv`,
     ["Centro", "Zona", "Movimientos", "Unidades", "Último consumo"],
     data.consumos_por_zona.map(z => [String(z.centro), String(z.zona), z.movimientos, z.unidades, String(z.ultimo ?? "")]));
+  const csvEntregas = () => downloadCsv(`informe-entregas-${stamp}.csv`,
+    ["Operario", "Login", "Entregas", "Unidades", "Última entrega"],
+    data.entregas_por_operario.map(e => [String(e.operario), String(e.username), e.entregas, e.unidades, e.ultima ? formatFecha(e.ultima) : ""]));
   const csvRopa = () => downloadCsv(`informe-ropa-${stamp}.csv`,
     ["Código", "Prenda", "Marca", "Modelo", "Talla", "Stock", "Centro"],
     data.ropas.map(p => [String(p.codigo ?? ""), String(p.prenda ?? ""), String(p.marca ?? ""), String(p.modelo ?? ""), String(p.talla ?? ""), formatNum(p.stock), String(p.centro_nombre ?? "—")]));
@@ -102,6 +109,15 @@ export function Informes() {
         </div>}
       </> : <div className="empty" style={{ padding: 20 }}>Sin consumos de estaciones registrados todavía.</div>}
     </div>
+    <div className="card"><div className="card-pad section-head"><h3>👕 Equipación: entregas por operario ({formatNum(data.entregas_por_operario.length)})</h3><button className="btn secondary small no-print" onClick={csvEntregas} disabled={!data.entregas_por_operario.length}>⬇️ CSV</button></div>
+      {data.entregas_por_operario.length ? <div className="table-scroll"><table>
+        <thead><tr><th>Operario</th><th>Login</th><th className="right">Entregas</th><th className="right">Unidades</th><th>Última entrega</th></tr></thead>
+        <tbody>{data.entregas_por_operario.map(e => <tr key={String(e.operario_id)}>
+          <td><strong>{String(e.operario)}</strong></td><td>{String(e.username)}</td>
+          <td className="right">{formatNum(e.entregas)}</td><td className="right">{formatNum(e.unidades)}</td>
+          <td>{e.ultima ? formatFecha(e.ultima) : "—"}</td></tr>)}</tbody></table></div>
+        : <div className="empty" style={{ padding: 20 }}>Sin entregas de equipación registradas en {alcance}.</div>}
+    </div>
     <div className="card"><div className="card-pad section-head"><h3>🧴 Productos químicos ({formatNum(data.quimicos.length)})</h3><button className="btn secondary small no-print" onClick={csvQuimicos}>⬇️ CSV</button></div>
       {!data.quimicos.length ? <div className="empty">Sin productos químicos en {alcance}.</div> : <div className="table-scroll"><table>
         <thead><tr><th>Código</th><th>Marca</th><th>Producto</th><th>Lote</th><th className="right">L/garrafa</th><th className="right">Garrafas</th><th className="right">Total litros</th><th>Caducidad</th><th>Estado</th><th>Centro</th></tr></thead>
@@ -125,7 +141,9 @@ export function Informes() {
           <td>{String(m.centro_nombre ?? "—")}</td></tr>)}</tbody></table></div>}
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🧹 Maquinaria por tipo</h3><button className="btn secondary small no-print" onClick={csvMaquinaria}>⬇️ CSV</button></div>
-      <div className="card-pad" style={{ paddingTop: 0 }}><div className="chips">{data.por_tipo.map(t => <span key={t.tipo} className="badge">{t.tipo}: {formatNum(t.unidades)} uds.</span>)}{!data.por_tipo.length && <span style={{ color: "var(--muted)" }}>Sin maquinaria registrada.</span>}</div></div>
+      <div className="card-pad" style={{ paddingTop: 0 }}><div className="chips">{data.por_tipo.map(t => <span key={t.tipo} className="badge">{t.tipo}: {formatNum(t.unidades)} uds.</span>)}{!data.por_tipo.length && <span style={{ color: "var(--muted)" }}>Sin maquinaria registrada.</span>}</div>
+        {porSituacion.size > 0 && <div className="chips" style={{ marginTop: 6 }} aria-label="Máquinas por situación">{[...porSituacion.entries()].map(([estado, n]) =>
+          <span className="badge" key={estado}>🧭 {estado}: {formatNum(n)}</span>)}</div>}</div>
       {data.maquinaria.length > 0 && <div className="table-scroll"><table>
         <thead><tr><th>Máquina</th><th>Tipo</th><th className="right">Unidades</th><th>Nº serie</th><th>Estado</th><th>Centro</th></tr></thead>
         <tbody>{data.maquinaria.map(m => <tr key={String(m.id)}>

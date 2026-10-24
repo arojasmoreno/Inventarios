@@ -11,6 +11,8 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Códigos de acceso por correo (login sin contraseña).
   `CREATE TABLE IF NOT EXISTS login_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  // Control de intentos fallidos de login/códigos (anti fuerza bruta).
+  `CREATE TABLE IF NOT EXISTS login_fallos (clave TEXT PRIMARY KEY, intentos INTEGER NOT NULL DEFAULT 0, primer_intento TEXT NOT NULL DEFAULT (datetime('now')), bloqueado_hasta TEXT)`,
   `CREATE TABLE IF NOT EXISTS epis (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, marca TEXT, modelo TEXT, talla TEXT, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, fecha_revision TEXT, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS ropa_trabajo (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, prenda TEXT NOT NULL, marca TEXT, fabricante TEXT, modelo TEXT, talla TEXT, alta_visibilidad INTEGER NOT NULL DEFAULT 0, manga_larga INTEGER NOT NULL DEFAULT 0, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS tallas_operarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, prenda TEXT, talla TEXT NOT NULL, fecha TEXT NOT NULL DEFAULT (date('now')), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
@@ -248,5 +250,19 @@ export async function bootstrap(db: D1Database): Promise<void> {
   }
   // Estaciones migradas desde los antiguos puntos pueden quedar sin tipo.
   await db.prepare("UPDATE estaciones SET tipo_consumible_id = (SELECT ct.id FROM consumibles_tipos ct WHERE ct.articulo_tipo = estaciones.articulo_tipo ORDER BY ct.id LIMIT 1) WHERE tipo_consumible_id IS NULL").run();
+  // Índices para las consultas calientes (auditoría, panel, entregas, histórico).
+  for (const idx of [
+    "CREATE INDEX IF NOT EXISTS idx_mov_created ON movimientos(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_mov_estacion ON movimientos(estacion_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mov_usuario ON movimientos(usuario_id)",
+    "CREATE INDEX IF NOT EXISTS idx_entregas_usuario ON ropa_entregas(usuario_id, fecha)",
+    "CREATE INDEX IF NOT EXISTS idx_entregas_centro ON ropa_entregas(centro_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hist_maquina ON maquinaria_historial(maquina_id, fecha)",
+    "CREATE INDEX IF NOT EXISTS idx_hist_situacion ON maquinaria_historial(situacion_id)",
+    "CREATE INDEX IF NOT EXISTS idx_quim_caducidad ON quimicos(fecha_caducidad)",
+    "CREATE INDEX IF NOT EXISTS idx_epis_revision ON epis(fecha_revision)",
+    "CREATE INDEX IF NOT EXISTS idx_tallas_usuario ON tallas_operarios(usuario_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_usuario ON sessions(user_id)",
+  ] as const) await db.prepare(idx).run();
   ready = true;
 }

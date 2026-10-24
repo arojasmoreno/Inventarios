@@ -6,7 +6,7 @@ export class ApiError extends Error {
 // frontend y API); en producción (inventarios.freebuff.app) las peticiones van
 // al Worker desplegado en Cloudflare. VITE_API_BASE, si está definida en el
 // build, tiene prioridad. Se elimina la barra final para concatenar "/api/...".
-const API_BASE = (import.meta.env.VITE_API_BASE ?? (window.location.hostname === "inventarios.freebuff.app" ? "https://inventarios.arojasmoreno.workers.dev" : "")).replace(/\/+$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE ?? ((window.location.hostname === "inventarios.freebuff.app" || window.location.hostname.endsWith(".github.io")) ? "https://inventarios.arojasmoreno.workers.dev" : "")).replace(/\/+$/, "");
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), credentials: "include" });
   let data: unknown = null;

@@ -3,6 +3,10 @@
   "name": "inventarios",
   "main": "src/worker/index.ts",
   "compatibility_date": "2025-06-01",
+  // Resumen diario de alertas por correo (06:00 UTC).
+  "triggers": {
+    "crons": ["0 6 * * *"]
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

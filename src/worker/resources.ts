@@ -353,6 +353,28 @@ usuarios.put("/:id/centros", requireAuth, async (c) => {
   for (const centroId of ids) await ins.bind(id, centroId).run();
   return c.json({ ok: true, centros: ids });
 });
+// RGPD: exportación de los datos personales de un usuario (perfil, centros,
+// tallas y entregas). Solo administradores.
+usuarios.get("/:id/datos", requireAuth, async (c) => {
+  if (c.get("user").rol !== "admin") return c.json({ error: "Requiere permisos de administrador" }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id < 1) return c.json({ error: "Usuario no válido" }, 400);
+  const db = c.env.DB;
+  const usuario = await db.prepare(
+    "SELECT id, username, nombre, email, rol, activo, created_at FROM usuarios WHERE id = ?",
+  ).bind(id).first();
+  if (!usuario) return c.json({ error: "Usuario no encontrado" }, 404);
+  const [centros, tallas, entregas] = await Promise.all([
+    db.prepare("SELECT c.id, c.nombre FROM usuario_centros uc JOIN centros c ON c.id = uc.centro_id WHERE uc.usuario_id = ? ORDER BY c.nombre").bind(id).all(),
+    db.prepare("SELECT prenda, talla, fecha, notas, created_at FROM tallas_operarios WHERE usuario_id = ? ORDER BY fecha DESC, id DESC").bind(id).all(),
+    db.prepare("SELECT fecha, prenda, articulo_tipo, cantidad, talla, color, centro_id, created_at FROM ropa_entregas WHERE usuario_id = ? ORDER BY fecha DESC, id DESC").bind(id).all(),
+  ]);
+  return c.json({
+    exportado: new Date().toISOString(),
+    aviso: "Exportación de datos personales (RGPD) generada desde Inventarios.",
+    usuario, centros: centros.results, tallas: tallas.results, entregas: entregas.results,
+  });
+});
 export const tipos = createCrud(tiposSpec);
 export const tiposEquipo = createCrud(tiposEquipoSpec);
 // ---- Soportes y tipos de consumible (listas gestionadas de estaciones) ----

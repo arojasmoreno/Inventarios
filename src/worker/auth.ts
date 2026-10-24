@@ -122,6 +122,37 @@ async function findActiveReset(db: Env["DB"], token: string): Promise<{ userId: 
   return { userId: Number(row.user_id), code: String(row.code ?? "") };
 }
 
+// ---------------------------------------------------------------------------
+// Límite de intentos fallidos (login, códigos y envíos): 5 fallos en 15
+// minutos bloquean la clave 15 minutos más. Evita fuerza bruta y spam de
+// correos. La tabla login_fallos la crea el bootstrap.
+// ---------------------------------------------------------------------------
+const MAX_FALLOS = 5;
+
+async function claveBloqueada(db: Env["DB"], clave: string): Promise<boolean> {
+  const row = await db.prepare(
+    "SELECT 1 AS x FROM login_fallos WHERE clave = ? AND bloqueado_hasta > datetime('now')",
+  ).bind(clave).first();
+  return Boolean(row);
+}
+async function registrarFallo(db: Env["DB"], clave: string): Promise<void> {
+  // ON CONFLICT: la ventana de 15 minutos reinicia el contador si expiró;
+  // al llegar a MAX_FALLOS se fija el bloqueo.
+  await db.prepare(
+    `INSERT INTO login_fallos (clave, intentos, primer_intento, bloqueado_hasta)
+     VALUES (?, 1, datetime('now'), NULL)
+     ON CONFLICT(clave) DO UPDATE SET
+       intentos = CASE WHEN primer_intento < datetime('now', '-15 minutes') THEN 1 ELSE intentos + 1 END,
+       primer_intento = CASE WHEN primer_intento < datetime('now', '-15 minutes') THEN datetime('now') ELSE primer_intento END,
+       bloqueado_hasta = CASE WHEN
+         (CASE WHEN primer_intento < datetime('now', '-15 minutes') THEN 1 ELSE intentos + 1 END) >= ${MAX_FALLOS}
+         THEN datetime('now', '+15 minutes') ELSE bloqueado_hasta END`,
+  ).bind(clave).run();
+}
+async function limpiarFallos(db: Env["DB"], clave: string): Promise<void> {
+  await db.prepare("DELETE FROM login_fallos WHERE clave = ?").bind(clave).run();
+}
+
 export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>()
   .post("/login", async (c) => {
     let body: { username?: unknown; password?: unknown };
@@ -129,14 +160,19 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     const username = typeof body.username === "string" ? body.username.trim() : "";
     const password = typeof body.password === "string" ? body.password : "";
     if (!username || !password) return c.json({ error: "Indica usuario y contraseña" }, 400);
+    const falloClave = `login:${username.toLowerCase()}`;
+    if (await claveBloqueada(c.env.DB, falloClave)) {
+      return c.json({ error: "Demasiados intentos fallidos. Inténtalo de nuevo en 15 minutos." }, 429);
+    }
     const row = await c.env.DB.prepare(
       `SELECT u.*, (SELECT uc.centro_id FROM usuario_centros uc WHERE uc.usuario_id = u.id ORDER BY uc.centro_id LIMIT 1) AS centro_id
        FROM usuarios u WHERE u.username = ?`,
     ).bind(username).first();
-    if (!row) return c.json({ error: "Usuario o contraseña incorrectos" }, 401);
+    if (!row) { await registrarFallo(c.env.DB, falloClave); return c.json({ error: "Usuario o contraseña incorrectos" }, 401); }
     const hash = await hashPassword(password, String(row.salt));
-    if (hash !== String(row.password_hash)) return c.json({ error: "Usuario o contraseña incorrectos" }, 401);
+    if (hash !== String(row.password_hash)) { await registrarFallo(c.env.DB, falloClave); return c.json({ error: "Usuario o contraseña incorrectos" }, 401); }
     if (Number(row.activo) !== 1) return c.json({ error: "Usuario desactivado. Contacta con un administrador." }, 403);
+    await limpiarFallos(c.env.DB, falloClave);
     const token = await createSession(c.env.DB, Number(row.id));
     setCookie(c, SESSION_COOKIE, token, { httpOnly: true, ...sessionCookieOptions(c), maxAge: SESSION_DAYS * 24 * 3600 });
     return c.json({ user: publicUser(row) });
@@ -172,6 +208,9 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     const salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
     const nuevoHash = await hashPassword(nueva, salt);
     await c.env.DB.prepare("UPDATE usuarios SET password_hash = ?, salt = ? WHERE id = ?").bind(nuevoHash, salt, user.id).run();
+    // Cambiar la contraseña cierra las demás sesiones abiertas del usuario.
+    const actualToken = getCookie(c, SESSION_COOKIE);
+    await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").bind(user.id, actualToken ?? "").run();
     return c.json({ ok: true });
   })
   .post("/request-password-reset", async (c) => {
@@ -273,6 +312,10 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     const token = typeof body.token === "string" ? body.token : "";
     const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
     if (!token || !code) return c.json({ error: "Indica el código de verificación" }, 400);
+    const codigoClave = `code:${token}`;
+    if (await claveBloqueada(c.env.DB, codigoClave)) {
+      return c.json({ error: "Demasiados intentos fallidos. Solicita un código nuevo." }, 429);
+    }
     const row = await c.env.DB.prepare(
       `SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo,
               (SELECT uc.centro_id FROM usuario_centros uc WHERE uc.usuario_id = u.id ORDER BY uc.centro_id LIMIT 1) AS centro_id,
@@ -280,7 +323,11 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
        FROM login_codes lc JOIN usuarios u ON u.id = lc.user_id
        WHERE lc.token = ? AND lc.code = ? AND lc.expires_at > datetime('now')`,
     ).bind(token, code).first();
-    if (!row || Number(row.activo) !== 1) return c.json({ error: "El código no es válido o ha caducado" }, 400);
+    if (!row || Number(row.activo) !== 1) {
+      await registrarFallo(c.env.DB, codigoClave);
+      return c.json({ error: "El código no es válido o ha caducado" }, 400);
+    }
+    await limpiarFallos(c.env.DB, codigoClave);
     // El código queda usado: se elimina y se abre sesión directamente.
     await c.env.DB.prepare("DELETE FROM login_codes WHERE id = ?").bind(Number(row.lc_id)).run();
     const sessionToken = await createSession(c.env.DB, Number(row.id));

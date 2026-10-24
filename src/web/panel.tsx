@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { formatFecha, formatNum } from "./ui";
+import { Toast, formatFecha, formatNum } from "./ui";
 
 type Row = Record<string, unknown>;
 
@@ -17,17 +17,25 @@ interface PanelData {
   sin_consumo: Row[];
   stock_bajo: Row[];
   quimicos_vencidos: number;
+  quimicos_caducan30: number;
+  maquinas_no_operativas: Row[];
+  revisiones_epis: Row[];
 }
+
+interface EnvioResumen { ok: boolean; enviado: boolean; enviados?: number; destinatarios?: number; message?: string; }
 
 const nombreEstacion = (e: Row): string => {
   const partes = [e.zona_nombre, e.subzona_nombre, e.soporte_nombre].filter((v): v is string => Boolean(v));
   return partes.join(" · ") || `Estación #${String(e.id)}`;
 };
 
-/** Panel de control: lo que importa hoy — consumos, estaciones paradas y stock bajo. */
-export function PanelPage() {
+/** Panel de control: lo que importa hoy — consumos, estaciones paradas, stock bajo y avisos. */
+export function PanelPage({ user }: { user?: { rol: string } }) {
   const [data, setData] = useState<PanelData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const esAdmin = user?.rol === "admin";
 
   const load = useCallback(async () => {
     setError(null);
@@ -36,12 +44,26 @@ export function PanelPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  const enviarResumen = async () => {
+    setEnviando(true);
+    try {
+      const r = await api.post<EnvioResumen>("/api/alertas/enviar", {});
+      setToast({
+        message: r.enviado ? `Resumen enviado a ${formatNum(r.enviados ?? 0)} de ${formatNum(r.destinatarios ?? 0)} administradores`
+          : r.message ?? "Sin alertas: no hay nada que enviar.",
+        kind: "ok",
+      });
+    } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo enviar el resumen", kind: "error" }); }
+    finally { setEnviando(false); }
+  };
+
   if (error) return <div className="card empty">⚠️ {error}</div>;
   if (!data) return <div className="loading\">Cargando panel…</div>;
 
   const maxDia = Math.max(1, ...data.por_dia.map((d) => Number(d.unidades)));
   const maxZona = Math.max(1, ...data.por_zona.map((z) => Number(z.unidades)));
-  const alertas = data.stock_bajo.length + data.quimicos_vencidos + data.sin_consumo.length;
+  const alertas = data.stock_bajo.length + data.quimicos_vencidos + data.sin_consumo.length
+    + data.revisiones_epis.length + data.maquinas_no_operativas.length;
 
   return <>
     <div className="kpis">
@@ -55,7 +77,7 @@ export function PanelPage() {
         <div className="label">Sin consumo (30 d)</div><div className="value">{formatNum(data.sin_consumo.length)}</div>
         <div className={"kpi-sub" + (data.sin_consumo.length ? " up" : "")}>estaciones activas paradas</div></a>
       <div className={"kpi" + (alertas > 0 ? " alert" : "")}><div className="label">Alertas</div><div className="value">{formatNum(alertas)}</div>
-        <div className="kpi-sub">stock bajo {formatNum(data.stock_bajo.length)} · vencidos {formatNum(data.quimicos_vencidos)}</div></div>
+        <div className="kpi-sub">stock {formatNum(data.stock_bajo.length)} · revisiones {formatNum(data.revisiones_epis.length)} · máquinas {formatNum(data.maquinas_no_operativas.length)}</div></div>
     </div>
 
     <div className="card card-pad">
@@ -96,6 +118,37 @@ export function PanelPage() {
             </tr>)}</tbody></table></div>
           : <p style={{ color: "var(--muted)", margin: 0 }}>Ningún artículo por debajo del mínimo. ¡Todo surtido! </p>}
       </div>
+    </div>
+    {toast && <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} />}
+
+    <div className="card card-pad">
+      <div className="section-head"><h3>🔔 Avisos operativos</h3>
+        {esAdmin && <button className="btn secondary small" onClick={() => void enviarResumen()} disabled={enviando}>
+          {enviando ? "Enviando…" : "📧 Enviar resumen por correo"}</button>}</div>
+      <div className="dash-grid">
+        <div>
+          <div className="section-head" style={{ marginBottom: 6 }}><h3 style={{ fontSize: 14 }}>🧭 Máquinas no operativas ({formatNum(data.maquinas_no_operativas.length)})</h3></div>
+          {data.maquinas_no_operativas.length
+            ? <div className="chips">{data.maquinas_no_operativas.map((m) => <a key={String(m.id)} className="chip" href="#/maquinaria"
+                title={`${String(m.nombre)} · ${String(m.estado)}`}>🧭 {String(m.nombre)} · {String(m.estado)}</a>)}</div>
+            : <p style={{ color: "var(--muted)", margin: 0 }}>Todas las máquinas operativas.</p>}
+        </div>
+        <div>
+          <div className="section-head" style={{ marginBottom: 6 }}><h3 style={{ fontSize: 14 }}>🦺 Revisiones de EPI (30 días) ({formatNum(data.revisiones_epis.length)})</h3>
+            <a className="btn secondary small" href="#/epis">Ver EPIs</a></div>
+          {data.revisiones_epis.length
+            ? <div className="table-scroll"><table>
+              <thead><tr><th>EPI</th><th>Centro</th><th>Fecha</th></tr></thead>
+              <tbody>{data.revisiones_epis.map((r) => { const dias = Number(r.dias); return <tr key={String(r.id)}>
+                <td>{String(r.nombre ?? "—")}</td><td>{String(r.centro_nombre ?? "—")}</td>
+                <td>{dias < 0 ? <span className="badge danger">Vencida · {formatFecha(String(r.fecha_revision))}</span>
+                  : <span className="badge warn">{formatFecha(String(r.fecha_revision))} · {formatNum(dias)} d</span>}</td>
+              </tr>; })}</tbody></table></div>
+            : <p style={{ color: "var(--muted)", margin: 0 }}>Sin revisiones próximas.</p>}
+        </div>
+      </div>
+      {(data.quimicos_vencidos > 0 || data.quimicos_caducan30 > 0) && <p style={{ marginBottom: 0 }}>
+        <a href="#/quimicos">🧪 {formatNum(data.quimicos_vencidos)} químicos vencidos · {formatNum(data.quimicos_caducan30)} caducan en 30 días</a></p>}
     </div>
 
     {data.sin_consumo.length > 0 && <div className="card card-pad">

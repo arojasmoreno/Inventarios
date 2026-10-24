@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Instalar dependencias
+        run: bun install
+      - name: Typecheck
+        run: bun tsc -b --noEmit
+      - name: Tests
+        run: bun test
+      - name: Build
+        run: bun run build

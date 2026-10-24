@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { Modal, Toast, formatFecha } from "./ui";
+import { Modal, Toast, downloadCsv, formatFecha } from "./ui";
 import { MAQUINARIA, ResourcePage, SITUACIONES, TIPOS } from "./resources";
 
 type Row = Record<string, unknown>;
@@ -60,6 +60,9 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [maquinaId, setMaquinaId] = useState("all");
+  const [situacionId, setSituacionId] = useState("all");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
   const [form, setForm] = useState<Row | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -84,9 +87,19 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
     const needle = q.trim().toLowerCase();
     return items.filter(r =>
       (maquinaId === "all" || String(r.maquina_id) === maquinaId) &&
+      (situacionId === "all" || String(r.situacion_id) === situacionId) &&
+      (!desde || String(r.fecha ?? "") >= desde) &&
+      (!hasta || String(r.fecha ?? "") <= hasta) &&
       (!needle || ["maquina_nombre", "numero_serie", "tipo", "situacion_nombre", "marca", "modelo", "centro_nombre"]
         .some(k => String(r[k] ?? "").toLowerCase().includes(needle))));
   })();
+
+  const exportCsv = () => downloadCsv(`historial-maquinaria-${hoy()}.csv`,
+    ["Fecha", "Máquina", "Nº serie", "Situación", "Marca", "Modelo", "Centro"],
+    filtered.map(r => [
+      String(r.fecha ?? ""), String(r.maquina_nombre ?? ""), String(r.numero_serie ?? ""),
+      String(r.situacion_nombre ?? ""), String(r.marca ?? ""), String(r.modelo ?? ""), String(r.centro_nombre ?? ""),
+    ]));
 
   const openForm = () => { setFormError(null); setForm({ maquina_id: "", fecha: hoy(), situacion_id: "", marca: "", modelo: "", centro_id: "" }); };
   // Al elegir otra máquina se precargan sus marca, modelo y centro.
@@ -128,17 +141,24 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
   return <>
     <div className="toolbar no-print">
       <input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar…" value={q} onChange={e => setQ(e.target.value)} />
-      <select className="input" style={{ maxWidth: 240 }} value={maquinaId} onChange={e => setMaquinaId(e.target.value)} aria-label="Filtrar por máquina">
+      <select className="input" style={{ maxWidth: 200 }} value={maquinaId} onChange={e => setMaquinaId(e.target.value)} aria-label="Filtrar por máquina">
         <option value="all">Todas las máquinas</option>
         {maquinas.map(m => <option key={String(m.id)} value={String(m.id)}>{String(m.nombre ?? `#${String(m.id)}`)}</option>)}
       </select>
+      <select className="input" style={{ maxWidth: 200 }} value={situacionId} onChange={e => setSituacionId(e.target.value)} aria-label="Filtrar por situación">
+        <option value="all">Todas las situaciones</option>
+        {situaciones.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.nombre)}</option>)}
+      </select>
+      <input className="input" style={{ maxWidth: 150 }} type="date" value={desde} onChange={e => setDesde(e.target.value)} aria-label="Desde fecha" title="Desde fecha" />
+      <input className="input" style={{ maxWidth: 150 }} type="date" value={hasta} onChange={e => setHasta(e.target.value)} aria-label="Hasta fecha" title="Hasta fecha" />
       <div className="spacer" />
+      <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>
       {admin && <button className="btn" onClick={openForm}>＋ Registrar situación</button>}
     </div>
     <div className="card">
       {loading ? <div className="loading">Cargando…</div>
         : error ? <div className="empty">⚠️ {error}</div>
-        : !filtered.length ? <div className="empty"><span className="icon">🕘</span><strong>Sin registros</strong><p>Pulsa «Registrar situación» para añadir el primero.</p></div>
+        : !filtered.length ? <div className="empty"><span className="icon">🕘</span><strong>Sin registros</strong><p>{q || maquinaId !== "all" || situacionId !== "all" || desde || hasta ? "Prueba con otra búsqueda u otro filtro." : "Pulsa «Registrar situación» para añadir el primero."}</p></div>
         : <div className="table-scroll"><table>
             <thead><tr>
               <th>Fecha</th><th>Máquina</th><th>Situación</th><th>Marca</th><th>Modelo</th><th>Centro</th>

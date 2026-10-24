@@ -1,0 +1,60 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # GitHub Pages puede estar deshabilitado: en ese caso este job termina en
+  # verde con un aviso (sin checks rojos) y el despliegue se activará solo
+  # cuando se habilite con origen «GitHub Actions» (Settings → Pages).
+  pages-disponible:
+    runs-on: ubuntu-latest
+    outputs:
+      listo: ${{ steps.check.outputs.listo }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          BT=$(gh api "repos/$REPO/pages" -q .build_type 2>/dev/null || echo "ninguno")
+          if [ "$BT" = "workflow" ]; then
+            echo "listo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Pages no está habilitado con origen «GitHub Actions» (origen actual: $BT). Actívalo en Settings → Pages → Source: GitHub Actions."
+          fi
+
+  deploy:
+    needs: pages-disponible
+    if: needs.pages-disponible.outputs.listo == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Instalar dependencias
+        run: bun install
+      - name: Build (la API apunta al Worker en producción)
+        run: bun run build
+        env:
+          VITE_API_BASE: https://inventarios.arojasmoreno.workers.dev
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v5

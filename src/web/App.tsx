@@ -276,7 +276,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       : esGestionInformes ? nav("#/gestion-informes") : NAV_FLAT[0]);
   let page: ReactNode;
   if (route === "#/cuenta") page = <MiCuenta user={user} />;
-  else if (route === "#/panel") page = <PanelPage />;
+  else if (route === "#/panel") page = <PanelPage user={user} />;
   else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;
   else if (esGestionInformes) page = <GestionInformesPage key={route} user={user} />;

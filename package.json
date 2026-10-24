@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "check": "tsc --noEmit",
+    "test": "bun test",
     "dev": "npm run build && wrangler dev --ip 0.0.0.0 --port 3000",
     "preview": "wrangler dev --ip 0.0.0.0 --port 3000"
   },

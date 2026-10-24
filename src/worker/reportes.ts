@@ -48,6 +48,12 @@ reportesRoutes.get("/", async (c) => {
     FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
     LEFT JOIN zonas z ON z.id = e.zona_id LEFT JOIN subzonas s ON s.id = e.subzona_id
     WHERE m.accion = 'consumo'${whereMov} GROUP BY zona, subzona ORDER BY unidades DESC`);
+  // Entregas de equipación agrupadas por operario (bloque de Informes).
+  const entregasRes = await bind<Row>(`SELECT u.id AS operario_id, u.nombre AS operario, u.username,
+    COUNT(*) AS entregas, COALESCE(SUM(re.cantidad), 0) AS unidades, MAX(re.fecha) AS ultima
+    FROM ropa_entregas re JOIN usuarios u ON u.id = re.usuario_id
+    ${centroId ? "WHERE re.centro_id = ?" : ""}
+    GROUP BY u.id, u.nombre, u.username ORDER BY unidades DESC, operario`);
   // Solo cantidades: los costes se han eliminado de los consumibles.
   const bajoDe = (rows: Row[], key: string): number => rows.filter((r) => Number(r.stock_minimo ?? 0) > 0 && Number(r[key] ?? 0) <= Number(r.stock_minimo)).length;
   const sQ = bajoDe(quimicos, "num_garrafas"), sM = bajoDe(material, "cantidad");
@@ -71,5 +77,6 @@ reportesRoutes.get("/", async (c) => {
     por_tipo: [...porTipo.values()].sort((a, b) => b.unidades - a.unidades),
     consumos_por_zona: porZonaRes.results,
     consumos_por_subzona: porSubzonaRes.results,
+    entregas_por_operario: entregasRes.results,
   });
 });

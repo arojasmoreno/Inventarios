@@ -6,3 +6,5 @@ tsconfig.tsbuildinfo
 .env.*
 *.log
 .DS_Store
+backups/
+isolate/
