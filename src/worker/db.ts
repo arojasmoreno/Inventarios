@@ -7,7 +7,7 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, expires_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT NOT NULL, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', cantidad INTEGER NOT NULL DEFAULT 1, foto TEXT, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', cantidad INTEGER NOT NULL DEFAULT 1, foto TEXT, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL, subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Códigos de acceso por correo (login sin contraseña).
   `CREATE TABLE IF NOT EXISTS login_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -17,6 +17,16 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS empresa (id INTEGER PRIMARY KEY CHECK (id = 1), nombre TEXT, logo TEXT, updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER REFERENCES usuarios(id), accion TEXT NOT NULL, tabla TEXT, registro_id INTEGER, estacion_id INTEGER, descripcion TEXT, cantidad INTEGER, motivo TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS tipos_maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Tipos de equipo de la equipación (abrigo, camiseta, tapones de oídos…),
+  // compartidos por ropa_trabajo y epis.
+  `CREATE TABLE IF NOT EXISTS tipos_equipo (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Situaciones de la maquinaria (operativo, en reparación…): catálogo con
+  // altas propias; el estado actual de cada máquina es su último registro del
+  // histórico (se sincroniza en la columna `estado`).
+  `CREATE TABLE IF NOT EXISTS situaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Histórico de máquinas: fecha + situación con la marca, modelo y centro del
+  // momento de registrarla.
+  `CREATE TABLE IF NOT EXISTS maquinaria_historial (id INTEGER PRIMARY KEY AUTOINCREMENT, maquina_id INTEGER NOT NULL REFERENCES maquinaria(id) ON DELETE CASCADE, fecha TEXT NOT NULL DEFAULT (date('now')), situacion_id INTEGER NOT NULL REFERENCES situaciones(id), marca TEXT, modelo TEXT, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS zonas (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, nombre TEXT NOT NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT, UNIQUE(centro_id, nombre))`,
   `CREATE TABLE IF NOT EXISTS subzonas (id INTEGER PRIMARY KEY AUTOINCREMENT, zona_id INTEGER NOT NULL REFERENCES zonas(id) ON DELETE CASCADE, nombre TEXT NOT NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT, UNIQUE(zona_id, nombre))`,
   `CREATE TABLE IF NOT EXISTS usuario_centros (usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (usuario_id, centro_id))`,
@@ -25,9 +35,10 @@ const SCHEMA: string[] = [
   // Estaciones de consumo (antes «puntos de consumo»): zona/subzona, soporte,
   // tipo de consumible y artículo del almacén que se descuenta al escanear.
   `CREATE TABLE IF NOT EXISTS estaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id), zona_id INTEGER NOT NULL REFERENCES zonas(id), subzona_id INTEGER REFERENCES subzonas(id), soporte_id INTEGER REFERENCES soportes(id), tipo_consumible_id INTEGER REFERENCES consumibles_tipos(id), articulo_tipo TEXT NOT NULL DEFAULT 'material_limpieza', articulo_id INTEGER NOT NULL, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  // Entrega de ropa por operario: una fila por prenda entregada. El catálogo
-  // de prendas (marca, fabricante, modelo) vive en ropa_trabajo.
-  `CREATE TABLE IF NOT EXISTS ropa_entregas (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id), fecha TEXT NOT NULL DEFAULT (date('now')), prenda TEXT NOT NULL, talla TEXT, alta_visibilidad INTEGER, auxiliar_servicios INTEGER, manga_larga INTEGER, color TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Entrega de equipación: una fila por artículo entregado (referencia al
+  // catálogo ropa_trabajo o epis + cantidad) con su operario y fecha. El
+  // stock del artículo se descuenta al entregar y se reintegra al borrar.
+  `CREATE TABLE IF NOT EXISTS ropa_entregas (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id), fecha TEXT NOT NULL DEFAULT (date('now')), prenda TEXT NOT NULL, articulo_tipo TEXT, articulo_id INTEGER, cantidad INTEGER, talla TEXT, alta_visibilidad INTEGER, auxiliar_servicios INTEGER, manga_larga INTEGER, color TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Documentación: tipos de ficha (ficha de seguridad, técnica, manual de
   // maquinaria, instrucción de trabajo…) y fichas con URL y multi-centro.
   `CREATE TABLE IF NOT EXISTS documento_tipos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
@@ -43,6 +54,10 @@ const ALTERS: Array<[string, string]> = [
   ["epis", "stock_minimo INTEGER NOT NULL DEFAULT 0"], ["epis", "fecha_revision TEXT"],
   ["ropa_trabajo", "talla TEXT"], ["ropa_trabajo", "stock_minimo INTEGER NOT NULL DEFAULT 0"],
   ["maquinaria", "cantidad INTEGER NOT NULL DEFAULT 1"],
+  ["maquinaria", "zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL"],
+  ["maquinaria", "subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL"],
+  ["ropa_entregas", "articulo_tipo TEXT"], ["ropa_entregas", "articulo_id INTEGER"], ["ropa_entregas", "cantidad INTEGER"],
+  ["ropa_trabajo", "tipo_equipo_id INTEGER"], ["epis", "tipo_equipo_id INTEGER"],
   ["tallas_operarios", "fecha TEXT NOT NULL DEFAULT (date('now'))"],
   ["tallas_operarios", "prenda TEXT"],
   ["movimientos", "updated_at TEXT"],
@@ -112,9 +127,16 @@ async function migrate(db: D1Database): Promise<void> {
   // emplazamiento de una máquina es su centro. Entregas: marca/modelo/tipo se
   // quedaron en el catálogo ropa_trabajo y no en la fila de entrega.
   for (const [table, column] of [
-    ["maquinaria", "zona_id"], ["maquinaria", "subzona_id"],
     ["ropa_entregas", "marca"], ["ropa_entregas", "modelo"], ["ropa_entregas", "tipo"],
   ] as Array<[string, string]>) await dropColumnIfPresent(db, table, column);
+  // Ropa y EPIs no son consumibles: sus estaciones se desactivan (con el tipo
+  // apuntado a NULL) y sus tipos de consumible se eliminan. Su stock pasa a
+  // moverse solo con entregas, ediciones e importaciones.
+  if (await tableExists(db, "estaciones")) {
+    await db.prepare("UPDATE estaciones SET tipo_consumible_id = NULL WHERE articulo_tipo IN ('epis', 'ropa_trabajo')").run();
+    await db.prepare("DELETE FROM consumibles_tipos WHERE articulo_tipo IN ('epis', 'ropa_trabajo')").run();
+    await db.prepare("UPDATE estaciones SET activo = 0 WHERE articulo_tipo IN ('epis', 'ropa_trabajo')").run();
+  }
   // Usuarios: el centro único pasa a la asignación multi usuario_centros.
   // Se copia el valor antiguo (si aún queda alguno) y se elimina la columna.
   const ucInfo = await db.prepare("PRAGMA table_info(usuarios)").all();
@@ -178,10 +200,45 @@ export async function bootstrap(db: D1Database): Promise<void> {
     const ins = db.prepare("INSERT OR IGNORE INTO soportes (nombre) VALUES (?)");
     for (const s of ["Pared", "Mesa", "Carro", "Estantería"]) await ins.bind(s).run();
   }
+  // Tipos de equipo por defecto para ropa y EPIs (también en bases existentes).
+  const teq = await db.prepare("SELECT COUNT(*) AS n FROM tipos_equipo").first();
+  if (!teq || Number(teq.n) === 0) {
+    const ins = db.prepare("INSERT OR IGNORE INTO tipos_equipo (nombre) VALUES (?)");
+    for (const t of ["Abrigo", "Camiseta", "Tapones de oídos", "Gafas de seguridad"]) await ins.bind(t).run();
+  }
+  // Situaciones de maquinaria por defecto (también en bases existentes).
+  const sit = await db.prepare("SELECT COUNT(*) AS n FROM situaciones").first();
+  if (!sit || Number(sit.n) === 0) {
+    const ins = db.prepare("INSERT OR IGNORE INTO situaciones (nombre) VALUES (?)");
+    for (const s of ["Operativo", "En reparación", "Mantenimiento preventivo", "Averiado", "Baja"]) await ins.bind(s).run();
+  }
+  // Histórico inicial: cada máquina sin registros guarda su estado actual como
+  // primer registro (equivalencias de los estados antiguos: Operativa→Operativo…).
+  const sinHist = await db.prepare(
+    `SELECT m.id, m.estado, m.marca, m.modelo, m.centro_id FROM maquinaria m
+     WHERE NOT EXISTS (SELECT 1 FROM maquinaria_historial h WHERE h.maquina_id = m.id)`,
+  ).all();
+  for (const m of sinHist.results) {
+    const estado = String(m.estado ?? "Operativo");
+    const equiv = estado === "Operativa" ? "Operativo" : estado === "Averiada" ? "Averiado" : estado;
+    let s = await db.prepare("SELECT id FROM situaciones WHERE nombre = ?").bind(equiv).first();
+    if (!s) s = await db.prepare("SELECT id FROM situaciones WHERE nombre = ?").bind("Operativo").first();
+    if (s) {
+      await db.prepare("INSERT INTO maquinaria_historial (maquina_id, fecha, situacion_id, marca, modelo, centro_id) VALUES (?, date('now'), ?, ?, ?, ?)")
+        .bind(Number(m.id), Number(s.id), m.marca ?? null, m.modelo ?? null, m.centro_id ?? null).run();
+    }
+  }
+  // La columna `estado` queda sincronizada con el último registro del histórico.
+  await db.prepare(
+    `UPDATE maquinaria SET estado = (
+       SELECT st.nombre FROM maquinaria_historial h JOIN situaciones st ON st.id = h.situacion_id
+       WHERE h.maquina_id = maquinaria.id ORDER BY h.fecha DESC, h.id DESC LIMIT 1)
+     WHERE EXISTS (SELECT 1 FROM maquinaria_historial h2 WHERE h2.maquina_id = maquinaria.id)`,
+  ).run();
   const ctn = await db.prepare("SELECT COUNT(*) AS n FROM consumibles_tipos").first();
   if (!ctn || Number(ctn.n) === 0) {
     const ins = db.prepare("INSERT INTO consumibles_tipos (nombre, articulo_tipo) VALUES (?, ?)");
-    for (const [nombre, tipo] of [["Químicos", "quimicos"], ["Material de limpieza", "material_limpieza"], ["EPIs", "epis"], ["Ropa de trabajo", "ropa_trabajo"], ["Maquinaria", "maquinaria"]] as Array<[string, string]>) await ins.bind(nombre, tipo).run();
+    for (const [nombre, tipo] of [["Químicos", "quimicos"], ["Material de limpieza", "material_limpieza"], ["Maquinaria", "maquinaria"]] as Array<[string, string]>) await ins.bind(nombre, tipo).run();
   }
   // Tipos de ficha de la sección Documentación (también en bases existentes).
   const dtn = await db.prepare("SELECT COUNT(*) AS n FROM documento_tipos").first();

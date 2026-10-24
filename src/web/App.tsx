@@ -1,15 +1,12 @@
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "./api";
 import { Field, Toast } from "./ui";
-import { CENTROS, EPIS, MAQUINARIA, MATERIAL, MOVIMIENTOS, QUIMICOS, ResourcePage, ROPA, SOPORTES, TALLAS, TIPOS, TIPOS_CONSUMIBLES, USUARIOS, type ResourceConfig } from "./resources";
-import { StockPage } from "./stock";
-import { ConsumosCostesPage } from "./costes";
-import { ImportarPage } from "./importar";
-import { EmpresaPage } from "./empresa";
-import { Informes } from "./Informes";
-import { ZonasCentroPage } from "./zonas";
-import { EstacionesPage } from "./estaciones";
-import { EntregaPage } from "./entrega";
+import { QUIMICOS, ResourcePage, type ResourceConfig } from "./resources";
+import { ConsumiblesPage } from "./consumibles";
+import { GestionCentrosPage } from "./gestion-centros";
+import { GestionInformesPage } from "./gestion-informes";
+import { MaquinariaPage } from "./maquinaria";
+import { EquipacionPage } from "./equipacion";
 import { PanelPage } from "./panel";
 import { GlobalSearch } from "./busqueda";
 import { DocumentosPage } from "./documentos";export interface User {
@@ -45,47 +42,37 @@ const NAV: NavGroup[] = [
   {
     section: "Consumibles",
     items: [
-      { hash: "#/quimicos", label: "Químicos", icon: "🧴", resource: QUIMICOS },
-      { hash: "#/ropa", label: "Ropa de trabajo", icon: "🥼", resource: ROPA },
-      { hash: "#/material", label: "Material de limpieza", icon: "🧽", resource: MATERIAL },
-      { hash: "#/maquinaria", label: "Maquinaria", icon: "🧹", resource: MAQUINARIA },
-      { hash: "#/epis", label: "EPIs", icon: "🦺", resource: EPIS },
+      { hash: "#/consumibles", label: "Consumibles", icon: "🧴" },
     ],
   },
   {
-    section: "Ubicaciones",
+    section: "Maquinaria",
     items: [
-      { hash: "#/centros", label: "Centros", icon: "🏭", resource: CENTROS },
-      { hash: "#/zonas", label: "Zonas y subzonas", icon: "🗺️" },
-      { hash: "#/estaciones", label: "Estaciones de consumo", icon: "🚻" },
+      { hash: "#/maquinaria", label: "Control de maquinaria", icon: "🧭" },
     ],
   },
   {
-    section: "Movimientos",
+    section: "Equipación",
     items: [
-      { hash: "#/entradas", label: "Entradas / Salidas", icon: "🔄", adminOnly: true },
-      { hash: "#/costes", label: "Consumos", icon: "📊" },
-      { hash: "#/movimientos", label: "Auditoría", icon: "📋" },
+      { hash: "#/equipacion", label: "Equipación de operarios", icon: "🦺" },
+    ],
+  },
+  {
+    section: "Gestión de centros",
+    items: [
+      { hash: "#/gestion-centros", label: "Gestión de centros", icon: "🏙️" },
     ],
   },
   {
     section: "Gestión",
     items: [
       { hash: "#/documentacion", label: "Documentación", icon: "📚" },
-      { hash: "#/entregas", label: "Entregar ropa", icon: "👕" },
-      { hash: "#/tallas", label: "Tallas operarios", icon: "📏", adminOnly: true, resource: TALLAS },
-      { hash: "#/tipos", label: "Tipos de maquinaria", icon: "🧩", resource: TIPOS },
-      { hash: "#/soportes", label: "Soportes", icon: "📌", resource: SOPORTES },
-      { hash: "#/consumibles-tipos", label: "Tipos de consumible", icon: "🏷️", resource: TIPOS_CONSUMIBLES },
-      { hash: "#/usuarios", label: "Usuarios", icon: "👥", adminOnly: true, resource: USUARIOS },
-      { hash: "#/empresa", label: "Empresa", icon: "🏢", adminOnly: true },
-      { hash: "#/importar", label: "Importar CSV", icon: "📤", adminOnly: true },
     ],
   },
   {
-    section: "Consultas",
+    section: "Gestión de informes",
     items: [
-      { hash: "#/informes", label: "Informes", icon: "📈" },
+      { hash: "#/gestion-informes", label: "Gestión de informes", icon: "📈" },
     ],
   },
 ];
@@ -270,20 +257,32 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
     try { await api.post("/api/auth/logout", {}); } catch { /* la sesión puede haber caducado */ }
     setLogoutToast(true); onUserChange(null); window.location.hash = "";
   }, [onUserChange]);
-  const active = NAV_FLAT.find((n) => n.hash === route || route.startsWith(`${n.hash}?`)) ?? NAV_FLAT[0];
+  const esLegacy = route === "#/ropa" || route === "#/epis" || route === "#/tallas" || route === "#/tipos-equipo" || route.startsWith("#/entregas");
+  // «Tipos de maquinaria» ahora vive como pestaña de Control de maquinaria.
+  const esTiposMaquinaria = route === "#/tipos";
+  // Rutas antiguas que ahora son pestañas de la sección Consumibles.
+  const esConsumibles = route === "#/consumibles" || route === "#/quimicos" || route === "#/material" || route.startsWith("#/estaciones")
+    || route === "#/consumibles-tipos" || route === "#/soportes" || route === "#/entradas" || route === "#/costes";
+  // Rutas de la sección Gestión de centros (su propia ruta y las antiguas).
+  const esGestionCentros = route === "#/gestion-centros" || route === "#/centros" || route === "#/zonas" || route === "#/usuarios" || route === "#/empresa";
+  // Rutas de la sección Gestión de informes (su propia ruta y las antiguas).
+  const esGestionInformes = route === "#/gestion-informes" || route === "#/movimientos" || route === "#/importar" || route === "#/informes";
+  const nav = (hash: string) => NAV_FLAT.find((n) => n.hash === hash) ?? NAV_FLAT[0];
+  const active = NAV_FLAT.find((n) => n.hash === route || route.startsWith(`${n.hash}?`))
+    ?? (esLegacy ? nav("#/equipacion")
+      : esTiposMaquinaria ? nav("#/maquinaria")
+      : esConsumibles ? nav("#/consumibles")
+      : esGestionCentros ? nav("#/gestion-centros")
+      : esGestionInformes ? nav("#/gestion-informes") : NAV_FLAT[0]);
   let page: ReactNode;
   if (route === "#/cuenta") page = <MiCuenta user={user} />;
   else if (route === "#/panel") page = <PanelPage />;
-  else if (route.startsWith("#/estaciones")) page = <EstacionesPage user={user} />;
-  else if (route === "#/zonas") page = <ZonasCentroPage user={user} />;
+  else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
+  else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;
+  else if (esGestionInformes) page = <GestionInformesPage key={route} user={user} />;
+  else if (route === "#/maquinaria" || route === "#/tipos") page = <MaquinariaPage key={route} user={user} />;
   else if (route === "#/documentacion") page = <DocumentosPage user={user} />;
-  else if (route === "#/entregas") page = <EntregaPage user={user} />;
-  else if (route === "#/informes") page = <Informes />;
-  else if (route === "#/empresa") page = user.rol === "admin" ? <EmpresaPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden gestionar los datos de la empresa.</p></div>;
-  else if (route === "#/entradas") page = user.rol === "admin" ? <StockPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden registrar entradas y salidas.</p></div>;
-  else if (route === "#/costes") page = <ConsumosCostesPage />;
-  else if (route === "#/importar") page = user.rol === "admin" ? <ImportarPage /> : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden importar datos.</p></div>;
-  else if (route === "#/movimientos") page = <ResourcePage key={route} config={MOVIMIENTOS} user={user} />;
+  else if (route === "#/equipacion" || route === "#/ropa" || route === "#/epis" || route === "#/tallas" || route === "#/tipos-equipo" || route.startsWith("#/entregas")) page = <EquipacionPage user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;
   else page = <ResourcePage key="#/quimicos" config={QUIMICOS} user={user} />;
   const grupos = NAV

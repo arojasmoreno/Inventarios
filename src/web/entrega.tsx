@@ -1,27 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import { Toast } from "./ui";
+import { Toast, formatNum } from "./ui";
 
 type Row = Record<string, unknown>;
 
-// Prendas fijas del formulario de entrega (tal y como en la hoja de reparto).
-const PRENDAS = [
-  "Camiseta", "Pantalón", "Zapatos seguridad", "Botas de agua", "Guantes anticorte",
-  "Casaca", "Pantalón casaca", "Chaqueton", "Polar", "Chaleco",
-];
+// Artículos del inventario entregables: ropa de trabajo y EPIs.
+interface Art {
+  tipo: "ropa_trabajo" | "epis";
+  id: number;
+  codigo: string;
+  nombre: string;
+  stock: number;
+}
+interface Linea {
+  tipo: "ropa_trabajo" | "epis";
+  id: number;
+  cantidad: number;
+}
 
-interface Linea { talla: string; av: string; aux: string; manga: string; color: string; }
-const lineaVacia = (): Linea => ({ talla: "", av: "", aux: "", manga: "", color: "" });
-const flagDe = (v: string): number | null => (v === "" ? null : v === "sí" ? 1 : 0);
-const flagA = (v: unknown): string => (v === null || v === undefined ? "" : Number(v) === 1 ? "sí" : "no");
-const fmtFlag = (v: unknown): string => (v === null || v === undefined ? "—" : Number(v) === 1 ? "Sí" : "No");
+const artKey = (a: Art | Linea) => `${a.tipo}:${a.id}`;
 const hoy = (): string => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+const etiqueta = (a: Art) => `${a.codigo ? `${a.codigo} · ` : ""}${a.nombre}`;
+const tipoLabel = (v: unknown) => (v === "epis" ? "EPI" : "Ropa");
 
-/** Pestaña «Entregar ropa»: centro → trabajador → tabla de prendas; el
- *  registro se muestra después tabulado por operario. */
+/** Sección Entregas: registra la equipación (ropa y EPIs del inventario) que
+ *  recibe cada operario y el día; el stock se descuenta automáticamente. */
 export function EntregaPage({ user }: { user: { rol: string; centro_id: number | null } }) {
   const canWrite = user.rol === "admin" || user.rol === "admin_centros";
 
@@ -30,8 +36,11 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
   const [centroId, setCentroId] = useState<string>(user.centro_id ? String(user.centro_id) : "");
   const [usuarioId, setUsuarioId] = useState("");
   const [fecha, setFecha] = useState(hoy);
-  const [lineas, setLineas] = useState<Record<string, Linea>>(() =>
-    Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()])));
+
+  const [catalogo, setCatalogo] = useState<Art[]>([]);
+  const [lineas, setLineas] = useState<Linea[]>([]);
+  const [selArt, setSelArt] = useState("");
+  const [cant, setCant] = useState("1");
 
   const [list, setList] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,76 +66,87 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
     finally { setLoading(false); }
   }, []);
 
+  // Catálogo entregable (ropa + EPIs) con su stock actual.
+  const loadCatalogo = useCallback(async () => {
+    try {
+      const [ropa, epis] = await Promise.all([
+        api.get<{ items: Row[] }>("/api/ropa-trabajo"),
+        api.get<{ items: Row[] }>("/api/epis"),
+      ]);
+      const arts: Art[] = [
+        ...ropa.items.map((r) => ({
+          tipo: "ropa_trabajo" as const, id: Number(r.id),
+          codigo: r.codigo == null ? "" : String(r.codigo),
+          nombre: String(r.prenda ?? `#${r.id}`), stock: Number(r.stock ?? 0),
+        })),
+        ...epis.items.map((r) => ({
+          tipo: "epis" as const, id: Number(r.id),
+          codigo: r.codigo == null ? "" : String(r.codigo),
+          nombre: String(r.descripcion ?? r.modelo ?? r.nombre ?? `#${r.id}`), stock: Number(r.stock ?? 0),
+        })),
+      ];
+      setCatalogo(arts);
+    } catch { setCatalogo([]); }
+  }, []);
+
   useEffect(() => {
     void api.get<{ items: Row[] }>("/api/centros").then((r) => setCentros(r.items)).catch(() => setCentros([]));
     void load();
+    void loadCatalogo();
     if (user.centro_id) void loadTrabajadores(String(user.centro_id));
-  }, [load, loadTrabajadores, user.centro_id]);
+  }, [load, loadCatalogo, loadTrabajadores, user.centro_id]);
 
   const onChangeCentro = (valor: string) => {
     setCentroId(valor); setUsuarioId(""); setTrabajadores([]);
     void loadTrabajadores(valor);
   };
 
-  const lineaConDatos = (l: Linea): boolean =>
-    Boolean(l.talla.trim() || l.color.trim() || l.av || l.aux || l.manga);
+  // Stock disponible de un artículo: total menos lo ya puesto en el formulario.
+  const disponible = useCallback((a: Art, excludeKey?: string): number => {
+    const usado = lineas.filter((l) => artKey(l) === artKey(a) && artKey(l) !== excludeKey)
+      .reduce((s, l) => s + l.cantidad, 0);
+    return a.stock - usado;
+  }, [lineas]);
+
+  const articulosDisp = useMemo(() => catalogo.filter((a) => !lineas.some((l) => artKey(l) === artKey(a))), [catalogo, lineas]);
+
+  const anadirLinea = () => {
+    setError(null);
+    const art = catalogo.find((a) => artKey(a) === selArt);
+    if (!art) { setError("Elige un artículo del inventario"); return; }
+    const n = Number(cant);
+    if (!Number.isInteger(n) || n < 1) { setError("La cantidad debe ser al menos 1"); return; }
+    if (n > disponible(art)) { setError(`Stock insuficiente para «${etiqueta(art)}»: quedan ${disponible(art)} uds.`); return; }
+    setLineas((prev) => [...prev, { tipo: art.tipo, id: art.id, cantidad: n }]);
+    setSelArt(""); setCant("1");
+  };
 
   const guardar = async () => {
     setError(null);
     if (!centroId) { setError("Elige el centro de trabajo"); return; }
     if (!usuarioId) { setError("Elige el trabajador de ese centro"); return; }
-    const enviadas = PRENDAS.filter((p) => lineaConDatos(lineas[p])).map((p) => {
-      const l = lineas[p];
-      return {
-        prenda: p,
-        talla: l.talla.trim() || null,
-        alta_visibilidad: flagDe(l.av),
-        auxiliar_servicios: flagDe(l.aux),
-        manga_larga: flagDe(l.manga),
-        color: l.color.trim() || null,
-      };
-    });
-    if (!enviadas.length) { setError("Rellena los datos de al menos una prenda"); return; }
+    if (!lineas.length) { setError("Añade al menos un artículo del inventario"); return; }
     setBusy(true);
     try {
-      const r = await api.post<{ creadas: number; actualizadas: number }>("/api/ropa-entregas", {
-        centro_id: Number(centroId), usuario_id: Number(usuarioId), fecha, lineas: enviadas,
+      const r = await api.post<{ creadas: number }>("/api/ropa-entregas", {
+        centro_id: Number(centroId), usuario_id: Number(usuarioId), fecha,
+        lineas: lineas.map((l) => ({ articulo_tipo: l.tipo, articulo_id: l.id, cantidad: l.cantidad })),
       });
-      const total = r.creadas + r.actualizadas;
-      setToast(`Entrega guardada · ${total} prenda${total === 1 ? "" : "s"}`);
-      setLineas(Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()])));
+      setToast(`Entrega guardada · ${r.creadas} artículo${r.creadas === 1 ? "" : "s"} descontado${r.creadas === 1 ? "" : "s"} del inventario`);
+      setLineas([]); setSelArt(""); setCant("1");
       // La vista pasa a mostrar al operario recién guardado, tabulado.
       setRegCentro(centroId); setRegOperario(usuarioId);
-      await load();
+      await Promise.all([load(), loadCatalogo()]);
     } catch (e) { setError(e instanceof Error ? e.message : "No se pudo guardar la entrega"); }
     finally { setBusy(false); }
   };
 
-  const editar = async (row: Row) => {
-    setError(null);
-    const centro = String(row.centro_id ?? "");
-    setCentroId(centro);
-    setUsuarioId(String(row.usuario_id ?? ""));
-    setFecha(String(row.fecha ?? hoy()).slice(0, 10));
-    if (centro) await loadTrabajadores(centro);
-    const nuevas: Record<string, Linea> = Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()]));
-    nuevas[String(row.prenda)] = {
-      talla: row.talla == null ? "" : String(row.talla),
-      av: flagA(row.alta_visibilidad),
-      aux: flagA(row.auxiliar_servicios),
-      manga: flagA(row.manga_larga),
-      color: row.color == null ? "" : String(row.color),
-    };
-    setLineas(nuevas);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
   const borrar = async (row: Row) => {
-    if (!window.confirm(`¿Eliminar la entrega de «${String(row.prenda)}» a ${String(row.usuario_nombre ?? "este operario")}? Esta acción no se puede deshacer.`)) return;
+    if (!window.confirm(`¿Eliminar la entrega de «${String(row.prenda)}» a ${String(row.usuario_nombre ?? "este operario")}? Si viene del inventario, su stock se reintegrará.`)) return;
     try {
       await api.del(`/api/ropa-entregas/${String(row.id)}`);
       setToast("Entrega eliminada");
-      await load();
+      await Promise.all([load(), loadCatalogo()]);
     } catch (e) { setError(e instanceof Error ? e.message : "No se pudo eliminar"); }
   };
 
@@ -137,8 +157,7 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
   const grupos = useMemo(() => {
     const porId = new Map<string, Row[]>();
     for (const r of [...filtradas].sort((a, b) =>
-      String(b.fecha).localeCompare(String(a.fecha)) ||
-      PRENDAS.indexOf(String(a.prenda)) - PRENDAS.indexOf(String(b.prenda)))) {
+      String(b.fecha).localeCompare(String(a.fecha)) || String(a.prenda).localeCompare(String(b.prenda)))) {
       const key = String(r.usuario_id);
       if (!porId.has(key)) porId.set(key, []);
       porId.get(key)!.push(r);
@@ -152,19 +171,12 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
   }, [filtradas]);
 
   const selCls = "input";
-  const flagOpts = (v: string, onChange: (x: string) => void) => (
-    <select className={selCls} value={v} onChange={(e) => onChange(e.target.value)} aria-label="Sí / No">
-      <option value="">—</option>
-      <option value="sí">Sí</option>
-      <option value="no">No</option>
-    </select>
-  );
 
   return <>
     {canWrite && <div className="card card-pad">
-      <div className="section-head"><h3>Nueva entrega de ropa</h3>
-        <span className="badge muted">Prenda · talla · A/V · auxiliar · manga larga · color</span></div>
-      <p style={{ color: "var(--muted)", marginTop: 0 }}>Elige el centro de trabajo y el trabajador; después rellena la tabla con los datos de cada prenda.</p>
+      <div className="section-head"><h3>Nueva entrega de equipación</h3>
+        <span className="badge muted">Artículo · cantidad · descuenta stock</span></div>
+      <p style={{ color: "var(--muted)", marginTop: 0 }}>Elige el centro y el trabajador; añade los artículos de ropa o EPIs del inventario con su cantidad. El stock se descuenta automáticamente.</p>
       {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
       <div className="form-grid" style={{ marginBottom: 14 }}>
         <div className="field"><label htmlFor="en-centro">Centro de trabajo<span className="req">*</span></label>
@@ -180,27 +192,38 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
         <div className="field"><label htmlFor="en-fecha">Fecha de entrega</label>
           <input id="en-fecha" className={selCls} type="date" value={fecha} onChange={(e) => setFecha(e.target.value || hoy())} /></div>
       </div>
-      <div className="table-scroll">
-        <table className="entrega-table entrega-form">
-          <thead><tr>
-            <th>Prenda</th><th>Talla</th><th>A/V (si/No)</th><th>Auxiliar servicios (si/No)</th><th>Manga larga (si/no)</th><th>Color (indicar)</th>
-          </tr></thead>
-          <tbody>{PRENDAS.map((p) => {
-            const l = lineas[p];
-            const set = (patch: Partial<Linea>) => setLineas((prev) => ({ ...prev, [p]: { ...prev[p], ...patch } }));
-            return <tr key={p}>
-              <td><strong>{p}</strong></td>
-              <td><input className={selCls} value={l.talla} maxLength={40} placeholder="Ej. M, 42…" onChange={(e) => set({ talla: e.target.value })} /></td>
-              <td>{flagOpts(l.av, (v) => set({ av: v }))}</td>
-              <td>{flagOpts(l.aux, (v) => set({ aux: v }))}</td>
-              <td>{flagOpts(l.manga, (v) => set({ manga: v }))}</td>
-              <td><input className={selCls} value={l.color} maxLength={40} placeholder="Ej. Azul…" onChange={(e) => set({ color: e.target.value })} /></td>
-            </tr>;
-          })}</tbody>
-        </table>
+      <div className="form-grid" style={{ marginBottom: 14 }}>
+        <div className="field" style={{ gridColumn: "span 2" }}><label htmlFor="en-art">Artículo del inventario</label>
+          <select id="en-art" className={selCls} value={selArt} onChange={(e) => setSelArt(e.target.value)}>
+            <option value="">— Elige ropa o EPIs —</option>
+            {articulosDisp.map((a) => <option key={artKey(a)} value={artKey(a)} disabled={disponible(a) < 1}>
+              {tipoLabel(a.tipo)} · {etiqueta(a)} (stock {a.stock})
+            </option>)}
+          </select></div>
+        <div className="field" style={{ maxWidth: 130 }}><label htmlFor="en-cant">Cantidad</label>
+          <input id="en-cant" className={selCls} type="number" min={1} step={1} value={cant} onChange={(e) => setCant(e.target.value)} /></div>
+        <div className="field" style={{ alignSelf: "end" }}>
+          <button className="btn secondary" onClick={anadirLinea} disabled={!selArt}>＋ Añadir línea</button></div>
       </div>
+      {!lineas.length
+        ? <p style={{ color: "var(--muted)" }}>Todavía no has añadido artículos a esta entrega.</p>
+        : <div className="table-scroll" style={{ marginBottom: 12 }}>
+            <table className="entrega-table">
+              <thead><tr><th>Artículo</th><th>Tipo</th><th className="right">Cantidad</th><th className="right">Stock restante</th><th className="right">Quitar</th></tr></thead>
+              <tbody>{lineas.map((l) => {
+                const art = catalogo.find((a) => artKey(a) === artKey(l));
+                return <tr key={artKey(l)}>
+                  <td><strong>{art ? etiqueta(art) : `#${l.id}`}</strong></td>
+                  <td><span className={`badge ${l.tipo === "epis" ? "info" : "warn"}`}>{tipoLabel(l.tipo)}</span></td>
+                  <td className="right">{formatNum(l.cantidad)}</td>
+                  <td className="right">{art ? formatNum(disponible(art, artKey(l)) - l.cantidad) : "—"}</td>
+                  <td className="right"><button className="btn danger small" onClick={() => setLineas((prev) => prev.filter((x) => artKey(x) !== artKey(l)))}>✕ Quitar</button></td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>}
       <div className="modal-footer">
-        <button className="btn secondary" onClick={() => setLineas(Object.fromEntries(PRENDAS.map((p) => [p, lineaVacia()])) as Record<string, Linea>)}>Limpiar tabla</button>
+        {lineas.length > 0 && <button className="btn secondary" onClick={() => setLineas([])}>Limpiar líneas</button>}
         <button className="btn" onClick={() => void guardar()} disabled={busy}>{busy ? "Guardando…" : "💾 Guardar entrega"}</button>
       </div>
     </div>}
@@ -226,24 +249,22 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
                 <span aria-hidden="true">👷</span>{String(g.rows[0].usuario_nombre ?? `#${g.id}`)}
                 <span className="badge muted" style={{ fontWeight: 500 }}>{String(g.rows[0].centro_nombre ?? "—")}</span>
               </h3>
-              <span className="muted" style={{ fontSize: 12.5 }}>{g.rows.length} prendas</span>
+              <span className="muted" style={{ fontSize: 12.5 }}>{g.rows.length} entrega{g.rows.length === 1 ? "s" : ""}</span>
             </div>
             <div className="table-scroll">
               <table className="entrega-table">
                 <thead><tr>
-                  <th>Prenda</th><th>Talla</th><th>A/V (si/No)</th><th>Auxiliar servicios (si/No)</th><th>Manga larga (si/no)</th><th>Color (indicar)</th><th>Fecha</th>
+                  <th>Artículo</th><th>Tipo</th><th className="right">Cant.</th><th>Talla</th><th>Color</th><th>Fecha</th>
                   {canWrite && <th className="right">Acciones</th>}
                 </tr></thead>
                 <tbody>{g.rows.map((r) => <tr key={String(r.id)}>
                   <td>{String(r.prenda)}</td>
+                  <td><span className={`badge ${r.articulo_tipo === "epis" ? "info" : "warn"}`}>{tipoLabel(r.articulo_tipo)}</span></td>
+                  <td className="right">{formatNum(r.cantidad ?? 1)}</td>
                   <td>{r.talla == null ? "—" : String(r.talla)}</td>
-                  <td>{fmtFlag(r.alta_visibilidad)}</td>
-                  <td>{fmtFlag(r.auxiliar_servicios)}</td>
-                  <td>{fmtFlag(r.manga_larga)}</td>
                   <td>{r.color == null ? "—" : String(r.color)}</td>
                   <td>{String(r.fecha ?? "—").slice(0, 10).split("-").reverse().join("/")}</td>
                   {canWrite && <td className="right"><div className="row-actions">
-                    <button className="btn secondary small" onClick={() => void editar(r)}>✏️ Editar</button>
                     <button className="btn danger small" onClick={() => void borrar(r)}>🗑️ Borrar</button>
                   </div></td>}
                 </tr>)}</tbody>

@@ -7,8 +7,6 @@ type Row = Record<string, unknown>;
 const RECURSOS = [
   { key: "quimicos", endpoint: "/api/quimicos", label: "Productos químicos", stockKey: "num_garrafas", unidad: "garrafas" },
   { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza", stockKey: "cantidad", unidad: "unidades" },
-  { key: "epis", endpoint: "/api/epis", label: "EPIs", stockKey: "stock", unidad: "uds." },
-  { key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo", stockKey: "stock", unidad: "uds." },
 ] as const;
 
 /** Entradas, salidas y ajustes de stock (solo administradores). */
@@ -54,7 +52,7 @@ export function StockPage() {
   return <>
     <div className="card card-pad" style={{ maxWidth: 720 }}>
       <div className="section-head"><h3>Entradas / Salidas</h3></div>
-      <p style={{ color: "var(--muted)", marginTop: 0 }}>Entradas, salidas y ajustes de stock con motivo. Solo se registra la cantidad consumida: los costes no se gestionan.</p>
+      <p style={{ color: "var(--muted)", marginTop: 0 }}>Entradas, salidas y ajustes de stock con motivo. Solo se registra la cantidad consumida: los costes no se gestionan. La ropa y los EPIs no son consumibles: su stock se mueve con las entregas de la sección «Equipación de operarios».</p>
       {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
       {msg && <div className="banner" style={{ marginBottom: 12 }}>{msg}</div>}
       <div className="form-grid">

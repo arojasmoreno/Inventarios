@@ -18,11 +18,11 @@ export const movimientosSpec: CrudSpec = {
 
 // Recursos con stock que admiten entrada/salida/ajuste manual y consumo en
 // estaciones: la clave es el tipo de artículo (`articulo_tipo` de estaciones).
+// Ropa de trabajo y EPIs NO son consumibles: su stock solo cambia con las
+// entregas de la sección Equipación, ediciones e importaciones.
 export const STOCK_TABLA: Record<string, { tabla: string; columna: string; nombre: string; columnaNombre: string }> = {
   quimicos: { tabla: "quimicos", columna: "num_garrafas", nombre: "químico", columnaNombre: "nombre" },
   material_limpieza: { tabla: "material_limpieza", columna: "cantidad", nombre: "material de limpieza", columnaNombre: "nombre" },
-  epis: { tabla: "epis", columna: "stock", nombre: "EPI", columnaNombre: "descripcion" },
-  ropa_trabajo: { tabla: "ropa_trabajo", columna: "stock", nombre: "prenda", columnaNombre: "prenda" },
   maquinaria: { tabla: "maquinaria", columna: "cantidad", nombre: "máquina", columnaNombre: "nombre" },
 };
 const STOCK = STOCK_TABLA;

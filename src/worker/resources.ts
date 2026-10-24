@@ -2,10 +2,10 @@ import type { CrudSpec } from "./crud";
 import { createCrud, ValidationError, hashPasswordField } from "./crud";
 import { requireAuth } from "./auth";
 import { movimientosSpec } from "./movimientos";
+import { seedHistorial } from "./maquinaria-historial";
 
 export const COLORES = ["Rojo", "Azul", "Verde", "Amarillo", "Blanco", "Negro", "Naranja", "Morado", "Gris", "Marrón", "Otro"];
 export const TIPOS_MAQUINARIA = ["Fregadora", "Aspiradora", "Monobrocha", "Hidrolavadora", "Barredora", "Robot", "Carro de limpieza", "Otro"];
-export const ESTADOS_MAQUINARIA = ["Operativa", "En reparación", "Averiada", "Baja"];
 export const ROLES = ["admin", "admin_centros", "usuario"];
 const centro = { name: "centro_id", label: "Centro", type: "integer" as const, required: false, placeholder: "Sin centro asignado" };
 const notas = { name: "notas", label: "Notas", type: "textarea" as const, required: false, maxLength: 2000 };
@@ -38,26 +38,77 @@ export const materialSpec: CrudSpec = {
     stockMinimo, centro, notas, foto,
   ],
 };
-// Máquinas de trabajo: marca, modelo, cantidad, nº de serie, tipo (con CRUD de tipos), estado.
+// Máquinas: solo sus datos (marca, modelo, nº de serie, tipo) y su ubicación
+// (centro → zona → subzona). Sin cantidad y sin estado editable: el estado es
+// el último registro del histórico (columna derivada `estado`, sincronizada).
 export const maquinariaSpec: CrudSpec = {
   table: "maquinaria", orderBy: "id", refCentro: true,
+  extraJoins: [" LEFT JOIN zonas z ON z.id = t.zona_id", " LEFT JOIN subzonas sb ON sb.id = t.subzona_id"],
+  extraSelect: [
+    "z.nombre AS zona_nombre",
+    "sb.nombre AS subzona_nombre",
+    `COALESCE((SELECT st.nombre FROM maquinaria_historial h JOIN situaciones st ON st.id = h.situacion_id
+      WHERE h.maquina_id = t.id ORDER BY h.fecha DESC, h.id DESC LIMIT 1), t.estado) AS estado`,
+  ],
+  extraSearchCols: ["z.nombre", "sb.nombre"],
   read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
-    { name: "nombre", label: "Máquina", type: "text", required: true, maxLength: 200 },
+    { name: "nombre", label: "Máquina", type: "text", required: false, maxLength: 200 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
     { name: "modelo", label: "Modelo", type: "text", required: false, maxLength: 80 },
     { name: "tipo", label: "Tipo", type: "text", required: true, maxLength: 80 },
-    { name: "cantidad", label: "Unidades", type: "integer", required: true, min: 0 },
-    { name: "numero_serie", label: "Nº de serie (opcional)", type: "text", required: false, maxLength: 60 },
-    { name: "estado", label: "Estado", type: "enum", required: true, enumValues: ESTADOS_MAQUINARIA },
-    centro, notas, foto,
+    { name: "numero_serie", label: "Nº de serie", type: "text", required: false, maxLength: 60 },
+    { name: "centro_id", label: "Centro", type: "integer", required: true, min: 1 },
+    { name: "zona_id", label: "Zona", type: "integer", required: true, min: 1 },
+    { name: "subzona_id", label: "Subzona", type: "integer", required: false, min: 1 },
+    notas, foto,
   ],
-  beforeWrite: async (db, data) => {
+  beforeWrite: async (db, data, mode, existing) => {
     if (typeof data.tipo === "string" && data.tipo.trim()) {
       const t = await db.prepare("SELECT id FROM tipos_maquinaria WHERE nombre = ?").bind(data.tipo.trim()).first();
       if (!t) throw new ValidationError("El tipo debe existir en la pestaña «Tipos de maquinaria»");
     }
+    // Nombre interno (para búsquedas y auditoría): si no viene en el payload
+    // (el formulario ya no lo pide) se deriva de marca + modelo + tipo.
+    if (typeof data.nombre !== "string" || !data.nombre.trim()) {
+      delete data.nombre;
+      const marca = String(data.marca ?? existing?.marca ?? "").trim();
+      const modelo = String(data.modelo ?? existing?.modelo ?? "").trim();
+      const tipo = String(data.tipo ?? existing?.tipo ?? "").trim();
+      const auto = `${marca} ${modelo}`.trim() || tipo;
+      if (auto) data.nombre = auto;
+      else if (mode === "insert") data.nombre = "Máquina";
+    }
+    // Ubicación: la zona debe pertenecer al centro y la subzona a la zona.
+    if (data.zona_id === undefined || data.zona_id === null) throw new ValidationError("La zona es obligatoria");
+    const zona = await db.prepare("SELECT id, centro_id FROM zonas WHERE id = ?").bind(Number(data.zona_id)).first();
+    if (!zona) throw new ValidationError("La zona seleccionada no existe");
+    if (data.centro_id !== undefined && data.centro_id !== null && Number(data.centro_id) !== Number(zona.centro_id)) {
+      throw new ValidationError("La zona elegida no pertenece a ese centro");
+    }
+    data.centro_id = Number(zona.centro_id);
+    if (data.subzona_id !== undefined && data.subzona_id !== null) {
+      const sub = await db.prepare("SELECT id, zona_id FROM subzonas WHERE id = ?").bind(Number(data.subzona_id)).first();
+      if (!sub) throw new ValidationError("La subzona seleccionada no existe");
+      if (Number(sub.zona_id) !== Number(data.zona_id)) throw new ValidationError("La subzona no pertenece a la zona elegida");
+    }
     return data;
+  },
+  afterWrite: async (db, _user, row, mode) => {
+    // Toda máquina nueva nace con su primer registro del histórico (Operativo).
+    if (mode === "insert") await seedHistorial(db, row);
+  },
+};
+// ---- Situaciones de la maquinaria (catálogo del histórico) ----
+export const situacionesSpec: CrudSpec = {
+  table: "situaciones", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
+  fields: [
+    { name: "nombre", label: "Situación", type: "text", required: true, unique: true, maxLength: 80 },
+  ],
+  beforeDelete: async (db, _user, row) => {
+    const n = await db.prepare("SELECT COUNT(*) AS n FROM maquinaria_historial WHERE situacion_id = ?").bind(Number(row.id)).first();
+    if (n && Number(n.n) > 0) return `No se puede eliminar: ${n.n} registros del histórico usan esta situación`;
+    return null;
   },
 };
 export const centrosSpec: CrudSpec = {
@@ -109,9 +160,14 @@ export const usuariosSpec: CrudSpec = {
 };
 // ---- EPIs (equipos de protección individual) ----
 export const episSpec: CrudSpec = {
-  table: "epis", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "epis", orderBy: "id", refCentro: true,
+  extraJoins: [" LEFT JOIN tipos_equipo te ON te.id = t.tipo_equipo_id"],
+  extraSelect: ["te.nombre AS tipo_equipo_nombre"],
+  extraSearchCols: ["te.nombre"],
+  read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
+    { name: "tipo_equipo_id", label: "Tipo de equipo", type: "integer", required: false, min: 1 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
     { name: "modelo", label: "Modelo", type: "text", required: false, maxLength: 80 },
     { name: "talla", label: "Talla (opcional)", type: "text", required: false, maxLength: 20 },
@@ -122,15 +178,27 @@ export const episSpec: CrudSpec = {
     { name: "fecha_revision", label: "Próxima revisión", type: "date", required: false },
     centro,
   ],
+  beforeWrite: async (db, data) => {
+    if (data.tipo_equipo_id !== undefined && data.tipo_equipo_id !== null) {
+      const t = await db.prepare("SELECT id FROM tipos_equipo WHERE id = ?").bind(Number(data.tipo_equipo_id)).first();
+      if (!t) throw new ValidationError("El tipo de equipo seleccionado no existe");
+    }
+    return data;
+  },
 };
 // ---- Ropa de trabajo de los centros ----
 // Catálogo de prendas del almacén: código, marca, fabricante, modelo, talla,
 // A/V, manga larga, color y stock (alerta por stock mínimo).
 export const ropaSpec: CrudSpec = {
-  table: "ropa_trabajo", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "ropa_trabajo", orderBy: "id", refCentro: true,
+  extraJoins: [" LEFT JOIN tipos_equipo te ON te.id = t.tipo_equipo_id"],
+  extraSelect: ["te.nombre AS tipo_equipo_nombre"],
+  extraSearchCols: ["te.nombre"],
+  read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
     { name: "prenda", label: "Prenda", type: "text", required: true, maxLength: 120 },
+    { name: "tipo_equipo_id", label: "Tipo de equipo", type: "integer", required: false, min: 1 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
     { name: "fabricante", label: "Fabricante", type: "text", required: false, maxLength: 80 },
     { name: "modelo", label: "Modelo", type: "text", required: false, maxLength: 80 },
@@ -142,6 +210,13 @@ export const ropaSpec: CrudSpec = {
     { name: "stock", label: "Stock", type: "integer", required: true, min: 0 },
     stockMinimo, centro,
   ],
+  beforeWrite: async (db, data) => {
+    if (data.tipo_equipo_id !== undefined && data.tipo_equipo_id !== null) {
+      const t = await db.prepare("SELECT id FROM tipos_equipo WHERE id = ?").bind(Number(data.tipo_equipo_id)).first();
+      if (!t) throw new ValidationError("El tipo de equipo seleccionado no existe");
+    }
+    return data;
+  },
 };
 export const centrosSpecForDelete: CrudSpec = {
   ...centrosSpec,
@@ -156,6 +231,7 @@ export const centrosSpecForDelete: CrudSpec = {
 export const quimicos = createCrud(quimicosSpec);
 export const material = createCrud(materialSpec);
 export const maquinaria = createCrud(maquinariaSpec);
+export const situaciones = createCrud(situacionesSpec);
 export const centros = createCrud(centrosSpecForDelete);
 export const usuarios = createCrud(usuariosSpec);
 export const epis = createCrud(episSpec);
@@ -194,8 +270,21 @@ export const consumiblesTiposSpec: CrudSpec = {
   table: "consumibles_tipos", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "nombre", label: "Nombre del tipo", type: "text", required: true, unique: true, maxLength: 80 },
-    { name: "articulo_tipo", label: "Tipo de artículo", type: "enum", required: true, enumValues: ["quimicos", "material_limpieza", "epis", "ropa_trabajo", "maquinaria"] },
+    { name: "articulo_tipo", label: "Tipo de artículo", type: "enum", required: true, enumValues: ["quimicos", "material_limpieza", "maquinaria"] },
   ],
+};
+// ---- Tipos de equipo (abrigo, camiseta, tapones de oídos…) de ropa y EPIs ----
+export const tiposEquipoSpec: CrudSpec = {
+  table: "tipos_equipo", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
+  fields: [
+    { name: "nombre", label: "Nombre del tipo", type: "text", required: true, unique: true, maxLength: 80 },
+  ],
+  beforeDelete: async (db, _user, row) => {
+    const n = await db.prepare("SELECT (SELECT COUNT(*) FROM ropa_trabajo WHERE tipo_equipo_id = ?) + (SELECT COUNT(*) FROM epis WHERE tipo_equipo_id = ?) AS n")
+      .bind(Number(row.id), Number(row.id)).first();
+    if (n && Number(n.n) > 0) return `No se puede eliminar: ${n.n} prendas o EPIs usan este tipo`;
+    return null;
+  },
 };
 export const zonasSpec: CrudSpec = {
   table: "zonas", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
@@ -265,6 +354,7 @@ usuarios.put("/:id/centros", requireAuth, async (c) => {
   return c.json({ ok: true, centros: ids });
 });
 export const tipos = createCrud(tiposSpec);
+export const tiposEquipo = createCrud(tiposEquipoSpec);
 // ---- Soportes y tipos de consumible (listas gestionadas de estaciones) ----
 export const soportes = createCrud(soportesSpec);
 export const consumiblesTipos = createCrud(consumiblesTiposSpec);

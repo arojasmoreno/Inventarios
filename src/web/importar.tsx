@@ -12,7 +12,7 @@ const RECURSOS = [
   { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza",
     columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "centro", "notas"] },
   { key: "maquinaria", endpoint: "/api/maquinaria", label: "Maquinaria",
-    columns: ["nombre", "tipo", "marca", "modelo", "cantidad", "numero_serie", "estado", "centro", "notas"] },
+    columns: ["nombre", "tipo", "marca", "modelo", "numero_serie", "centro", "zona", "subzona", "notas"] },
   { key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo",
     columns: ["codigo", "prenda", "marca", "fabricante", "modelo", "talla", "alta_visibilidad", "manga_larga", "descripcion", "color", "stock", "stock_minimo", "centro"] },
   { key: "epis", endpoint: "/api/epis", label: "EPIs",
@@ -21,7 +21,7 @@ const RECURSOS = [
     columns: ["operario", "prenda", "talla", "notas"] },
 ] as const;
 
-interface Catalogos { centros: Row[]; usuarios: Row[]; }
+interface Catalogos { centros: Row[]; usuarios: Row[]; zonas: Row[]; subzonas: Row[]; }
 
 function splitCsvLine(line: string): string[] {
   const out: string[] = []; let cur = ""; let inQ = false;
@@ -101,11 +101,22 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       if (!g("tipo")) return fallo(fila, "falta la columna 'tipo'");
       const out: Record<string, unknown> = { nombre, tipo: g("tipo") };
       out.marca = g("marca") ?? null; out.modelo = g("modelo") ?? null;
-      out.cantidad = id("cantidad") ?? 1;
       out.numero_serie = g("numero_serie") ?? null;
-      out.estado = g("estado") ?? "Operativa";
       out.centro_id = centro(); out.notas = g("notas") ?? null;
       if (out.centro_id === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
+      // Ubicación: la zona es obligatoria y se resuelve por nombre en el centro.
+      const zn = g("zona");
+      if (!zn) return fallo(fila, "falta la columna 'zona'");
+      const zonas = cat.zonas.filter((z) => out.centro_id == null || Number(z.centro_id) === Number(out.centro_id));
+      const z = resolver(zn, zonas, ["nombre", "id"]);
+      if (!z) return fallo(fila, `la zona «${zn}» no existe en ese centro`);
+      out.zona_id = Number(z.id);
+      const sn = g("subzona");
+      if (sn) {
+        const s = resolver(sn, cat.subzonas.filter((x) => Number(x.zona_id) === Number(z.id)), ["nombre", "id"]);
+        if (!s) return fallo(fila, `la subzona «${sn}» no existe en esa zona`);
+        out.subzona_id = Number(s.id);
+      } else out.subzona_id = null;
       return out;
     }
     case "ropa_trabajo": case "epis": {
@@ -149,7 +160,7 @@ export function ImportarPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cat, setCat] = useState<Catalogos>({ centros: [], usuarios: [] });
+  const [cat, setCat] = useState<Catalogos>({ centros: [], usuarios: [], zonas: [], subzonas: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
 
@@ -165,9 +176,14 @@ export function ImportarPage() {
 
   const ensureCat = useCallback(async (): Promise<Catalogos> => {
     const needUsers = cfg.key === "tallas_operarios";
+    const needZonas = cfg.key === "maquinaria";
     const next: Catalogos = { ...cat };
     if (!next.centros.length) next.centros = (await api.get<{ items: Row[] }>("/api/centros")).items;
     if (needUsers && !next.usuarios.length) next.usuarios = (await api.get<{ items: Row[] }>("/api/usuarios")).items;
+    if (needZonas) {
+      if (!next.zonas.length) next.zonas = (await api.get<{ items: Row[] }>("/api/zonas")).items;
+      if (!next.subzonas.length) next.subzonas = (await api.get<{ items: Row[] }>("/api/subzonas")).items;
+    }
     setCat(next);
     return next;
   }, [cat, cfg.key]);
@@ -202,7 +218,7 @@ export function ImportarPage() {
     const ejemplos: Record<string, string[]> = {
       quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2027-06-30", "3", "Planta Norte", ""],
       material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "Planta Norte", ""],
-      maquinaria: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "2", "F80-0012", "Operativa", "Planta Norte", ""],
+      maquinaria: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "F80-0012", "Planta Norte", "Lavado", "Paletización", ""],
       ropa_trabajo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "Planta Norte"],
       epis: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "Planta Norte"],
       tallas_operarios: ["operario", "Chaqueta", "L", "Prefiere talla M"],

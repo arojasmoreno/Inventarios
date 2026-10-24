@@ -131,7 +131,7 @@ export function Informes() {
         <tbody>{data.maquinaria.map(m => <tr key={String(m.id)}>
           <td>{String(m.nombre ?? "")}</td><td>{String(m.tipo ?? "")}</td><td className="right">{formatNum(m.cantidad)}</td>
           <td>{String(m.numero_serie ?? "—")}</td>
-          <td><span className={"badge " + (m.estado === "Operativa" ? "ok" : m.estado === "En reparación" ? "warn" : m.estado === "Averiada" ? "danger" : "muted")}>{String(m.estado ?? "—")}</span></td>
+          <td><span className={"badge " + (m.estado === "Operativo" ? "ok" : m.estado === "En reparación" ? "warn" : m.estado === "Averiado" ? "danger" : m.estado === "Baja" ? "muted" : "info")}>{String(m.estado ?? "—")}</span></td>
           <td>{String(m.centro_nombre ?? "—")}</td></tr>)}</tbody></table></div>}
     </div>
     <div className="card"><div className="card-pad section-head"><h3>🦺 EPIs ({formatNum(data.epis.length)})</h3><button className="btn secondary small no-print" onClick={csvEpis}>⬇️ CSV</button></div>
