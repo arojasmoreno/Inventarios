@@ -17,6 +17,8 @@ import { DocumentosPage } from "./documentos";export interface User {
   rol: "admin" | "admin_centros" | "usuario";
   activo: boolean;
   centro_id: number | null;
+  /** Centros asignados al usuario (asignación multi `usuario_centros`). */
+  centros?: { id: number; nombre: string }[];
 }
 
 interface NavItem {
@@ -288,6 +290,10 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   const grupos = NAV
     .map((g) => ({ ...g, items: g.items.filter((n) => !n.adminOnly || user.rol === "admin") }))
     .filter((g) => g.items.length > 0);
+  // Centros del usuario para la cabecera (los administradores ven todos).
+  const centrosTexto = user.centros && user.centros.length > 0
+    ? user.centros.map((c) => c.nombre).join(" · ")
+    : user.rol === "admin" ? "Todos los centros" : "Sin centros asignados";
   return <div className="app">
     <aside className="sidebar no-print"><div className="brand"><span className="logo">📦</span> Inventarios</div>
       {grupos.map((g) => <Fragment key={g.section}>
@@ -297,7 +303,20 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       <div className="nav-section">Cuenta</div><a className={"nav-item" + (route === "#/cuenta" ? " active" : "")} href="#/cuenta"><span>⚙️</span> Mi cuenta</a>
       <div className="sidebar-footer"><div className="who">{user.nombre}</div><div>{rolLabel(user.rol)}</div><button className="btn secondary small" style={{ marginTop: 10 }} onClick={logout}>Cerrar sesión</button></div>
     </aside>
-    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print"><GlobalSearch /><span className={`badge ${rolBadge(user.rol)}`}>{rolLabel(user.rol)}</span></div></header><div className="content">{page}</div></main>
+    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print">
+        <GlobalSearch />
+        <div className="user-box">
+          <div className="user-box-info">
+            <span className="user-box-name" title={user.username}>{user.nombre}</span>
+            <span className="user-box-status">
+              <span className={`badge ${rolBadge(user.rol)}`}>{rolLabel(user.rol)}</span>
+              <span className={`badge ${user.activo ? "ok" : "danger"}`}>{user.activo ? "● Activo" : "● Inactivo"}</span>
+            </span>
+            <span className="user-box-centros" title={centrosTexto}>🏢 {centrosTexto}</span>
+          </div>
+          <button className="btn secondary small" title="Salir de la aplicación" onClick={logout}>⏻ Salir</button>
+        </div>
+      </div></header><div className="content">{page}</div></main>
     {logoutToast && <Toast message="Sesión cerrada. Hasta pronto." kind="ok" onClose={() => setLogoutToast(false)} />}
   </div>;
 }

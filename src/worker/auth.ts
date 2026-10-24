@@ -53,6 +53,14 @@ export function publicUser(row: Record<string, unknown>): SessionUser & { email:
   };
 }
 
+/** Centros asignados al usuario (asignación multi `usuario_centros`). */
+export async function centrosDeUsuario(db: Env["DB"], userId: number): Promise<{ id: number; nombre: string }[]> {
+  const res = await db.prepare(
+    `SELECT c.id, c.nombre FROM usuario_centros uc JOIN centros c ON c.id = uc.centro_id WHERE uc.usuario_id = ? ORDER BY c.nombre`,
+  ).bind(userId).all();
+  return res.results.map((r) => ({ id: Number(r.id), nombre: String(r.nombre) }));
+}
+
 async function createSession(db: Env["DB"], userId: number): Promise<string> {
   const token = randomToken();
   await db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', ?))").bind(token, userId, `+${SESSION_DAYS} days`).run();
@@ -175,7 +183,7 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     await limpiarFallos(c.env.DB, falloClave);
     const token = await createSession(c.env.DB, Number(row.id));
     setCookie(c, SESSION_COOKIE, token, { httpOnly: true, ...sessionCookieOptions(c), maxAge: SESSION_DAYS * 24 * 3600 });
-    return c.json({ user: publicUser(row) });
+    return c.json({ user: { ...publicUser(row), centros: await centrosDeUsuario(c.env.DB, Number(row.id)) } });
   })
   .post("/logout", async (c) => {
     const token = getCookie(c, SESSION_COOKIE);
@@ -192,7 +200,7 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
        WHERE s.token = ? AND s.expires_at > datetime('now')`,
     ).bind(token).first();
     if (!row) return c.json({ error: "No autenticado" }, 401);
-    return c.json({ user: publicUser(row) });
+    return c.json({ user: { ...publicUser(row), centros: await centrosDeUsuario(c.env.DB, Number(row.id)) } });
   })
   .post("/cambiar-password", requireAuth, async (c) => {
     const user = c.get("user");
@@ -332,5 +340,5 @@ export const authRoutes: App = new Hono<{ Bindings: Env; Variables: Variables }>
     await c.env.DB.prepare("DELETE FROM login_codes WHERE id = ?").bind(Number(row.lc_id)).run();
     const sessionToken = await createSession(c.env.DB, Number(row.id));
     setCookie(c, SESSION_COOKIE, sessionToken, { httpOnly: true, ...sessionCookieOptions(c), maxAge: SESSION_DAYS * 24 * 3600 });
-    return c.json({ user: publicUser(row) });
+    return c.json({ user: { ...publicUser(row), centros: await centrosDeUsuario(c.env.DB, Number(row.id)) } });
   });
