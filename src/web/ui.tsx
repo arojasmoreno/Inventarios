@@ -24,9 +24,9 @@ export function Modal({ title, subtitle, onClose, children }: { title: string; s
   useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
   return <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true"><div className="modal-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="icon-btn" onClick={onClose} aria-label="Cerrar">✕</button></div><div className="modal-body">{children}</div></div></div>;
 }
-export function Field({ def, value, onChange }: { def: FieldDef; value: unknown; onChange: (v: unknown) => void }) {
-  const id = `f-${def.name}`, cls = "input" + (def.required ? " required" : "");
-  if (def.type === "boolean") return <label className="field checkbox" htmlFor={id}><input id={id} type="checkbox" checked={value === true || value === 1} onChange={(e) => onChange(e.target.checked)} /><span>{def.label}</span></label>;
+export function Field({ def, value, onChange, error = false }: { def: FieldDef; value: unknown; onChange: (v: unknown) => void; error?: boolean }) {
+  const id = `f-${def.name}`, cls = "input" + (def.required ? " required" : "") + (error ? " error" : "");
+  if (def.type === "boolean") return <label className={"field checkbox" + (error ? " error" : "")} htmlFor={id}><input id={id} type="checkbox" checked={value === true || value === 1} onChange={(e) => onChange(e.target.checked)} /><span>{def.label}</span></label>;
   let control: ReactNode;
   if (def.type === "textarea") control = <textarea id={id} className={cls} rows={3} placeholder={def.placeholder} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />;
   else if (def.type === "enum" || def.type === "select") {
@@ -42,7 +42,22 @@ export function Field({ def, value, onChange }: { def: FieldDef; value: unknown;
   </div>;
   else if (def.type === "password") control = <input id={id} className={cls} type="password" autoComplete="new-password" placeholder={def.placeholder} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />;
   else control = <input id={id} className={cls} type="text" placeholder={def.placeholder} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />;
-  return <div className="field"><label htmlFor={id}>{def.label}{def.required && <span className="req">*</span>}</label>{control}{def.help && <small>{def.help}</small>}</div>;
+  return <div className={"field" + (error ? " error" : "")}><label htmlFor={id}>{def.label}{def.required && <span className="req">*</span>}</label>{control}{def.help && <small>{def.help}</small>}</div>;
+}
+/** Traduce un mensaje de validación («Tipo: texto no válido», «La zona es
+ *  obligatoria», «Ya existe un registro con Código = X») a las claves de los
+ *  campos afectados, para poder sombrearlos en rojo. Se prefiere la etiqueta
+ *  con la que empieza el mensaje (o la que va tras un artículo) y, si no la
+ *  hay, cualquier etiqueta mencionada en él. */
+export function camposConError(mensaje: string | null | undefined, campos: Array<{ clave: string; etiqueta: string }>): string[] {
+  const m = (mensaje ?? "").trim().toLowerCase();
+  if (!m) return [];
+  const limpiar = (e: string) => e.toLowerCase().replace(/\s*\*+\s*$/, "").trim();
+  const empieza = (l: string) => !!l && [l, `la ${l}`, `el ${l}`, `las ${l}`, `los ${l}`, `una ${l}`, `un ${l}`]
+    .some(p => m === p || m.startsWith(`${p} `) || m.startsWith(`${p}:`));
+  const alInicio = campos.filter(c => empieza(limpiar(c.etiqueta)));
+  if (alInicio.length) return alInicio.map(c => c.clave);
+  return campos.filter(c => { const l = limpiar(c.etiqueta); return !!l && m.includes(l); }).map(c => c.clave);
 }
 export function Toast({ message, kind, onClose }: { message: string; kind: "ok" | "error"; onClose: () => void }) {
   useEffect(() => { const t = setTimeout(onClose, 4500); return () => clearTimeout(t); }, [onClose]);

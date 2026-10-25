@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "./api";
-import { Field, Toast } from "./ui";
+import { Field, Toast, camposConError } from "./ui";
 import { QUIMICOS, ResourcePage, type ResourceConfig } from "./resources";
 import { ConsumiblesPage } from "./consumibles";
 import { GestionCentrosPage } from "./gestion-centros";
@@ -104,16 +104,25 @@ export function App() {
   return <Shell user={user} route={route} onUserChange={setUser} />;
 }
 
+// Campos de los formularios de acceso: sirven para localizar, en un mensaje
+// de error, el campo que hay que sombrear en rojo.
+const ETIQUETAS_AUTH = [
+  { clave: "cl", etiqueta: "Correo" }, { clave: "clc", etiqueta: "Código" },
+  { clave: "re", etiqueta: "Correo" }, { clave: "rc", etiqueta: "Código" },
+  { clave: "np", etiqueta: "Contraseña" }, { clave: "np2", etiqueta: "Repite la contraseña" },
+];
+
 function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<"login" | "recover" | "code">("login");
   const submit = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setError(null);
     try { const r = await api.post<{ user: User }>("/api/auth/login", { username, password }); onLoggedIn(r.user); }
-    catch (err) { setError(err instanceof Error ? err.message : "Error de acceso"); }
+    catch (err) { setError(err instanceof Error ? err.message : "Error de acceso"); setCampoErr(["u", "p"]); }
     finally { setBusy(false); }
   };
   if (view === "recover") return <Recover onBack={() => setView("login")} />;
@@ -121,8 +130,8 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   return <div className="login-wrap"><form className="login-card" onSubmit={submit}>
     <h1>Inventarios</h1><p className="sub">Químicos · Material de limpieza · Maquinaria</p>
     {error && <div className="form-error">{error}</div>}
-    <div className="field" style={{ marginBottom: 12 }}><label htmlFor="u">Usuario</label><input id="u" className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
-    <div className="field" style={{ marginBottom: 16 }}><label htmlFor="p">Contraseña</label><input id="p" className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
+    <div className={"field" + (campoErr.includes("u") ? " error" : "")} style={{ marginBottom: 12 }}><label htmlFor="u">Usuario</label><input id="u" className={"input" + (campoErr.includes("u") ? " error" : "")} autoComplete="username" value={username} onChange={(e) => { setCampoErr([]); setUsername(e.target.value); }} required /></div>
+    <div className={"field" + (campoErr.includes("p") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="p">Contraseña</label><input id="p" className={"input" + (campoErr.includes("p") ? " error" : "")} type="password" autoComplete="current-password" value={password} onChange={(e) => { setCampoErr([]); setPassword(e.target.value); }} required /></div>
     <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button>
     <button type="button" className="login-link" onClick={() => setView("code")}>🔑 Entrar con código por correo</button>
     <button type="button" className="login-link" onClick={() => setView("recover")}>¿Has olvidado tu contraseña?</button>
@@ -138,6 +147,7 @@ function CodeLogin({ onLoggedIn, onBack }: { onLoggedIn: (u: User) => void; onBa
   const [code, setCode] = useState("");
   const [info, setInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   const sendCode = async (e: FormEvent) => {
@@ -147,7 +157,7 @@ function CodeLogin({ onLoggedIn, onBack }: { onLoggedIn: (u: User) => void; onBa
       setToken(r.token);
       setInfo(r.message ?? "Si el correo existe en el sistema, recibirás un código de verificación.");
       setStep("code");
-    } catch (err) { setError(err instanceof Error ? err.message : "Error al enviar el código"); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al enviar el código"); setCampoErr(camposConError(err instanceof Error ? err.message : "", ETIQUETAS_AUTH)); }
     finally { setBusy(false); }
   };
 
@@ -156,7 +166,7 @@ function CodeLogin({ onLoggedIn, onBack }: { onLoggedIn: (u: User) => void; onBa
     try {
       const r = await api.post<{ user: User }>("/api/auth/verify-login-code", { token, code });
       onLoggedIn(r.user);
-    } catch (err) { setError(err instanceof Error ? err.message : "Error al verificar el código"); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al verificar el código"); setCampoErr(camposConError(err instanceof Error ? err.message : "", ETIQUETAS_AUTH)); }
     finally { setBusy(false); }
   };
 
@@ -166,13 +176,13 @@ function CodeLogin({ onLoggedIn, onBack }: { onLoggedIn: (u: User) => void; onBa
     <h1>Entrar con código</h1><p className="sub">{subtitle}</p>
     {error && <div className="form-error">{error}</div>}
     {step === "email" && <form onSubmit={sendCode}>
-      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="cl">Correo electrónico</label><input id="cl" className="input" type="email" autoComplete="email" placeholder="tu@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+      <div className={"field" + (campoErr.includes("cl") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="cl">Correo electrónico</label><input id="cl" className={"input" + (campoErr.includes("cl") ? " error" : "")} type="email" autoComplete="email" placeholder="tu@empresa.com" value={email} onChange={(e) => { setCampoErr([]); setEmail(e.target.value); }} required /></div>
       <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Enviando…" : "Enviar código"}</button>
       <button type="button" className="login-link" onClick={onBack}>Volver al inicio de sesión</button>
     </form>}
     {step === "code" && <form onSubmit={verifyCode}>
       {info && <div className="login-hint" style={{ marginTop: 0, marginBottom: 14 }}>{info}</div>}
-      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="clc">Código de verificación</label><input id="clc" className="input" autoComplete="one-time-code" maxLength={8} placeholder="XXXXXXXX" style={{ textTransform: "uppercase", letterSpacing: "3px", fontWeight: 600 }} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required /></div>
+      <div className={"field" + (campoErr.includes("clc") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="clc">Código de verificación</label><input id="clc" className={"input" + (campoErr.includes("clc") ? " error" : "")} autoComplete="one-time-code" maxLength={8} placeholder="XXXXXXXX" style={{ textTransform: "uppercase", letterSpacing: "3px", fontWeight: 600 }} value={code} onChange={(e) => { setCampoErr([]); setCode(e.target.value.toUpperCase()); }} required /></div>
       <button className="btn" style={{ width: "100%" }} disabled={busy || code.trim().length < 4}>{busy ? "Entrando…" : "Entrar"}</button>
       <button type="button" className="login-link" onClick={() => { setStep("email"); setError(null); setCode(""); }}>Usar otro correo</button>
     </form>}
@@ -188,6 +198,7 @@ function Recover({ onBack }: { onBack: () => void }) {
   const [confirm, setConfirm] = useState("");
   const [info, setInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   const sendCode = async (e: FormEvent) => {
@@ -197,7 +208,7 @@ function Recover({ onBack }: { onBack: () => void }) {
       setToken(r.token);
       setInfo(r.message ?? "Si el correo existe en el sistema, recibirás un código de verificación.");
       setStep("code");
-    } catch (err) { setError(err instanceof Error ? err.message : "Error al enviar el código"); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al enviar el código"); setCampoErr(camposConError(err instanceof Error ? err.message : "", ETIQUETAS_AUTH)); }
     finally { setBusy(false); }
   };
 
@@ -207,18 +218,18 @@ function Recover({ onBack }: { onBack: () => void }) {
       const r = await api.post<{ message?: string }>("/api/auth/verify-password-reset", { token, code });
       setInfo(r.message ?? "Código verificado.");
       setStep("password");
-    } catch (err) { setError(err instanceof Error ? err.message : "Error al verificar el código"); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al verificar el código"); setCampoErr(camposConError(err instanceof Error ? err.message : "", ETIQUETAS_AUTH)); }
     finally { setBusy(false); }
   };
 
   const savePassword = async (e: FormEvent) => {
     e.preventDefault();
-    if (password !== confirm) { setError("Las contraseñas no coinciden"); return; }
+    if (password !== confirm) { setError("Las contraseñas no coinciden"); setCampoErr(["np", "np2"]); return; }
     setBusy(true); setError(null);
     try {
       await api.post<{ message?: string }>("/api/auth/finish-password-reset", { token, password });
       setStep("done");
-    } catch (err) { setError(err instanceof Error ? err.message : "Error al guardar la contraseña"); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Error al guardar la contraseña"); setCampoErr(camposConError(err instanceof Error ? err.message : "", ETIQUETAS_AUTH)); }
     finally { setBusy(false); }
   };
 
@@ -231,19 +242,19 @@ function Recover({ onBack }: { onBack: () => void }) {
     <h1>Recuperar contraseña</h1><p className="sub">{subtitle}</p>
     {error && <div className="form-error">{error}</div>}
     {step === "email" && <form onSubmit={sendCode}>
-      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="re">Correo electrónico</label><input id="re" className="input" type="email" autoComplete="email" placeholder="tu@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+      <div className={"field" + (campoErr.includes("re") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="re">Correo electrónico</label><input id="re" className={"input" + (campoErr.includes("re") ? " error" : "")} type="email" autoComplete="email" placeholder="tu@empresa.com" value={email} onChange={(e) => { setCampoErr([]); setEmail(e.target.value); }} required /></div>
       <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Enviando…" : "Enviar código"}</button>
       <button type="button" className="login-link" onClick={onBack}>Volver al inicio de sesión</button>
     </form>}
     {step === "code" && <form onSubmit={verifyCode}>
       {info && <div className="login-hint" style={{ marginTop: 0, marginBottom: 14 }}>{info}</div>}
-      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="rc">Código de verificación</label><input id="rc" className="input" autoComplete="one-time-code" maxLength={8} placeholder="XXXXXXXX" style={{ textTransform: "uppercase", letterSpacing: "3px", fontWeight: 600 }} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required /></div>
+      <div className={"field" + (campoErr.includes("rc") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="rc">Código de verificación</label><input id="rc" className={"input" + (campoErr.includes("rc") ? " error" : "")} autoComplete="one-time-code" maxLength={8} placeholder="XXXXXXXX" style={{ textTransform: "uppercase", letterSpacing: "3px", fontWeight: 600 }} value={code} onChange={(e) => { setCampoErr([]); setCode(e.target.value.toUpperCase()); }} required /></div>
       <button className="btn" style={{ width: "100%" }} disabled={busy || code.trim().length < 4}>{busy ? "Verificando…" : "Verificar código"}</button>
       <button type="button" className="login-link" onClick={() => { setStep("email"); setError(null); }}>Usar otro correo</button>
     </form>}
     {step === "password" && <form onSubmit={savePassword}>
-      <div className="field" style={{ marginBottom: 12 }}><label htmlFor="np">Nueva contraseña</label><input id="np" className="input" type="password" autoComplete="new-password" minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
-      <div className="field" style={{ marginBottom: 16 }}><label htmlFor="np2">Repite la contraseña</label><input id="np2" className="input" type="password" autoComplete="new-password" minLength={6} value={confirm} onChange={(e) => setConfirm(e.target.value)} required /></div>
+      <div className={"field" + (campoErr.includes("np") ? " error" : "")} style={{ marginBottom: 12 }}><label htmlFor="np">Nueva contraseña</label><input id="np" className={"input" + (campoErr.includes("np") ? " error" : "")} type="password" autoComplete="new-password" minLength={6} value={password} onChange={(e) => { setCampoErr([]); setPassword(e.target.value); }} required /></div>
+      <div className={"field" + (campoErr.includes("np2") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="np2">Repite la contraseña</label><input id="np2" className={"input" + (campoErr.includes("np2") ? " error" : "")} type="password" autoComplete="new-password" minLength={6} value={confirm} onChange={(e) => { setCampoErr([]); setConfirm(e.target.value); }} required /></div>
       <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Guardando…" : "Guardar contraseña"}</button>
     </form>}
     {step === "done" && <div>
@@ -325,19 +336,21 @@ function MiCuenta({ user }: { user: User }) {
   const actualField = { name: "actual", label: "Contraseña actual", type: "password" as const, required: true };
   const nuevaField = { name: "nueva", label: "Nueva contraseña", type: "password" as const, required: true, help: "Mínimo 6 caracteres" };
   const [values, setValues] = useState<Record<string, unknown>>({ actual: "", nueva: "" });
+  // Campos que han fallado al validar (se sombrean en rojo).
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [msg, setMsg] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setMsg(null);
     try { await api.post("/api/auth/cambiar-password", { actual: values.actual, nueva: values.nueva }); setValues({ actual: "", nueva: "" }); setMsg({ message: "Contraseña actualizada correctamente", kind: "ok" }); }
-    catch (err) { setMsg({ message: err instanceof Error ? err.message : "Error al cambiar la contraseña", kind: "error" }); }
+    catch (err) { setMsg({ message: err instanceof Error ? err.message : "Error al cambiar la contraseña", kind: "error" }); setCampoErr(camposConError(err instanceof Error ? err.message : "", [{ clave: "actual", etiqueta: "Contraseña actual" }, { clave: "nueva", etiqueta: "Nueva contraseña" }])); }
     finally { setBusy(false); }
   };
   return <>
     <div className="card card-pad" style={{ maxWidth: 560 }}><div className="section-head"><h3>Datos de acceso</h3></div><table><tbody><tr><th>Usuario</th><td>{user.username}</td></tr><tr><th>Nombre</th><td>{user.nombre}</td></tr><tr><th>Email</th><td>{user.email ?? "—"}</td></tr><tr><th>Rol</th><td>{rolLabel(user.rol)}</td></tr></tbody></table></div>
     <form className="card card-pad" style={{ maxWidth: 560 }} onSubmit={submit}><div className="section-head"><h3>Cambiar contraseña</h3></div>
       {msg && <div className={"banner " + (msg.kind === "ok" ? "" : "danger")} style={{ marginBottom: 12 }}>{msg.message}</div>}
-      <div className="form-grid"><div className="full"><Field def={actualField} value={values.actual} onChange={(v) => setValues({ ...values, actual: v })} /></div><div className="full"><Field def={nuevaField} value={values.nueva} onChange={(v) => setValues({ ...values, nueva: v })} /></div></div>
+      <div className="form-grid"><div className="full"><Field def={actualField} value={values.actual} onChange={(v) => { setCampoErr((prev) => prev.filter((k) => k !== "actual")); setValues({ ...values, actual: v }); }} error={campoErr.includes("actual")} /></div><div className="full"><Field def={nuevaField} value={values.nueva} onChange={(v) => { setCampoErr((prev) => prev.filter((k) => k !== "nueva")); setValues({ ...values, nueva: v }); }} error={campoErr.includes("nueva")} /></div></div>
       <div className="modal-footer"><button className="btn" disabled={busy}>{busy ? "Guardando…" : "Guardar contraseña"}</button></div>
     </form>
   </>;

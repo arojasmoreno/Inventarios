@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
-import { ColorSwatch, Field, Modal, Toast, diasHasta, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
+import { ColorSwatch, Field, Modal, Toast, camposConError, diasHasta, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
 import { QrModal } from "./qr";
 
 type Row = Record<string, unknown>;
@@ -59,7 +59,9 @@ export const MATERIAL: ResourceConfig = {
 export const MAQUINARIA: ResourceConfig = {
   title: "Maquinaria", subtitle: "Marca, modelo, nº de serie, tipo y ubicación · el estado sale del histórico", endpoint: "/api/maquinaria", csvName: "maquinaria", searchKeys: ["nombre", "marca", "modelo", "tipo", "numero_serie", "zona_nombre", "subzona_nombre", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
   links: {
-    tipo: { endpoint: "/api/tipos-maquinaria", label: r => String(r.nombre) },
+    // `tipo` es texto en la base de datos: el select envía el nombre del tipo
+    // (lo que valida el backend), no su id.
+    tipo: { endpoint: "/api/tipos-maquinaria", label: r => String(r.nombre), value: r => String(r.nombre) },
     zona_id: { endpoint: "/api/zonas", label: r => String(r.nombre), parent: "centro_id", parentField: "centro_id" },
     subzona_id: { endpoint: "/api/subzonas", label: r => String(r.nombre), parent: "zona_id", parentField: "zona_id" },
   },
@@ -253,6 +255,8 @@ export const MOVIMIENTOS: ResourceConfig = {
 };
 export function ResourcePage({ config, user }: { config: ResourceConfig; user: { rol: string } }) {
   const [items, setItems] = useState<Row[]>([]), [centros, setCentros] = useState<Row[]>([]), [users, setUsers] = useState<Row[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [q, setQ] = useState(""), [centroId, setCentroId] = useState("all"), [tipoEqId, setTipoEqId] = useState("all"), [editing, setEditing] = useState<{ mode: "create" | "edit"; values: Row } | null>(null), [formError, setFormError] = useState<string | null>(null), [saving, setSaving] = useState(false), [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null), [linkRows, setLinkRows] = useState<Record<string, Row[]>>({}), [formCentrosSel, setFormCentrosSel] = useState<Set<number>>(() => new Set()), [qrRow, setQrRow] = useState<Row | null>(null);
+  // Campos que han fallado al validar: se sombrean en rojo dentro del formulario.
+  const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   // Filas renderizadas: se muestran de 50 en 50 para no bloquear la tabla.
   const [limite, setLimite] = useState(50);
   const canCreate = !config.readOnlyPage && allow(user.rol, config.perms.create), canUpdate = !config.readOnlyPage && allow(user.rol, config.perms.update), canDelete = !config.readOnlyPage && allow(user.rol, config.perms.delete);
@@ -289,22 +293,27 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
     if (f.name === "usuario_id") return { ...f, options: users.map(c => ({ value: Number(c.id), label: `${String(c.nombre)} (${String(c.username)})` })) };
     return f;
   });
-  const openCreate = () => { const values: Row = {}; for (const f of config.fields) values[f.name] = f.type === "boolean" ? true : ""; setFormCentrosSel(new Set()); setFormError(null); setEditing({ mode: "create", values }); };
-  const openEdit = (row: Row) => { const values: Row = { id: row.id, tiene_foto: row.tiene_foto }; for (const f of config.fields) { if (f.type === "image") continue; values[f.name] = f.name === "password" ? "" : row[f.name] ?? (f.type === "boolean" ? false : ""); } setFormCentrosSel(new Set(String(row.centros_ids ?? "").split(",").filter(Boolean).map(Number))); setFormError(null); setEditing({ mode: "edit", values }); };
+  const openCreate = () => { const values: Row = {}; for (const f of config.fields) values[f.name] = f.type === "boolean" ? true : ""; setFormCentrosSel(new Set()); setFormError(null); setFieldErrors([]); setEditing({ mode: "create", values }); };
+  const openEdit = (row: Row) => { const values: Row = { id: row.id, tiene_foto: row.tiene_foto }; for (const f of config.fields) { if (f.type === "image") continue; values[f.name] = f.name === "password" ? "" : row[f.name] ?? (f.type === "boolean" ? false : ""); } setFormCentrosSel(new Set(String(row.centros_ids ?? "").split(",").filter(Boolean).map(Number))); setFormError(null); setFieldErrors([]); setEditing({ mode: "edit", values }); };
   // Cambiar un campo padre limpia en cascada los dependientes (centro → zona → subzona).
-  const setVal = (name: string, v: unknown) => setEditing(prev => {
-    if (!prev) return prev;
-    const values: Row = { ...prev.values, [name]: v };
-    const limpiar = (padre: string) => {
-      for (const [hijo, link] of Object.entries(config.links ?? {})) {
-        if (link.parent === padre && hijo !== name) { values[hijo] = ""; limpiar(hijo); }
-      }
-    };
-    limpiar(name);
-    return { ...prev, values };
-  });
+  const setVal = (name: string, v: unknown) => {
+    setFieldErrors(prev => (prev.includes(name) ? prev.filter(k => k !== name) : prev));
+    setEditing(prev => {
+      if (!prev) return prev;
+      const values: Row = { ...prev.values, [name]: v };
+      const limpiar = (padre: string) => {
+        for (const [hijo, link] of Object.entries(config.links ?? {})) {
+          if (link.parent === padre && hijo !== name) { values[hijo] = ""; limpiar(hijo); }
+        }
+      };
+      limpiar(name);
+      return { ...prev, values };
+    });
+  };
+  // Etiquetas del formulario: sirven para localizar el campo de un error.
+  const etiquetasForm = [...config.fields.map(f => ({ clave: f.name, etiqueta: f.label })), { clave: "__centros", etiqueta: "Centros de trabajo" }];
 
-  const save = async () => { if (!editing) return; const esAdmin = editing.values.rol === "admin"; if (config.formCentros && !esAdmin && !formCentrosSel.size) { setFormError("Asigna al menos un centro de trabajo al operario"); return; } setSaving(true); setFormError(null); const payload: Row = {}; for (const f of config.fields) { if (f.type === "image" && !(f.name in editing.values)) continue; let v = editing.values[f.name]; if (f.type === "number" || f.type === "integer") v = v === "" || v == null ? null : Number(String(v).replace(",", ".")); if (f.type === "boolean") v = v === true || v === 1 ? 1 : 0; payload[f.name] = v ?? null; } try { let userId = editing.mode === "edit" ? Number(editing.values.id) : 0; if (editing.mode === "create") { const r = await api.post<{ item?: Row }>(config.endpoint, payload); userId = Number(r?.item?.id ?? 0); } else await api.put(`${config.endpoint}/${String(editing.values.id)}`, payload); if (config.formCentros && userId > 0) await api.put(`${config.endpoint}/${userId}/centros`, { centros: esAdmin ? [] : [...formCentrosSel] }); setEditing(null); setToast({ message: "Cambios guardados", kind: "ok" }); await load(); } catch (e) { setFormError(e instanceof Error ? e.message : "No se pudo guardar el registro"); } finally { setSaving(false); } };
+  const save = async () => { if (!editing) return; const esAdmin = editing.values.rol === "admin"; if (config.formCentros && !esAdmin && !formCentrosSel.size) { setFieldErrors(["__centros"]); setFormError("Asigna al menos un centro de trabajo al operario"); return; } const vacios = config.fields.filter(f => f.required && f.type !== "password" && (editing.values[f.name] === "" || editing.values[f.name] == null)).map(f => f.name); if (vacios.length) { setFieldErrors(vacios); setFormError("Revisa los campos marcados en rojo"); return; } setSaving(true); setFormError(null); setFieldErrors([]); const payload: Row = {}; for (const f of config.fields) { if (f.type === "image" && !(f.name in editing.values)) continue; let v = editing.values[f.name]; if (f.type === "number" || f.type === "integer") v = v === "" || v == null ? null : Number(String(v).replace(",", ".")); if (f.type === "boolean") v = v === true || v === 1 ? 1 : 0; payload[f.name] = v ?? null; } try { let userId = editing.mode === "edit" ? Number(editing.values.id) : 0; if (editing.mode === "create") { const r = await api.post<{ item?: Row }>(config.endpoint, payload); userId = Number(r?.item?.id ?? 0); } else await api.put(`${config.endpoint}/${String(editing.values.id)}`, payload); if (config.formCentros && userId > 0) await api.put(`${config.endpoint}/${userId}/centros`, { centros: esAdmin ? [] : [...formCentrosSel] }); setEditing(null); setToast({ message: "Cambios guardados", kind: "ok" }); await load(); } catch (e) { const msg = e instanceof Error ? e.message : "No se pudo guardar el registro"; setFormError(msg); setFieldErrors(camposConError(msg, etiquetasForm)); } finally { setSaving(false); } };
   const remove = async (row: Row) => { if (!window.confirm(`¿Eliminar "${String(row.nombre ?? row.username ?? row.id)}"? Esta acción no se puede deshacer.`)) return; try { await api.del(`${config.endpoint}/${String(row.id)}`); setToast({ message: "Registro eliminado", kind: "ok" }); await load(); } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo eliminar", kind: "error" }); } };
   const exportCsv = () => { const stamp = new Date().toISOString().slice(0, 10); downloadCsv(`${config.csvName}-${stamp}.csv`, config.columns.map(c => c.label), filtered.map(row => config.columns.map(c => c.csv ? c.csv(row) : String(row[c.key] ?? "")))); };
   return <><div className="toolbar no-print"><input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar…" value={q} onChange={e => setQ(e.target.value)} />{(config.centroFilter || config.fields.some(f => f.name === "centro_id")) && <select className="input" style={{ maxWidth: 220 }} value={centroId} onChange={e => setCentroId(e.target.value)}><option value="all">Todos los centros</option>{centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}</select>}{config.tipoEquipoFilter && <select className="input" style={{ maxWidth: 200 }} value={tipoEqId} onChange={e => setTipoEqId(e.target.value)} aria-label="Filtrar por tipo de equipo"><option value="all">Todos los tipos</option>{(linkRows["tipo_equipo_id"] ?? []).map(t => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}</select>}<div className="spacer"/><button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>{canCreate && <button className="btn" onClick={openCreate}>＋ Nuevo registro</button>}</div>
@@ -312,5 +321,5 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
     <button className="btn secondary" onClick={() => setLimite(l => l + 100)}>⬇️ Mostrar más · quedan {formatNum(filtered.length - limite)} de {formatNum(filtered.length)}</button>
   </div>}</div>
   <p className="no-print" style={{color:"var(--muted)",margin:0}}>{filtered.length} de {items.length} registros · {config.subtitle}</p>{qrRow&&config.qrTipo&&<QrModal tipo={config.qrTipo} id={Number(qrRow.id)} title={String(qrRow.nombre ?? qrRow.prenda ?? qrRow.numero_lote ?? qrRow.id)} onClose={()=>setQrRow(null)}/>}
-  {editing&&<Modal title={editing.mode==="create"?`Nuevo registro · ${config.title}`:`Editar · ${config.title}`} subtitle={config.subtitle} onClose={()=>setEditing(null)}>{formError&&<div className="form-error">{formError}</div>}<div className="form-grid">{fields.map(f=><div key={f.name} className={f.type==="textarea"||f.type==="image"?"full":""}><Field def={editing.mode==="edit"&&f.type==="image"?{...f,hasExisting:Boolean(editing.values.tiene_foto),previewUrl:`${config.endpoint}/${String(editing.values.id)}/foto`}:f} value={editing.values[f.name]} onChange={v=>setVal(f.name, v)}/></div>)}{config.formCentros&&editing.values.rol!=="admin"&&<div className="field full"><label>Centros de trabajo<span className="req">*</span></label><div className="centros-toggle">{centros.map(cn=><button type="button" key={String(cn.id)} className={"chip"+(formCentrosSel.has(Number(cn.id))?" on":"")} disabled={saving} onClick={()=>{const id=Number(cn.id);setFormCentrosSel(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});}}>{String(cn.nombre)}</button>)}</div><small>Elige uno o varios centros donde trabajará.</small></div>}</div><div className="modal-footer"><button className="btn secondary" onClick={()=>setEditing(null)}>Cancelar</button><button className="btn" onClick={()=>void save()} disabled={saving}>{saving?"Guardando…":"Guardar"}</button></div></Modal>}{toast&&<Toast message={toast.message} kind={toast.kind} onClose={()=>setToast(null)}/>}</>;
+  {editing&&<Modal title={editing.mode==="create"?`Nuevo registro · ${config.title}`:`Editar · ${config.title}`} subtitle={config.subtitle} onClose={()=>setEditing(null)}>{formError&&<div className="form-error">{formError}</div>}<div className="form-grid">{fields.map(f=><div key={f.name} className={f.type==="textarea"||f.type==="image"?"full":""}><Field def={editing.mode==="edit"&&f.type==="image"?{...f,hasExisting:Boolean(editing.values.tiene_foto),previewUrl:`${config.endpoint}/${String(editing.values.id)}/foto`}:f} value={editing.values[f.name]} onChange={v=>setVal(f.name, v)} error={fieldErrors.includes(f.name)}/></div>)}{config.formCentros&&editing.values.rol!=="admin"&&<div className={"field full"+(fieldErrors.includes("__centros")?" error":"")}><label>Centros de trabajo<span className="req">*</span></label><div className="centros-toggle">{centros.map(cn=><button type="button" key={String(cn.id)} className={"chip"+(formCentrosSel.has(Number(cn.id))?" on":"")} disabled={saving} onClick={()=>{setFieldErrors(prev=>prev.filter(k=>k!=="__centros"));const id=Number(cn.id);setFormCentrosSel(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});}}>{String(cn.nombre)}</button>)}</div><small>Elige uno o varios centros donde trabajará.</small></div>}</div><div className="modal-footer"><button className="btn secondary" onClick={()=>setEditing(null)}>Cancelar</button><button className="btn" onClick={()=>void save()} disabled={saving}>{saving?"Guardando…":"Guardar"}</button></div></Modal>}{toast&&<Toast message={toast.message} kind={toast.kind} onClose={()=>setToast(null)}/>}</>;
 }

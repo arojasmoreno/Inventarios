@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { Modal, Toast, downloadCsv, formatFecha } from "./ui";
+import { Modal, Toast, camposConError, downloadCsv, formatFecha } from "./ui";
 import { MAQUINARIA, ResourcePage, SITUACIONES, TIPOS } from "./resources";
 
 type Row = Record<string, unknown>;
@@ -65,6 +65,8 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
   const [hasta, setHasta] = useState("");
   const [form, setForm] = useState<Row | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // Campos que han fallado al validar (se sombrean en rojo).
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
 
@@ -101,7 +103,14 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
       String(r.situacion_nombre ?? ""), String(r.marca ?? ""), String(r.modelo ?? ""), String(r.centro_nombre ?? ""),
     ]));
 
-  const openForm = () => { setFormError(null); setForm({ maquina_id: "", fecha: hoy(), situacion_id: "", marca: "", modelo: "", centro_id: "" }); };
+  const openForm = () => { setFormError(null); setCampoErr([]); setForm({ maquina_id: "", fecha: hoy(), situacion_id: "", marca: "", modelo: "", centro_id: "" }); };
+  // Al escribir en un campo se le quita el sombreado de error.
+  const limpiaErr = (k: string) => setCampoErr(prev => prev.filter(x => x !== k));
+  const ETIQUETAS = [
+    { clave: "maquina_id", etiqueta: "Máquina" }, { clave: "fecha", etiqueta: "Fecha" },
+    { clave: "situacion_id", etiqueta: "Situación" }, { clave: "marca", etiqueta: "Marca" },
+    { clave: "modelo", etiqueta: "Modelo" }, { clave: "centro_id", etiqueta: "Centro" },
+  ];
   // Al elegir otra máquina se precargan sus marca, modelo y centro.
   const elegirMaquina = (id: string) => {
     const m = maquinas.find(x => String(x.id) === id);
@@ -126,7 +135,7 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
       });
       setForm(null); setToast({ message: "Situación registrada", kind: "ok" });
       await load();
-    } catch (err) { setFormError(err instanceof Error ? err.message : "No se pudo registrar la situación"); }
+    } catch (err) { const msg = err instanceof Error ? err.message : "No se pudo registrar la situación"; setFormError(msg); setCampoErr(camposConError(msg, ETIQUETAS)); }
     finally { setSaving(false); }
   };
   const remove = async (row: Row) => {
@@ -183,35 +192,35 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
       {formError && <div className="form-error">{formError}</div>}
       <form onSubmit={save}>
         <div className="form-grid">
-          <div className="full field">
+          <div className={"full field" + (campoErr.includes("maquina_id") ? " error" : "")}>
             <label>Máquina<span className="req">*</span></label>
-            <select className="input" value={String(form.maquina_id)} onChange={e => elegirMaquina(e.target.value)} required>
+            <select className={"input" + (campoErr.includes("maquina_id") ? " error" : "")} value={String(form.maquina_id)} onChange={e => { limpiaErr("maquina_id"); elegirMaquina(e.target.value); }} required>
               <option value="">Elige una máquina…</option>
               {maquinas.map(m => <option key={String(m.id)} value={String(m.id)}>{String(m.nombre ?? `#${String(m.id)}`)}</option>)}
             </select>
           </div>
-          <div className="field">
+          <div className={"field" + (campoErr.includes("fecha") ? " error" : "")}>
             <label>Fecha<span className="req">*</span></label>
-            <input className="input" type="date" value={String(form.fecha)} onChange={e => setForm({ ...form, fecha: e.target.value })} required />
+            <input className={"input" + (campoErr.includes("fecha") ? " error" : "")} type="date" value={String(form.fecha)} onChange={e => { limpiaErr("fecha"); setForm({ ...form, fecha: e.target.value }); }} required />
           </div>
-          <div className="field">
+          <div className={"field" + (campoErr.includes("situacion_id") ? " error" : "")}>
             <label>Situación<span className="req">*</span></label>
-            <select className="input" value={String(form.situacion_id)} onChange={e => setForm({ ...form, situacion_id: e.target.value })} required>
+            <select className={"input" + (campoErr.includes("situacion_id") ? " error" : "")} value={String(form.situacion_id)} onChange={e => { limpiaErr("situacion_id"); setForm({ ...form, situacion_id: e.target.value }); }} required>
               <option value="">Elige una situación…</option>
               {situaciones.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.nombre)}</option>)}
             </select>
           </div>
-          <div className="field">
+          <div className={"field" + (campoErr.includes("marca") ? " error" : "")}>
             <label>Marca</label>
-            <input className="input" value={String(form.marca)} onChange={e => setForm({ ...form, marca: e.target.value })} placeholder="Se precarga de la máquina" />
+            <input className={"input" + (campoErr.includes("marca") ? " error" : "")} value={String(form.marca)} onChange={e => { limpiaErr("marca"); setForm({ ...form, marca: e.target.value }); }} placeholder="Se precarga de la máquina" />
           </div>
-          <div className="field">
+          <div className={"field" + (campoErr.includes("modelo") ? " error" : "")}>
             <label>Modelo</label>
-            <input className="input" value={String(form.modelo)} onChange={e => setForm({ ...form, modelo: e.target.value })} placeholder="Se precarga de la máquina" />
+            <input className={"input" + (campoErr.includes("modelo") ? " error" : "")} value={String(form.modelo)} onChange={e => { limpiaErr("modelo"); setForm({ ...form, modelo: e.target.value }) }} placeholder="Se precarga de la máquina" />
           </div>
-          <div className="full field">
+          <div className={"full field" + (campoErr.includes("centro_id") ? " error" : "")}>
             <label>Centro</label>
-            <select className="input" value={String(form.centro_id)} onChange={e => setForm({ ...form, centro_id: e.target.value })}>
+            <select className={"input" + (campoErr.includes("centro_id") ? " error" : "")} value={String(form.centro_id)} onChange={e => { limpiaErr("centro_id"); setForm({ ...form, centro_id: e.target.value }); }}>
               <option value="">El de la máquina</option>
               {centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
             </select>

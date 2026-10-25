@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { Toast } from "./ui";
+import { Toast, camposConError } from "./ui";
 
 type Row = Record<string, unknown>;
 
@@ -10,6 +10,12 @@ const BADGE_CLASSES = ["d-ok", "d-info", "d-warn", "d-violet", "d-rose", "d-teal
 const fechaCorta = (v: unknown): string => String(v ?? "").replace("T", " ").slice(0, 16);
 const nombreCentros = (r: Row): string[] =>
   String(r.centros_nombre ?? "").split(",").filter(Boolean);
+
+// Campos del formulario de fichas, para localizar el que ha fallado al validar.
+const ETIQUETAS_FICHA = [
+  { clave: "nombre", etiqueta: "Nombre" }, { clave: "tipo", etiqueta: "Tipo" },
+  { clave: "centros", etiqueta: "Centro" }, { clave: "url", etiqueta: "URL" },
+];
 
 /**
  * Sección «Documentación»: catálogo de fichas (seguridad, técnicas, manuales de
@@ -172,21 +178,27 @@ function FichaForm({ initial, tipos, centros, onClose, onSaved, onNuevoTipo }: {
   const [descripcion, setDescripcion] = useState(initial ? String(initial.descripcion ?? "") : "");
   const [fabricante, setFabricante] = useState(initial ? String(initial.fabricante ?? "") : "");
   const [formError, setFormError] = useState<string | null>(null);
+  // Campos que han fallado al validar (se sombrean en rojo).
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const toggleCentro = (id: number) => setSelCentros((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
+  const toggleCentro = (id: number) => {
+    setCampoErr((prevErr) => prevErr.filter((k) => k !== "centros"));
+    setSelCentros((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    if (!nombre.trim()) { setFormError("El nombre de la ficha es obligatorio"); return; }
-    if (!tipoId) { setFormError("Elige el tipo de ficha"); return; }
-    if (!selCentros.size) { setFormError("Marca al menos un centro donde se usa la ficha"); return; }
-    if (!/^https?:\/\/\S+$/i.test(url.trim())) { setFormError("La URL del documento debe empezar por http:// o https://"); return; }
+    setCampoErr([]);
+    if (!nombre.trim()) { setFormError("El nombre de la ficha es obligatorio"); setCampoErr(["nombre"]); return; }
+    if (!tipoId) { setFormError("Elige el tipo de ficha"); setCampoErr(["tipo"]); return; }
+    if (!selCentros.size) { setFormError("Marca al menos un centro donde se usa la ficha"); setCampoErr(["centros"]); return; }
+    if (!/^https?:\/\/\S+$/i.test(url.trim())) { setFormError("La URL del documento debe empezar por http:// o https://"); setCampoErr(["url"]); return; }
     setSaving(true);
     try {
       const payload = {
@@ -199,7 +211,7 @@ function FichaForm({ initial, tipos, centros, onClose, onSaved, onNuevoTipo }: {
       };
       if (initial) { await api.put(`/api/documentos/${String(initial.id)}`, payload); onSaved("Ficha actualizada"); }
       else { await api.post("/api/documentos", payload); onSaved("Ficha añadida al catálogo"); }
-    } catch (err) { setFormError(err instanceof Error ? err.message : "No se pudo guardar la ficha"); }
+    } catch (err) { const msg = err instanceof Error ? err.message : "No se pudo guardar la ficha"; setFormError(msg); setCampoErr(camposConError(msg, ETIQUETAS_FICHA)); }
     finally { setSaving(false); }
   };
 
@@ -214,30 +226,30 @@ function FichaForm({ initial, tipos, centros, onClose, onSaved, onNuevoTipo }: {
       </div>
       <div className="docs-modal-body">
         {formError && <div className="docs-form-error">{formError}</div>}
-        <label className="d-label" htmlFor="f-nombre">Nombre de la ficha</label>
-        <input id="f-nombre" className="d-input" autoFocus placeholder="Disolvente industrial — revisión 2"
-          value={nombre} onChange={(e) => setNombre(e.target.value)} />
+        <label className={"d-label" + (campoErr.includes("nombre") ? " error" : "")} htmlFor="f-nombre">Nombre de la ficha</label>
+        <input id="f-nombre" className={"d-input" + (campoErr.includes("nombre") ? " error" : "")} autoFocus placeholder="Disolvente industrial — revisión 2"
+          value={nombre} onChange={(e) => { setCampoErr((prev) => prev.filter((k) => k !== "nombre")); setNombre(e.target.value); }} />
 
-        <label className="d-label" htmlFor="f-tipo">Tipo de ficha</label>
+        <label className={"d-label" + (campoErr.includes("tipo") ? " error" : "")} htmlFor="f-tipo">Tipo de ficha</label>
         <div className="d-tipo-row">
-          <select id="f-tipo" className="d-input" value={tipoId} onChange={(e) => setTipoId(e.target.value)}>
+          <select id="f-tipo" className={"d-input" + (campoErr.includes("tipo") ? " error" : "")} value={tipoId} onChange={(e) => { setCampoErr((prev) => prev.filter((k) => k !== "tipo")); setTipoId(e.target.value); }}>
             <option value="">— Elige un tipo —</option>
             {tipos.map((t) => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}
           </select>
           <button type="button" className="d-btn ghost" onClick={onNuevoTipo} title="Crear un nuevo tipo de ficha">＋ Nuevo tipo</button>
         </div>
 
-        <label className="d-label">Centro al que pertenece</label>
-        <div className="docs-chips">{centros.map((c) => {
+        <label className={"d-label" + (campoErr.includes("centros") ? " error" : "")}>Centro al que pertenece</label>
+        <div className={"docs-chips" + (campoErr.includes("centros") ? " error" : "")}>{centros.map((c) => {
           const id = Number(c.id);
           return <button type="button" key={id} className={"d-chip toggle" + (selCentros.has(id) ? " on" : "")}
             onClick={() => toggleCentro(id)} aria-pressed={selCentros.has(id)}>{String(c.nombre)}</button>;
         })}</div>
         <p className="d-hint">Cada persona verá esta ficha si su centro está marcado aquí.</p>
 
-        <label className="d-label" htmlFor="f-url">Documento</label>
-        <input id="f-url" className="d-input" placeholder="https://… enlace a la ficha"
-          value={url} onChange={(e) => setUrl(e.target.value)} />
+        <label className={"d-label" + (campoErr.includes("url") ? " error" : "")} htmlFor="f-url">Documento</label>
+        <input id="f-url" className={"d-input" + (campoErr.includes("url") ? " error" : "")} placeholder="https://… enlace a la ficha"
+          value={url} onChange={(e) => { setCampoErr((prev) => prev.filter((k) => k !== "url")); setUrl(e.target.value); }} />
         <p className="d-hint">Pega la URL donde consultar el documento (PDF del fabricante, intranet, etc.).</p>
 
         <div className="d-two">
@@ -265,16 +277,17 @@ function FichaForm({ initial, tipos, centros, onClose, onSaved, onNuevoTipo }: {
 function NuevoTipoModal({ onClose, onCreated }: { onClose: () => void; onCreated: (nombre: string) => void }) {
   const [nombre, setNombre] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const n = nombre.trim();
-    if (!n) { setFormError("Escribe el nombre del tipo"); return; }
+    if (!n) { setFormError("Escribe el nombre del tipo"); setCampoErr(["nombre"]); return; }
     setSaving(true); setFormError(null);
     try {
       await api.post("/api/documentos-tipos", { nombre: n });
       onCreated(n);
-    } catch (err) { setFormError(err instanceof Error ? err.message : "No se pudo crear el tipo"); }
+    } catch (err) { const msg = err instanceof Error ? err.message : "No se pudo crear el tipo"; setFormError(msg); setCampoErr(camposConError(msg, ETIQUETAS_FICHA)); }
     finally { setSaving(false); }
   };
   return <div className="docs-modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -288,8 +301,8 @@ function NuevoTipoModal({ onClose, onCreated }: { onClose: () => void; onCreated
       </div>
       <div className="docs-modal-body">
         {formError && <div className="docs-form-error">{formError}</div>}
-        <label className="d-label" htmlFor="nt-nombre">Nombre del tipo</label>
-        <input id="nt-nombre" className="d-input" autoFocus placeholder="Ficha de seguridad" value={nombre} onChange={(e) => setNombre(e.target.value)} />
+        <label className={"d-label" + (campoErr.includes("nombre") ? " error" : "")} htmlFor="nt-nombre">Nombre del tipo</label>
+        <input id="nt-nombre" className={"d-input" + (campoErr.includes("nombre") ? " error" : "")} autoFocus placeholder="Ficha de seguridad" value={nombre} onChange={(e) => { setCampoErr([]); setNombre(e.target.value); }} />
       </div>
       <div className="docs-modal-foot">
         <button type="button" className="d-btn ghost" onClick={onClose}>Cancelar</button>

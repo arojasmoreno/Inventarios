@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import { Modal, Toast } from "./ui";
+import { Modal, Toast, camposConError } from "./ui";
 import { QrLoteModal } from "./qr";
 
 type Row = Record<string, unknown>;
@@ -27,6 +27,8 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ kind: "zona" | "subzona"; mode: "create" | "edit"; values: Row } | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // Campos que han fallado al validar (se sombrean en rojo).
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
   const canWrite = user.rol === "admin";
@@ -54,10 +56,12 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
 
   const openZona = (zona?: Row) => {
     setFormError(null);
+    setCampoErr([]);
     setEditing({ kind: "zona", mode: zona ? "edit" : "create", values: zona ? { ...zona } : { nombre: "", notas: "", centro_id: centroId === "all" ? String(centros[0]?.id ?? "") : centroId } });
   };
   const openSub = (zona: Row, sub?: Row) => {
     setFormError(null);
+    setCampoErr([]);
     setEditing({ kind: "subzona", mode: sub ? "edit" : "create", values: sub ? { ...sub } : { nombre: "", notas: "", zona_id: zona.id, zona_ref: zona.nombre } });
   };
 
@@ -71,14 +75,14 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
       notas: String(editing.values.notas ?? "").trim() || null,
       ...(esZona ? { centro_id: Number(editing.values.centro_id) } : { zona_id: Number(editing.values.zona_id) }),
     };
-    if (!payload.nombre) { setFormError("El nombre es obligatorio"); setSaving(false); return; }
+    if (!payload.nombre) { setFormError("Revisa los campos marcados en rojo"); setCampoErr(["nombre"]); setSaving(false); return; }
     try {
       const etiqueta = esZona ? "Zona" : "Subzona";
       if (editing.mode === "create") { await api.post(endpoint, payload); setToast({ message: `${etiqueta} «${String(payload.nombre)}» creada`, kind: "ok" }); }
       else { await api.put(`${endpoint}/${String(editing.values.id)}`, payload); setToast({ message: `${etiqueta} «${String(payload.nombre)}» actualizada`, kind: "ok" }); }
       setEditing(null);
       await load();
-    } catch (e) { setFormError(e instanceof Error ? e.message : "No se pudo guardar"); }
+    } catch (e) { const msg = e instanceof Error ? e.message : "No se pudo guardar"; setFormError(msg); setCampoErr(camposConError(msg, [{ clave: "nombre", etiqueta: "Nombre" }, { clave: "centro_id", etiqueta: "Centro" }, { clave: "zona_id", etiqueta: "Zona" }, { clave: "notas", etiqueta: "Notas" }])); }
     finally { setSaving(false); }
   };
 
@@ -163,13 +167,13 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
     >
       {formError && <div className="form-error">{formError}</div>}
       <div className="form-grid">
-        <div className="full"><div className="field">
+        <div className="full"><div className={"field" + (campoErr.includes("nombre") ? " error" : "")}>
           <label htmlFor="z-nombre">Nombre <span className="req">*</span></label>
-          <input id="z-nombre" className="input" value={String(editing.values.nombre ?? "")} onChange={(e) => setEditing({ ...editing, values: { ...editing.values, nombre: e.target.value } })} autoFocus />
+          <input id="z-nombre" className={"input" + (campoErr.includes("nombre") ? " error" : "")} value={String(editing.values.nombre ?? "")} onChange={(e) => { setCampoErr(prev => prev.filter(k => k !== "nombre")); setEditing({ ...editing, values: { ...editing.values, nombre: e.target.value } }); }} autoFocus />
         </div></div>
-        {editing.kind === "zona" && <div className="full"><div className="field">
+        {editing.kind === "zona" && <div className="full"><div className={"field" + (campoErr.includes("centro_id") ? " error" : "")}>
           <label htmlFor="z-centro">Centro <span className="req">*</span></label>
-          <select id="z-centro" className="input" value={String(editing.values.centro_id ?? "")} onChange={(e) => setEditing({ ...editing, values: { ...editing.values, centro_id: e.target.value } })} disabled={editing.mode === "edit"}>
+          <select id="z-centro" className={"input" + (campoErr.includes("centro_id") ? " error" : "")} value={String(editing.values.centro_id ?? "")} onChange={(e) => { setCampoErr(prev => prev.filter(k => k !== "centro_id")); setEditing({ ...editing, values: { ...editing.values, centro_id: e.target.value } }); }} disabled={editing.mode === "edit"}>
             {centros.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
           </select>
           {editing.mode === "edit" && <small>El centro de una zona no se puede cambiar; créala de nuevo si necesitas moverla.</small>}

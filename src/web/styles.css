@@ -93,3 +93,14 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .docs-form-error{background:#2a1220;color:#fda4af;border:1px solid #4c1d33;border-radius:10px;padding:9px 13px;font-size:13px;margin-bottom:4px}
 .docs-modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 22px 20px;border-top:1px solid #16203a}
 @media(max-width:700px){.docs .d-two{grid-template-columns:1fr}.docs-count{margin-left:0}}
+/* Campos con un fallo de validación: sombreado rojo claro (tema claro) */
+.field.error>label,.field.checkbox.error span{color:var(--danger)}
+.field.error .input,.input.error{background:#fef2f2;border-color:#fca5a5}
+.field.error .input:focus,.input.error:focus{border-color:var(--danger);outline-color:#fecaca}
+.field.error select.input option{color:var(--text)}
+.field.error .centros-toggle .chip{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}
+/* En la documentación (tema oscuro) el mismo aviso en rojo claro legible */
+.d-input.error{background:#2a1220;border-color:#f87171;color:#ffe4e6}
+.d-input.error:focus{outline:none;border-color:#fb7185;box-shadow:0 0 0 3px rgba(251,113,133,.28)}
+.d-label.error{color:#fda4af}
+.docs-chips.error{background:#2a1220;border:1px dashed #f87171;border-radius:10px;padding:6px 8px}

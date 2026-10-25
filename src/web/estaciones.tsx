@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { api } from "./api";
-import { Modal, Toast, downloadCsv, formatNum } from "./ui";
+import { Modal, Toast, camposConError, downloadCsv, formatNum } from "./ui";
 import { QrLoteModal, QrModal } from "./qr";
 
 type Row = Record<string, unknown>;
@@ -248,6 +248,8 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
     activo: initial ? Number(initial.activo) === 1 : true,
   }));
   const [formError, setFormError] = useState<string | null>(null);
+  // Campos que han fallado al validar (se sombrean en rojo); la clave es el id del campo.
+  const [campoErr, setCampoErr] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -278,14 +280,18 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
   const zonasDelCentro = useMemo(() => zonas.filter((z) => String(z.centro_id) === String(values.centro_id)), [zonas, values.centro_id]);
   const subsDeZona = useMemo(() => subzonas.filter((s) => String(s.zona_id) === String(values.zona_id)), [subzonas, values.zona_id]);
 
-  const set = (k: string, v: string | boolean) => setValues((prev) => {
-    const next = { ...prev, [k]: v };
-    // Cascadas: cambiar centro limpia zona/subzona; cambiar zona limpia subzona.
-    if (k === "centro_id") { next.zona_id = ""; next.subzona_id = ""; }
-    if (k === "zona_id") next.subzona_id = "";
-    if (k === "tipo_consumible_id") next.articulo_id = "";
-    return next;
-  });
+  const set = (k: string, v: string | boolean) => {
+    const ef = ETIQUETAS[k]?.ef;
+    if (ef) setCampoErr((prevErr) => prevErr.filter((x) => x !== ef));
+    setValues((prev) => {
+      const next = { ...prev, [k]: v };
+      // Cascadas: cambiar centro limpia zona/subzona; cambiar zona limpia subzona.
+      if (k === "centro_id") { next.zona_id = ""; next.subzona_id = ""; }
+      if (k === "zona_id") next.subzona_id = "";
+      if (k === "tipo_consumible_id") next.articulo_id = "";
+      return next;
+    });
+  };
 
   const save = async () => {
     setSaving(true); setFormError(null);
@@ -301,18 +307,19 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
       };
       if (initial) { await api.put(`/api/estaciones/${String(initial.id)}`, payload); onSaved("Estación actualizada"); }
       else { await api.post("/api/estaciones", payload); onSaved("Estación creada"); }
-    } catch (e) { setFormError(e instanceof Error ? e.message : "No se pudo guardar la estación"); }
+    } catch (e) { const msg = e instanceof Error ? e.message : "No se pudo guardar la estación"; setFormError(msg); setCampoErr(camposConError(msg, Object.values(ETIQUETAS).map(({ ef, etiqueta }) => ({ clave: ef, etiqueta })))); }
     finally { setSaving(false); }
   };
 
-  const sel = (id: string, label: string, value: string, opts: Array<{ v: string; l: string }>, onChange: (v: string) => void, placeholder = "— Sin asignar —") => (
-    <div className="field"><label htmlFor={id}>{label}</label>
-      <select id={id} className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+  const sel = (id: string, label: string, value: string, opts: Array<{ v: string; l: string }>, onChange: (v: string) => void, placeholder = "— Sin asignar —") => {
+    const hay = campoErr.includes(id);
+    return <div className={"field" + (hay ? " error" : "")}><label htmlFor={id}>{label}</label>
+      <select id={id} className={"input" + (hay ? " error" : "")} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">{placeholder}</option>
         {opts.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
       </select>
-    </div>
-  );
+    </div>;
+  };
 
   return <Modal
     title={initial ? "Editar estación" : "Nueva estación de consumo"}
@@ -340,6 +347,17 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
     </div>
   </Modal>;
 }
+
+// Campo del formulario → id del control y etiqueta, para localizar el campo
+// que ha fallado en un mensaje de validación y sombrearlo en rojo.
+const ETIQUETAS: Record<string, { ef: string; etiqueta: string }> = {
+  centro_id: { ef: "ef-centro", etiqueta: "Centro" },
+  zona_id: { ef: "ef-zona", etiqueta: "Zona" },
+  subzona_id: { ef: "ef-sub", etiqueta: "Subzona" },
+  soporte_id: { ef: "ef-soporte", etiqueta: "Soporte" },
+  tipo_consumible_id: { ef: "ef-tipo", etiqueta: "Tipo de consumible" },
+  articulo_id: { ef: "ef-art", etiqueta: "Artículo" },
+};
 
 // ------------------------------------------------------------- Modo estación
 type Detector = { detect: (v: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> };
