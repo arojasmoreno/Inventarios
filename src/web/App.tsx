@@ -9,7 +9,8 @@ import { MaquinariaPage } from "./maquinaria";
 import { EquipacionPage } from "./equipacion";
 import { PanelPage } from "./panel";
 import { GlobalSearch } from "./busqueda";
-import { DocumentosPage } from "./documentos";export interface User {
+import { DocumentosPage } from "./documentos";
+import { AyudaPage } from "./ayuda";export interface User {
   id: number;
   username: string;
   nombre: string;
@@ -75,6 +76,12 @@ const NAV: NavGroup[] = [
     section: "Gestión de informes",
     items: [
       { hash: "#/gestion-informes", label: "Gestión de informes", icon: "📈" },
+    ],
+  },
+  {
+    section: "Ayuda",
+    items: [
+      { hash: "#/ayuda", label: "Manuales y ayuda", icon: "🛟" },
     ],
   },
 ];
@@ -288,7 +295,8 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       : esGestionCentros ? nav("#/gestion-centros")
       : esGestionInformes ? nav("#/gestion-informes") : NAV_FLAT[0]);
   let page: ReactNode;
-  if (route === "#/cuenta") page = <MiCuenta user={user} />;
+  if (route === "#/ayuda") page = <AyudaPage />;
+  else if (route === "#/cuenta") page = <MiCuenta user={user} />;
   else if (route === "#/panel") page = <PanelPage user={user} />;
   else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;

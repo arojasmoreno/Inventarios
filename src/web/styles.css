@@ -104,3 +104,15 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .d-input.error:focus{outline:none;border-color:#fb7185;box-shadow:0 0 0 3px rgba(251,113,133,.28)}
 .d-label.error{color:#fda4af}
 .docs-chips.error{background:#2a1220;border:1px dashed #f87171;border-radius:10px;padding:6px 8px}
+/* Ayuda: tarjetas con los manuales (abrir o descargar el PDF). */
+.ayuda-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+.ayuda-card{display:flex;flex-direction:column;gap:8px}
+.ayuda-head{display:flex;align-items:flex-start;gap:12px}
+.ayuda-icono{background:var(--bg,#f1f5f9);border:1px solid var(--border);border-radius:12px;width:46px;height:46px;display:grid;place-items:center;font-size:24px;flex-shrink:0}
+.ayuda-head h3{margin:0 0 6px;font-size:16px}
+.ayuda-resumen{color:var(--muted);margin:0;font-size:13.5px;line-height:1.55}
+.ayuda-temas{margin:2px 0 6px;padding-left:18px;font-size:13px;line-height:1.65;color:var(--text)}
+.ayuda-temas li{margin:2px 0}
+.ayuda-acciones{display:flex;flex-wrap:wrap;gap:10px;margin-top:auto;padding-top:8px}
+.ayuda-acciones .btn{text-decoration:none}
+@media(max-width:700px){.ayuda-grid{grid-template-columns:1fr}}
