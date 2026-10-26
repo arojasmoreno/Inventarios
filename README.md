@@ -53,15 +53,27 @@ Los permisos se validan en el servidor: los usuarios pueden consultar y dar de a
 - `centros`: plantas/ubicaciones (nombre, dirección, ciudad, responsable, teléfono).
 - `usuarios`: login, nombre, email, contraseña (hash + sal), rol (`admin`/`usuario`), activo, centro habitual.
 - `sessions`: tokens de sesión con caducidad.
-- `quimicos`: nombre, nº de lote, litros por garrafa, nº de garrafas, fecha de caducidad, centro, notas. El total de litros se calcula automáticamente (`litros_por_garrafa × num_garrafas`).
-- `material_limpieza`: nombre, **color** (Rojo, Azul, Verde, Amarillo, Blanco, Negro, Naranja, Morado, Gris, Otro), cantidad, centro, notas.
+- `quimicos`: nombre, nº de lote, litros por garrafa, nº de garrafas, fecha de producción (opcional, solo informativa), fecha de caducidad (opcional), **origen** (`fabrica` / `empresa`), centro, notas. El total de litros se calcula automáticamente (`litros_por_garrafa × num_garrafas`).
+- `material_limpieza`: nombre, **color** (Rojo, Azul, Verde, Amarillo, Blanco, Negro, Naranja, Morado, Gris, Otro), cantidad, **origen** (`fabrica` / `empresa`), centro, notas.
 - `maquinaria`: solo datos de la máquina — **tipo** (catálogo con altas propias), marca, modelo, nº de serie, centro, zona y subzona de ubicación, notas y foto. El **estado** (Operativo, En reparación, Mantenimiento preventivo, Averiado, Baja o situaciones propias) es su **último registro del histórico** (`maquinaria_historial`).
 
-Todos los artículos pueden asignarse a un **centro**, de modo que los informes se pueden filtrar por planta.
+Todos los artículos pueden asignarse a un **centro**, de modo que los informes se pueden filtrar por planta. Los consumibles (químicos y material de limpieza) además llevan una columna **Origen** con solo dos opciones —**Fábrica** y **Empresa**— y un filtro para ver todo o elegir entre ellas.
 
 ## Informes
 
-La pantalla *Informes* muestra, global o por centro:
+La sección *Gestión de informes* tiene cuatro pestañas: **Dashboard**, **Informes**, **Auditoría** e **Importar CSV** (esta última solo para administradores).
+
+### Dashboard
+
+Vista única con toda la información del sitio, con filtros por **planta** y por **origen** (Fábrica/Empresa):
+
+- KPIs: litros y garrafas de químicos, unidades de material, maquinaria, EPIs/ropa, consumo de los últimos 30 días y alertas.
+- Gráficos (SVG sin librerías): reparto por origen, estado de caducidad, consumo por día (30 días), caducidades por mes (12 meses), inventario por planta, maquinaria por situación y por tipo, material por color, consumos por zona y entregas por operario.
+- Tablas: resumen por planta (con totales y CSV), origen de los consumibles (CSV), caducidades próximas y stock bajo mínimo.
+
+### Informes
+
+La pantalla *Informes* muestra, global o por centro (y por origen en los consumibles):
 
 - Totales: litros y garrafas de químicos, unidades de material y de maquinaria.
 - Alertas de caducidad: productos **vencidos** y los que caducan en ≤ 30 / ≤ 90 días.

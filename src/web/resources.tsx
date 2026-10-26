@@ -24,13 +24,27 @@ export interface ResourceConfig {
   formCentros?: boolean;
   // Filtro por «Tipo de equipo» en la barra de herramientas (Ropa y EPIs).
   tipoEquipoFilter?: boolean;
+  // Filtro por «Origen» (Fábrica / Empresa) de los consumibles en la barra de herramientas.
+  origenFilter?: boolean;
   // Acción extra por fila (p. ej. exportar los datos personales de un usuario).
   extraAction?: { icon: string; label: string; title?: string; run: (row: Row) => void | Promise<void> };
+  // Fila de totales al pie de la tabla: suma de las columnas indicadas,
+  // calculada sobre las filas visibles (con los filtros aplicados).
+  totals?: Array<{ key: string; label: string }>;
 }
 const allow = (role: string, p: Permission) => p === "all" || role === "admin" || (p === "centros" && role === "admin_centros");
 const center = { name: "centro_id", label: "Centro", type: "select" as const };
 const notes = { name: "notas", label: "Notas", type: "textarea" as const };
 const colors = ["Rojo", "Azul", "Verde", "Amarillo", "Blanco", "Negro", "Naranja", "Morado", "Gris", "Marrón", "Otro"];
+// Origen del consumible: solo dos opciones (fábrica o empresa gestora).
+const ORIGEN_OPTS = [{ value: "fabrica", label: "Fábrica" }, { value: "empresa", label: "Empresa" }];
+const origenLabel = (v: unknown): string => { const s = String(v ?? ""); return s === "empresa" ? "Empresa" : s === "fabrica" ? "Fábrica" : "—"; };
+const origenCol: Column = {
+  key: "origen", label: "Origen",
+  render: r => { const s = String(r.origen ?? ""); return s === "empresa" ? <span className="badge warn">🏢 Empresa</span>
+    : s === "fabrica" ? <span className="badge info">🏭 Fábrica</span> : <span className="badge muted">—</span>; },
+  csv: r => origenLabel(r.origen),
+};
 // Estado actual de una máquina: sale del último registro de su histórico.
 const estadoBadge = (estado: unknown) => {
   const e = String(estado ?? "");
@@ -40,6 +54,14 @@ const estadoBadge = (estado: unknown) => {
 const dateBadge = (r: Row) => { const n = diasHasta(r.fecha_caducidad), cls = n === null || n > 90 ? "" : n < 0 ? "danger" : n <= 30 ? "warn" : "info"; const text = n === null || n > 90 ? formatFecha(r.fecha_caducidad) : n < 0 ? `Vencida (${formatFecha(r.fecha_caducidad)})` : `${formatFecha(r.fecha_caducidad)} · ${n} d`; return cls ? <span className={`badge ${cls}`}>{text}</span> : text; };
 const centerCol: Column = { key: "centro_nombre", label: "Centro", render: r => String(r.centro_nombre ?? "—"), csv: r => String(r.centro_nombre ?? "—") };
 const stockMin = { name: "stock_minimo", label: "Stock mínimo (alerta)", type: "integer" as const };
+// Precio unitario opcional (valor del inventario). Si no se conoce el precio
+// del producto se deja en blanco: el campo no es obligatorio.
+const precioField = (label: string) => ({ name: "precio", label, type: "number" as const, help: "Opcional: deja el campo en blanco si no conoces el precio." });
+const precioCol: Column = {
+  key: "precio", label: "Precio (€)", align: "right",
+  render: r => r.precio == null || r.precio === "" ? "—" : formatNum(r.precio, 2),
+  csv: r => r.precio == null || r.precio === "" ? "" : formatNum(r.precio, 2),
+};
 const fotoField = { name: "foto", label: "Foto", type: "image" as const, help: "Se recimensiona automáticamente antes de guardarla" };
 // Celda de stock con aviso ⚠️ cuando llega al mínimo configurado.
 const stockCell = (r: Row, key: string) => { const n = Number(r[key] ?? 0), min = Number(r.stock_minimo ?? 0); return <>{formatNum(n)}{min > 0 && n <= min ? <> <span className="badge danger">⚠️ mín. {min}</span></> : null}</>; };
@@ -47,14 +69,16 @@ const fotoCol = (endpoint: string): Column => ({ key: "foto", label: "Foto", ren
 // Badge de próxima revisión de EPI (verde, ámbar a 30 días, rojo si caducada).
 const revisionBadge = (r: Row) => { const f = r.fecha_revision; if (typeof f !== "string" || f.length < 10) return "—"; const n = diasHasta(f); const cls = n === null ? "" : n < 0 ? "danger" : n <= 30 ? "warn" : "ok"; const text = n !== null && n < 0 ? `Caducada (${formatFecha(f)})` : formatFecha(f); return cls ? <span className={`badge ${cls}`}>{text}</span> : text; };
 export const QUIMICOS: ResourceConfig = {
-  title: "Productos químicos", subtitle: "Lote, litros por garrafa, número de garrafas y fecha de caducidad", endpoint: "/api/quimicos", csvName: "quimicos", searchKeys: ["nombre", "numero_lote", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Producto", type: "text", required: true }, { name: "numero_lote", label: "Nº de lote", type: "text", required: true }, { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true }, { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true }, { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: true }, center, notes, stockMin, fotoField],
-  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Producto" }, { key: "numero_lote", label: "Lote" }, { key: "litros_por_garrafa", label: "L/garrafa", align: "right", render: r => formatNum(r.litros_por_garrafa, 2) }, { key: "num_garrafas", label: "Garrafas", align: "right", render: r => stockCell(r, "num_garrafas") }, { key: "total_litros", label: "Total litros", align: "right", render: r => <strong>{formatNum(r.total_litros, 2)}</strong> }, { key: "fecha_caducidad", label: "Caducidad", render: dateBadge }, centerCol, fotoCol("/api/quimicos")],
+  title: "Productos químicos", subtitle: "Lote, litros por garrafa, número de garrafas, fechas de producción y caducidad y origen", endpoint: "/api/quimicos", csvName: "quimicos", searchKeys: ["nombre", "numero_lote", "centro_nombre"], centroFilter: true, origenFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Producto", type: "text", required: true }, { name: "numero_lote", label: "Nº de lote", type: "text", required: true }, { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true }, { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true }, { name: "fecha_produccion", label: "Fecha de producción", type: "date", help: "Opcional: solo informativa, no entra en ningún cálculo." }, { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", help: "Opcional: deja el campo en blanco si el producto no caduca." }, { name: "origen", label: "Origen", type: "select", required: true, options: ORIGEN_OPTS, help: "¿De quién es el consumible?" }, precioField("Precio por garrafa (€)"), center, notes, stockMin, fotoField],
+  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Producto" }, { key: "numero_lote", label: "Lote" }, { key: "litros_por_garrafa", label: "L/garrafa", align: "right", render: r => formatNum(r.litros_por_garrafa, 2) }, { key: "num_garrafas", label: "Garrafas", align: "right", render: r => stockCell(r, "num_garrafas") }, { key: "total_litros", label: "Total litros", align: "right", render: r => <strong>{formatNum(r.total_litros, 2)}</strong> }, { key: "fecha_produccion", label: "Producción", render: r => formatFecha(r.fecha_produccion) }, { key: "fecha_caducidad", label: "Caducidad", render: dateBadge }, precioCol, origenCol, centerCol, fotoCol("/api/quimicos")],
+  // Totales de la tabla: litros de todo el almacén químico filtrado.
+  totals: [{ key: "total_litros", label: "Total litros" }],
 };
 export const MATERIAL: ResourceConfig = {
-  title: "Material de limpieza", subtitle: "Segregado por colores (código de zona de uso)", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["nombre", "color", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Material", type: "text", required: true }, { name: "color", label: "Color", type: "enum", required: true, enumValues: colors }, { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true }, center, notes, stockMin, fotoField],
-  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Material" }, { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> }, { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") }, centerCol, { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") }, fotoCol("/api/material-limpieza")],
+  title: "Material de limpieza", subtitle: "Segregado por colores (código de zona de uso) y origen", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["nombre", "color", "centro_nombre"], centroFilter: true, origenFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Material", type: "text", required: true }, { name: "color", label: "Color", type: "enum", required: true, enumValues: colors }, { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true }, { name: "origen", label: "Origen", type: "select", required: true, options: ORIGEN_OPTS, help: "¿De quién es el consumible?" }, precioField("Precio por unidad (€)"), center, notes, stockMin, fotoField],
+  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Material" }, { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> }, { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") }, precioCol, origenCol, centerCol, { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") }, fotoCol("/api/material-limpieza")],
 };
 export const MAQUINARIA: ResourceConfig = {
   title: "Maquinaria", subtitle: "Marca, modelo, nº de serie, tipo y ubicación · el estado sale del histórico", endpoint: "/api/maquinaria", csvName: "maquinaria", searchKeys: ["nombre", "marca", "modelo", "tipo", "numero_serie", "zona_nombre", "subzona_nombre", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -141,6 +165,7 @@ export const EPIS: ResourceConfig = {
     { name: "color", label: "Color", type: "enum", enumValues: colors },
     { name: "stock", label: "Stock", type: "integer", required: true }, stockMin,
     { name: "fecha_revision", label: "Próxima revisión", type: "date" },
+    precioField("Precio por unidad (€)"),
     center,
   ],
   columns: [
@@ -150,7 +175,7 @@ export const EPIS: ResourceConfig = {
     { key: "modelo", label: "Modelo", render: r => String(r.modelo ?? "—") },
     { key: "talla", label: "Talla", render: r => String(r.talla ?? "—") },
     { key: "color", label: "Color", render: r => r.color ? <><ColorSwatch color={String(r.color)} />{String(r.color)}</> : "—" },
-    { key: "stock", label: "Stock", align: "right", render: r => stockCell(r, "stock") }, centerCol,
+    { key: "stock", label: "Stock", align: "right", render: r => stockCell(r, "stock") }, precioCol, centerCol,
     { key: "fecha_revision", label: "Próxima revisión", render: revisionBadge },
     { key: "descripcion", label: "Descripción", render: r => String(r.descripcion ?? "—") },
   ],
@@ -171,6 +196,7 @@ export const ROPA: ResourceConfig = {
     { name: "descripcion", label: "Descripción", type: "textarea" },
     { name: "color", label: "Color", type: "enum", enumValues: colors },
     { name: "stock", label: "Stock", type: "integer", required: true }, stockMin,
+    precioField("Precio por unidad (€)"),
     center,
   ],
   columns: [
@@ -184,7 +210,7 @@ export const ROPA: ResourceConfig = {
     { key: "alta_visibilidad", label: "A. visibilidad", render: r => Number(r.alta_visibilidad) === 1 ? <span className="badge warn">Sí</span> : <span className="badge muted">No</span> },
     { key: "manga_larga", label: "Manga larga", render: r => Number(r.manga_larga) === 1 ? <span className="badge info">Sí</span> : <span className="badge muted">No</span> },
     { key: "color", label: "Color", render: r => r.color ? <><ColorSwatch color={String(r.color)} />{String(r.color)}</> : "—" },
-    { key: "stock", label: "Stock", align: "right", render: r => stockCell(r, "stock") }, centerCol,
+    { key: "stock", label: "Stock", align: "right", render: r => stockCell(r, "stock") }, precioCol, centerCol,
   ],
 };
 export const TIPOS: ResourceConfig = {
@@ -254,7 +280,7 @@ export const MOVIMIENTOS: ResourceConfig = {
   ],
 };
 export function ResourcePage({ config, user }: { config: ResourceConfig; user: { rol: string } }) {
-  const [items, setItems] = useState<Row[]>([]), [centros, setCentros] = useState<Row[]>([]), [users, setUsers] = useState<Row[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [q, setQ] = useState(""), [centroId, setCentroId] = useState("all"), [tipoEqId, setTipoEqId] = useState("all"), [editing, setEditing] = useState<{ mode: "create" | "edit"; values: Row } | null>(null), [formError, setFormError] = useState<string | null>(null), [saving, setSaving] = useState(false), [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null), [linkRows, setLinkRows] = useState<Record<string, Row[]>>({}), [formCentrosSel, setFormCentrosSel] = useState<Set<number>>(() => new Set()), [qrRow, setQrRow] = useState<Row | null>(null);
+  const [items, setItems] = useState<Row[]>([]), [centros, setCentros] = useState<Row[]>([]), [users, setUsers] = useState<Row[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [q, setQ] = useState(""), [centroId, setCentroId] = useState("all"), [tipoEqId, setTipoEqId] = useState("all"), [origenId, setOrigenId] = useState("all"), [editing, setEditing] = useState<{ mode: "create" | "edit"; values: Row } | null>(null), [formError, setFormError] = useState<string | null>(null), [saving, setSaving] = useState(false), [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null), [linkRows, setLinkRows] = useState<Record<string, Row[]>>({}), [formCentrosSel, setFormCentrosSel] = useState<Set<number>>(() => new Set()), [qrRow, setQrRow] = useState<Row | null>(null);
   // Campos que han fallado al validar: se sombrean en rojo dentro del formulario.
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   // Filas renderizadas: se muestran de 50 en 50 para no bloquear la tabla.
@@ -262,7 +288,7 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
   const canCreate = !config.readOnlyPage && allow(user.rol, config.perms.create), canUpdate = !config.readOnlyPage && allow(user.rol, config.perms.update), canDelete = !config.readOnlyPage && allow(user.rol, config.perms.delete);
   const load = useCallback(async () => { setLoading(true); setError(null); try { setItems((await api.get<{ items: Row[] }>(config.endpoint)).items); } catch (e) { setError(e instanceof Error ? e.message : "Error cargando los datos"); } finally { setLoading(false); } }, [config.endpoint]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setLimite(50); }, [q, centroId, tipoEqId]);
+  useEffect(() => { setLimite(50); }, [q, centroId, tipoEqId, origenId]);
   useEffect(() => { if (config.centroFilter || config.formCentros || config.fields.some(f => f.name === "centro_id")) api.get<{ items: Row[] }>("/api/centros").then(r => setCentros(r.items)).catch(() => setCentros([])); }, [config]);
   useEffect(() => { if (config.fields.some(f => f.name === "usuario_id")) api.get<{ items: Row[] }>("/api/usuarios").then(r => setUsers(r.items)).catch(() => setUsers([])); }, [config]);
   useEffect(() => {
@@ -277,7 +303,14 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
       }
     }
   }, [config]);
-  const filtered = useMemo(() => { const needle = q.trim().toLowerCase(); return items.filter(row => (centroId === "all" || String(row.centro_id ?? "") === centroId) && (tipoEqId === "all" || String(row.tipo_equipo_id ?? "") === tipoEqId) && (!needle || config.searchKeys.some(k => String(row[k] ?? "").toLowerCase().includes(needle)))); }, [items, q, centroId, tipoEqId, config]);
+  const filtered = useMemo(() => { const needle = q.trim().toLowerCase(); return items.filter(row => (centroId === "all" || String(row.centro_id ?? "") === centroId) && (tipoEqId === "all" || String(row.tipo_equipo_id ?? "") === tipoEqId) && (origenId === "all" || String(row.origen ?? "") === origenId) && (!needle || config.searchKeys.some(k => String(row[k] ?? "").toLowerCase().includes(needle)))); }, [items, q, centroId, tipoEqId, origenId, config]);
+  // Totales al pie de la tabla (p. ej. los litros de los químicos filtrados).
+  const totales = useMemo(() => {
+    if (!config.totals?.length) return null;
+    const suma: Record<string, number> = {};
+    for (const t of config.totals) suma[t.key] = filtered.reduce((acc, row) => acc + Number(row[t.key] ?? 0), 0);
+    return suma;
+  }, [filtered, config.totals]);
   if (config.perms.read === "admin" && user.rol !== "admin") return <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden gestionar los usuarios.</p></div>;
   const fields: FieldDef[] = config.fields.map(f => {
     if (f.name === "centro_id") return { ...f, options: centros.map(c => ({ value: Number(c.id), label: String(c.nombre) })) };
@@ -316,8 +349,8 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
   const save = async () => { if (!editing) return; const esAdmin = editing.values.rol === "admin"; if (config.formCentros && !esAdmin && !formCentrosSel.size) { setFieldErrors(["__centros"]); setFormError("Asigna al menos un centro de trabajo al operario"); return; } const vacios = config.fields.filter(f => f.required && f.type !== "password" && (editing.values[f.name] === "" || editing.values[f.name] == null)).map(f => f.name); if (vacios.length) { setFieldErrors(vacios); setFormError("Revisa los campos marcados en rojo"); return; } setSaving(true); setFormError(null); setFieldErrors([]); const payload: Row = {}; for (const f of config.fields) { if (f.type === "image" && !(f.name in editing.values)) continue; let v = editing.values[f.name]; if (f.type === "number" || f.type === "integer") v = v === "" || v == null ? null : Number(String(v).replace(",", ".")); if (f.type === "boolean") v = v === true || v === 1 ? 1 : 0; payload[f.name] = v ?? null; } try { let userId = editing.mode === "edit" ? Number(editing.values.id) : 0; if (editing.mode === "create") { const r = await api.post<{ item?: Row }>(config.endpoint, payload); userId = Number(r?.item?.id ?? 0); } else await api.put(`${config.endpoint}/${String(editing.values.id)}`, payload); if (config.formCentros && userId > 0) await api.put(`${config.endpoint}/${userId}/centros`, { centros: esAdmin ? [] : [...formCentrosSel] }); setEditing(null); setToast({ message: "Cambios guardados", kind: "ok" }); await load(); } catch (e) { const msg = e instanceof Error ? e.message : "No se pudo guardar el registro"; setFormError(msg); setFieldErrors(camposConError(msg, etiquetasForm)); } finally { setSaving(false); } };
   const remove = async (row: Row) => { if (!window.confirm(`¿Eliminar "${String(row.nombre ?? row.username ?? row.id)}"? Esta acción no se puede deshacer.`)) return; try { await api.del(`${config.endpoint}/${String(row.id)}`); setToast({ message: "Registro eliminado", kind: "ok" }); await load(); } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo eliminar", kind: "error" }); } };
   const exportCsv = () => { const stamp = new Date().toISOString().slice(0, 10); downloadCsv(`${config.csvName}-${stamp}.csv`, config.columns.map(c => c.label), filtered.map(row => config.columns.map(c => c.csv ? c.csv(row) : String(row[c.key] ?? "")))); };
-  return <><div className="toolbar no-print"><input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar…" value={q} onChange={e => setQ(e.target.value)} />{(config.centroFilter || config.fields.some(f => f.name === "centro_id")) && <select className="input" style={{ maxWidth: 220 }} value={centroId} onChange={e => setCentroId(e.target.value)}><option value="all">Todos los centros</option>{centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}</select>}{config.tipoEquipoFilter && <select className="input" style={{ maxWidth: 200 }} value={tipoEqId} onChange={e => setTipoEqId(e.target.value)} aria-label="Filtrar por tipo de equipo"><option value="all">Todos los tipos</option>{(linkRows["tipo_equipo_id"] ?? []).map(t => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}</select>}<div className="spacer"/><button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>{canCreate && <button className="btn" onClick={openCreate}>＋ Nuevo registro</button>}</div>
-  <div className="card">{loading?<div className="loading">Cargando…</div>:error?<div className="empty">⚠️ {error}</div>:!filtered.length?<div className="empty"><span className="icon">📭</span><strong>No hay registros</strong><p>{q||centroId!=="all"||tipoEqId!=="all"?"Prueba con otra búsqueda u otro filtro.":"Pulsa «Nuevo registro» para añadir el primero."}</p></div>:<div className="table-scroll"><table><thead><tr>{config.columns.map(c=><th key={c.key} className={c.align==="right"?"right":""}>{c.label}</th>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction)&&<th className="right">Acciones</th>}</tr></thead><tbody>{filtered.slice(0, limite).map(row=><tr key={String(row.id)}>{config.columns.map(c=><td key={c.key} className={c.align==="right"?"right":""}>{c.render?c.render(row):String(row[c.key]??"—")}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction)&&<td className="right"><div className="row-actions">{config.extraAction&&<button className="btn secondary small" title={config.extraAction.title} onClick={()=>void config.extraAction!.run(row)}>{config.extraAction.icon} {config.extraAction.label}</button>}{config.qrTipo&&<button className="btn secondary small" onClick={()=>setQrRow(row)}>🏷️ QR</button>}{canUpdate&&<button className="btn secondary small" onClick={()=>openEdit(row)}>✏️ Editar</button>}{canDelete&&<button className="btn danger small" onClick={()=>void remove(row)}>🗑️ Borrar</button>}</div></td>}</tr>)}</tbody></table></div>}{filtered.length > limite && <div style={{ textAlign: "center", padding: "10px 0 2px" }}>
+  return <><div className="toolbar no-print"><input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar…" value={q} onChange={e => setQ(e.target.value)} />{(config.centroFilter || config.fields.some(f => f.name === "centro_id")) && <select className="input" style={{ maxWidth: 220 }} value={centroId} onChange={e => setCentroId(e.target.value)}><option value="all">Todos los centros</option>{centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}</select>}{config.tipoEquipoFilter && <select className="input" style={{ maxWidth: 200 }} value={tipoEqId} onChange={e => setTipoEqId(e.target.value)} aria-label="Filtrar por tipo de equipo"><option value="all">Todos los tipos</option>{(linkRows["tipo_equipo_id"] ?? []).map(t => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}</select>}{config.origenFilter && <select className="input" style={{ maxWidth: 190 }} value={origenId} onChange={e => setOrigenId(e.target.value)} aria-label="Filtrar por origen"><option value="all">Todo el origen</option>{ORIGEN_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}<div className="spacer"/>{user.rol !== "usuario" && <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>}{canCreate && <button className="btn" onClick={openCreate}>＋ Nuevo registro</button>}</div>
+  <div className="card">{loading?<div className="loading">Cargando…</div>:error?<div className="empty">⚠️ {error}</div>:!filtered.length?<div className="empty"><span className="icon">📭</span><strong>No hay registros</strong><p>{q||centroId!=="all"||tipoEqId!=="all"||origenId!=="all"?"Prueba con otra búsqueda u otro filtro.":"Pulsa «Nuevo registro» para añadir el primero."}</p></div>:<div className="table-scroll"><table><thead><tr>{config.columns.map(c=><th key={c.key} className={c.align==="right"?"right":""}>{c.label}</th>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction)&&<th className="right">Acciones</th>}</tr></thead><tbody>{filtered.slice(0, limite).map(row=><tr key={String(row.id)}>{config.columns.map(c=><td key={c.key} className={c.align==="right"?"right":""}>{c.render?c.render(row):String(row[c.key]??"—")}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction)&&<td className="right"><div className="row-actions">{config.extraAction&&<button className="btn secondary small" title={config.extraAction.title} onClick={()=>void config.extraAction!.run(row)}>{config.extraAction.icon} {config.extraAction.label}</button>}{config.qrTipo&&<button className="btn secondary small" onClick={()=>setQrRow(row)}>🏷️ QR</button>}{canUpdate&&<button className="btn secondary small" onClick={()=>openEdit(row)}>✏️ Editar</button>}{canDelete&&<button className="btn danger small" onClick={()=>void remove(row)}>🗑️ Borrar</button>}</div></td>}</tr>)}</tbody>{totales&&<tfoot><tr>{config.columns.map((c,i)=><td key={c.key} className={c.align==="right"?"right":""}>{i===0?<strong>Totales · {formatNum(filtered.length)}</strong>:totales[c.key]!==undefined?formatNum(totales[c.key],2):null}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction)&&<td/>}</tr></tfoot>}</table></div>}{filtered.length > limite && <div style={{ textAlign: "center", padding: "10px 0 2px" }}>
     <button className="btn secondary" onClick={() => setLimite(l => l + 100)}>⬇️ Mostrar más · quedan {formatNum(filtered.length - limite)} de {formatNum(filtered.length)}</button>
   </div>}</div>
   <p className="no-print" style={{color:"var(--muted)",margin:0}}>{filtered.length} de {items.length} registros · {config.subtitle}</p>{qrRow&&config.qrTipo&&<QrModal tipo={config.qrTipo} id={Number(qrRow.id)} title={String(qrRow.nombre ?? qrRow.prenda ?? qrRow.numero_lote ?? qrRow.id)} onClose={()=>setQrRow(null)}/>}

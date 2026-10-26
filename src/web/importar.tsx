@@ -8,9 +8,9 @@ const MAX_ROWS = 500;
 
 const RECURSOS = [
   { key: "quimicos", endpoint: "/api/quimicos", label: "Productos químicos",
-    columns: ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_caducidad", "stock_minimo", "centro", "notas"] },
+    columns: ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_produccion", "fecha_caducidad", "stock_minimo", "origen", "centro", "notas"] },
   { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza",
-    columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "centro", "notas"] },
+    columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "origen", "centro", "notas"] },
   { key: "maquinaria", endpoint: "/api/maquinaria", label: "Maquinaria",
     columns: ["nombre", "tipo", "marca", "modelo", "numero_serie", "centro", "zona", "subzona", "notas"] },
   { key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo",
@@ -79,9 +79,10 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       const out: Record<string, unknown> = { codigo, nombre };
       if (key === "quimicos") {
         if (!g("numero_lote")) return fallo(fila, "falta la columna 'numero_lote'");
-        if (!g("fecha_caducidad")) return fallo(fila, "falta la columna 'fecha_caducidad'");
         out.numero_lote = g("numero_lote");
-        out.fecha_caducidad = g("fecha_caducidad");
+        // Ambas fechas son opcionales: la de producción es solo informativa.
+        out.fecha_produccion = g("fecha_produccion") ?? null;
+        out.fecha_caducidad = g("fecha_caducidad") ?? null;
         out.litros_por_garrafa = id("litros_por_garrafa") ?? 0;
         out.num_garrafas = id("num_garrafas") ?? 0;
       } else {
@@ -91,6 +92,9 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       }
       out.marca = g("marca") ?? null;
       out.stock_minimo = id("stock_minimo") ?? 0;
+      // Origen del consumible: fábrica o empresa (vacío → el valor por defecto).
+      const org = (g("origen") ?? "").toLowerCase();
+      out.origen = org.startsWith("emp") ? "empresa" : org.startsWith("fab") ? "fabrica" : null;
       out.centro_id = centro();
       out.notas = g("notas") ?? null;
       if (out.centro_id === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
@@ -216,8 +220,8 @@ export function ImportarPage() {
 
   const plantilla = () => {
     const ejemplos: Record<string, string[]> = {
-      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2027-06-30", "3", "Planta Norte", ""],
-      material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "Planta Norte", ""],
+      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2027-06-30", "3", "fabrica", "Planta Norte", ""],
+      material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "fabrica", "Planta Norte", ""],
       maquinaria: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "F80-0012", "Planta Norte", "Lavado", "Paletización", ""],
       ropa_trabajo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "Planta Norte"],
       epis: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "Planta Norte"],

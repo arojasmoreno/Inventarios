@@ -7,11 +7,28 @@ import { seedHistorial } from "./maquinaria-historial";
 export const COLORES = ["Rojo", "Azul", "Verde", "Amarillo", "Blanco", "Negro", "Naranja", "Morado", "Gris", "Marrón", "Otro"];
 export const TIPOS_MAQUINARIA = ["Fregadora", "Aspiradora", "Monobrocha", "Hidrolavadora", "Barredora", "Robot", "Carro de limpieza", "Otro"];
 export const ROLES = ["admin", "admin_centros", "usuario"];
+// Origen del consumible (químicos y material de limpieza): de fábrica o de la
+// empresa gestora. Solo se admiten estos dos valores.
+export const ORIGENES = ["fabrica", "empresa"] as const;
 const centro = { name: "centro_id", label: "Centro", type: "integer" as const, required: false, placeholder: "Sin centro asignado" };
 const notas = { name: "notas", label: "Notas", type: "textarea" as const, required: false, maxLength: 2000 };
 // Foto en base64 (el cliente la recimensiona antes de enviarla).
 const foto = { name: "foto", label: "Foto", type: "text" as const, required: false, writeOnly: true, maxLength: 1500000 };
 const stockMinimo = { name: "stock_minimo", label: "Stock mínimo (alerta)", type: "integer" as const, required: false, min: 0 };
+// Precio unitario opcional: alimenta el «valor del inventario» de los
+// informes. Los productos sin precio conocido quedan en NULL y no suman.
+const precio = (label: string) => ({ name: "precio", label, type: "number" as const, required: false, min: 0, placeholder: "Opcional" });
+const origen = { name: "origen", label: "Origen", type: "enum" as const, required: false, enumValues: [...ORIGENES] };
+// El origen siempre queda con uno de los dos valores admitidos: si no viene en
+// el payload (importaciones antiguas) se conserva el actual o se asume fábrica.
+const normalizaOrigen = async (_db: unknown, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  const raw = typeof data.origen === "string" ? data.origen.trim().toLowerCase() : "";
+  const esOrigen = (v: string): v is (typeof ORIGENES)[number] => (ORIGENES as readonly string[]).includes(v);
+  data.origen = esOrigen(raw) ? raw
+    : mode === "update" && typeof existing?.origen === "string" && esOrigen(existing.origen) ? existing.origen
+    : "fabrica";
+  return data;
+};
 
 export const quimicosSpec: CrudSpec = {
   table: "quimicos", orderBy: "id", refCentro: true, computed: "t.litros_por_garrafa * t.num_garrafas AS total_litros",
@@ -23,9 +40,13 @@ export const quimicosSpec: CrudSpec = {
     { name: "numero_lote", label: "Nº de lote", type: "text", required: true, maxLength: 60 },
     { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true, min: 0 },
     { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true, min: 0 },
-    { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: true },
-    stockMinimo, centro, notas, foto,
+    // Ambas fechas son opcionales: la de producción es solo informativa y no
+    // interviene en ningún cálculo (los avisos usan la de caducidad).
+    { name: "fecha_produccion", label: "Fecha de producción", type: "date", required: false },
+    { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: false },
+    stockMinimo, precio("Precio por garrafa (€)"), origen, centro, notas, foto,
   ],
+  beforeWrite: normalizaOrigen,
 };
 export const materialSpec: CrudSpec = {
   table: "material_limpieza", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
@@ -35,8 +56,9 @@ export const materialSpec: CrudSpec = {
     { name: "nombre", label: "Material", type: "text", required: true, maxLength: 200 },
     { name: "color", label: "Color", type: "enum", required: true, enumValues: COLORES },
     { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true, min: 0 },
-    stockMinimo, centro, notas, foto,
+    stockMinimo, precio("Precio por unidad (€)"), origen, centro, notas, foto,
   ],
+  beforeWrite: normalizaOrigen,
 };
 // Máquinas: solo sus datos (marca, modelo, nº de serie, tipo) y su ubicación
 // (centro → zona → subzona). Sin cantidad y sin estado editable: el estado es
@@ -174,7 +196,7 @@ export const episSpec: CrudSpec = {
     { name: "descripcion", label: "Descripción", type: "textarea", required: false, maxLength: 2000 },
     { name: "color", label: "Color", type: "enum", required: false, enumValues: COLORES },
     { name: "stock", label: "Stock", type: "integer", required: true, min: 0 },
-    stockMinimo,
+    stockMinimo, precio("Precio por unidad (€)"),
     { name: "fecha_revision", label: "Próxima revisión", type: "date", required: false },
     centro,
   ],
@@ -208,7 +230,7 @@ export const ropaSpec: CrudSpec = {
     { name: "descripcion", label: "Descripción", type: "textarea", required: false, maxLength: 2000 },
     { name: "color", label: "Color", type: "enum", required: false, enumValues: COLORES },
     { name: "stock", label: "Stock", type: "integer", required: true, min: 0 },
-    stockMinimo, centro,
+    stockMinimo, precio("Precio por unidad (€)"), centro,
   ],
   beforeWrite: async (db, data) => {
     if (data.tipo_equipo_id !== undefined && data.tipo_equipo_id !== null) {

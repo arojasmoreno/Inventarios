@@ -5,16 +5,16 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS centros (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, direccion TEXT, ciudad TEXT, responsable TEXT, telefono TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, email TEXT, password_hash TEXT NOT NULL, salt TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'usuario', activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, expires_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT NOT NULL, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', cantidad INTEGER NOT NULL DEFAULT 1, foto TEXT, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL, subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Códigos de acceso por correo (login sin contraseña).
   `CREATE TABLE IF NOT EXISTS login_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Control de intentos fallidos de login/códigos (anti fuerza bruta).
   `CREATE TABLE IF NOT EXISTS login_fallos (clave TEXT PRIMARY KEY, intentos INTEGER NOT NULL DEFAULT 0, primer_intento TEXT NOT NULL DEFAULT (datetime('now')), bloqueado_hasta TEXT)`,
-  `CREATE TABLE IF NOT EXISTS epis (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, marca TEXT, modelo TEXT, talla TEXT, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, fecha_revision TEXT, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  `CREATE TABLE IF NOT EXISTS ropa_trabajo (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, prenda TEXT NOT NULL, marca TEXT, fabricante TEXT, modelo TEXT, talla TEXT, alta_visibilidad INTEGER NOT NULL DEFAULT 0, manga_larga INTEGER NOT NULL DEFAULT 0, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS epis (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, marca TEXT, modelo TEXT, talla TEXT, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, fecha_revision TEXT, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS ropa_trabajo (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, prenda TEXT NOT NULL, marca TEXT, fabricante TEXT, modelo TEXT, talla TEXT, alta_visibilidad INTEGER NOT NULL DEFAULT 0, manga_larga INTEGER NOT NULL DEFAULT 0, descripcion TEXT, color TEXT, stock INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, centro_id INTEGER REFERENCES centros(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS tallas_operarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, prenda TEXT, talla TEXT NOT NULL, fecha TEXT NOT NULL DEFAULT (date('now')), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS empresa (id INTEGER PRIMARY KEY CHECK (id = 1), nombre TEXT, logo TEXT, updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER REFERENCES usuarios(id), accion TEXT NOT NULL, tabla TEXT, registro_id INTEGER, estacion_id INTEGER, descripcion TEXT, cantidad INTEGER, motivo TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
@@ -51,7 +51,13 @@ const SCHEMA: string[] = [
 // Migraciones para tablas creadas antes de añadir estas columnas.
 const ALTERS: Array<[string, string]> = [
   ["quimicos", "stock_minimo INTEGER NOT NULL DEFAULT 0"], ["quimicos", "foto TEXT"],
+  // Valor del inventario: precio unitario opcional (NULL si no se conoce).
+  ["quimicos", "precio REAL"], ["material_limpieza", "precio REAL"],
+  ["epis", "precio REAL"], ["ropa_trabajo", "precio REAL"],
   ["material_limpieza", "stock_minimo INTEGER NOT NULL DEFAULT 0"], ["material_limpieza", "foto TEXT"],
+  // Origen del consumible: si es de fábrica («fabrica») o de la empresa gestora («empresa»).
+  ["quimicos", "origen TEXT NOT NULL DEFAULT 'fabrica'"],
+  ["material_limpieza", "origen TEXT NOT NULL DEFAULT 'fabrica'"],
   ["maquinaria", "foto TEXT"],
   ["epis", "stock_minimo INTEGER NOT NULL DEFAULT 0"], ["epis", "fecha_revision TEXT"],
   ["ropa_trabajo", "talla TEXT"], ["ropa_trabajo", "stock_minimo INTEGER NOT NULL DEFAULT 0"],
@@ -95,6 +101,24 @@ async function migrate(db: D1Database): Promise<void> {
     const col = ddl.split(" ")[0];
     const info = await db.prepare(`PRAGMA table_info(${table})`).all();
     if (!info.results.some((r) => r.name === col)) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${ddl}`).run();
+  }
+  // En los químicos la fecha de caducidad pasa a ser opcional y se añade la
+  // fecha de producción (solo informativa). SQLite no permite quitarle NOT NULL
+  // a una columna: se reconstruye la tabla conservando todos sus datos.
+  const qInfo = await db.prepare("PRAGMA table_info(quimicos)").all();
+  const qCols = qInfo.results.map((r) => String(r.name));
+  const caducidadObligatoria = qInfo.results.some((r) => r.name === "fecha_caducidad" && Number(r.notnull) === 1);
+  if (qCols.length > 0 && (caducidadObligatoria || !qCols.includes("fecha_produccion"))) {
+    // Limpia los restos de un intento anterior por si el proceso se hubiera interrumpido.
+    await db.prepare("DROP TABLE IF EXISTS quimicos_new").run();
+    const destino = ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_caducidad", "fecha_produccion", "stock_minimo", "precio", "origen", "foto", "centro_id", "notas", "created_at", "updated_at"];
+    // Se conservan el id (lo referencian estaciones y movimientos) y todas las
+    // columnas conocidas que ya existan en la tabla antigua.
+    const comunes = ["id", ...qCols.filter((c) => c !== "id" && destino.includes(c))];
+    await db.prepare(`CREATE TABLE quimicos_new (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`).run();
+    await db.prepare(`INSERT INTO quimicos_new (${comunes.join(", ")}) SELECT ${comunes.join(", ")} FROM quimicos`).run();
+    await db.prepare("DROP TABLE quimicos").run();
+    await db.prepare("ALTER TABLE quimicos_new RENAME TO quimicos").run();
   }
   // Se elimina el coste de los consumibles: solo interesa la cantidad consumida.
   for (const [table, column] of [
