@@ -6,21 +6,28 @@ type Row = Record<string, unknown>;
 
 // Inventario de productos químicos por PRODUCTO y LOTES.
 //
-// Cada registro de la base de datos es un lote; aquí se agrupan por producto
-// (nombre + marca) para ver el stock sumado y, desplegando la fila, los lotes
-// que están en uso. Desde esta pantalla se dan de alta las entradas de
-// producto, se registran salidas que consumen los lotes que antes caducan
-// (FEFO) y se rellena la hoja de recuento que ajusta y retira lotes.
+// La ficha de un producto se da de alta en la pestaña «Químicos»; cada registro
+// de esta pestaña es una ENTRADA de un lote de ese producto. Los lotes se
+// agrupan por producto (nombre + marca) para ver el stock sumado y, desplegando
+// la fila, los lotes que están en uso. Desde aquí también se registran salidas
+// que consumen los lotes que antes caducan (FEFO) y se rellena la hoja de
+// recuento que ajusta y retira lotes.
 
 const ORIGEN_OPTS = [{ value: "fabrica", label: "Fábrica" }, { value: "empresa", label: "Empresa" }];
 
+// Etiquetas de los campos del formulario de entrada, para localizarlos en rojo
+// cuando el backend devuelve un error.
 const ETIQ_ENTRADA: Array<{ clave: string; etiqueta: string }> = [
-  { clave: "nombre", etiqueta: "Producto" }, { clave: "marca", etiqueta: "Marca" },
-  { clave: "codigo", etiqueta: "Código" }, { clave: "numero_lote", etiqueta: "Nº de lote" },
-  { clave: "litros_por_garrafa", etiqueta: "Litros por garrafa (L)" }, { clave: "num_garrafas", etiqueta: "Nº de garrafas" },
-  { clave: "fecha_entrada", etiqueta: "Fecha de entrada" }, { clave: "fecha_produccion", etiqueta: "Fecha de producción" },
-  { clave: "fecha_caducidad", etiqueta: "Fecha de caducidad" }, { clave: "precio", etiqueta: "Precio por garrafa (€)" },
-  { clave: "origen", etiqueta: "Origen" }, { clave: "centro_id", etiqueta: "Centro" }, { clave: "notas", etiqueta: "Notas" },
+  { clave: "claveProd", etiqueta: "Producto químico" },
+  { clave: "numero_lote", etiqueta: "Nº de lote" },
+  { clave: "litros", etiqueta: "Litros de producto" },
+  { clave: "fecha_entrada", etiqueta: "Fecha de entrada" },
+  { clave: "fecha_produccion", etiqueta: "Fecha de fabricación" },
+  { clave: "fecha_caducidad", etiqueta: "Fecha de caducidad" },
+  { clave: "precio", etiqueta: "Precio por garrafa (€)" },
+  { clave: "origen", etiqueta: "Origen" },
+  { clave: "litros_por_garrafa", etiqueta: "Litros por garrafa (L)" },
+  { clave: "notas", etiqueta: "Notas" },
 ];
 
 const num = (v: unknown): number => { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; };
@@ -34,6 +41,8 @@ const norm = (v: unknown): string => String(v ?? "").trim().toLowerCase().replac
 const claveDe = (r: Row): string => `${norm(r.nombre)}|${norm(r.marca)}`;
 const litrosDe = (r: Row): number => num(r.litros_por_garrafa) * num(r.num_garrafas);
 const enUso = (r: Row): boolean => num(r.num_garrafas) > 0;
+// Fila de ficha de producto (alta desde «Químicos»): todavía no tiene lote.
+const sinLote = (r: Row): boolean => String(r.numero_lote ?? "").trim() === "";
 const fechaEntrada = (r: Row): string => (typeof r.fecha_entrada === "string" && r.fecha_entrada ? r.fecha_entrada : String(r.created_at ?? "").slice(0, 10));
 // Consumo FEFO: primero caduca el lote que antes venía, después manda la fecha
 // de entrada y, en último término, el orden de alta.
@@ -110,8 +119,8 @@ function Caducidad({ fecha, soloTexto = false }: { fecha: unknown; soloTexto?: b
   return cls ? <span className={`badge ${cls}`}>{texto}</span> : <>{texto}</>;
 }
 
-/** Selector de producto (agrupado) reutilizado por los tres formularios. */
-function SelectorProducto({ grupos, valor, onChange, etiqueta = "Producto", soloConStock = false }: {
+/** Selector de producto (agrupado) reutilizado por los formularios. */
+function SelectorProducto({ grupos, valor, onChange, etiqueta = "Producto químico", soloConStock = false }: {
   grupos: Grupo[]; valor: string; onChange: (clave: string) => void; etiqueta?: string; soloConStock?: boolean;
 }) {
   const opciones = soloConStock ? grupos.filter((g) => g.uso > 0) : grupos;
@@ -119,7 +128,7 @@ function SelectorProducto({ grupos, valor, onChange, etiqueta = "Producto", solo
   return <div className="field">
     <label htmlFor={id}>{etiqueta}<span className="req">*</span></label>
     <select id={id} className="input" value={valor} onChange={(e) => onChange(e.target.value)}>
-      <option value="">— Producto nuevo —</option>
+      <option value="">— Selecciona un producto —</option>
       {opciones.map((g) => <option key={g.clave} value={g.clave}>
         {g.nombre}{g.marca ? ` · ${g.marca}` : ""} ({g.uso} lote{g.uso === 1 ? "" : "s"})
       </option>)}
@@ -128,108 +137,118 @@ function SelectorProducto({ grupos, valor, onChange, etiqueta = "Producto", solo
   </div>;
 }
 
-/** Entrada de producto: alta de un lote nuevo o suma de garrafas a uno existente. */
-function EntradaModal({ grupos, centros, onClose, onSaved }: {
-  grupos: Grupo[]; centros: Row[]; onClose: () => void; onSaved: (mensaje: string) => void;
+/** Entrada de producto: alta de un lote nuevo de un producto ya dado de alta.
+ *
+ *  Campos obligatorios: producto químico, nº de lote, litros de producto, fecha
+ *  de entrada y origen. Opcionales: fecha de fabricación, fecha de caducidad,
+ *  precio y notas. Los datos del producto (código, marca, litros por garrafa,
+ *  stock mínimo y centro) se copian de su ficha.
+ */
+function EntradaModal({ grupos, onClose, onSaved }: {
+  grupos: Grupo[]; onClose: () => void; onSaved: (mensaje: string) => void;
 }) {
   const vacio: Row = {
-    nombre: "", marca: "", codigo: "", numero_lote: "", litros_por_garrafa: "", num_garrafas: "1",
-    fecha_entrada: hoyISO(), fecha_produccion: "", fecha_caducidad: "", precio: "", origen: "fabrica",
-    centro_id: null, notas: "",
+    claveProd: "", numero_lote: "", litros: "", fecha_entrada: hoyISO(),
+    fecha_produccion: "", fecha_caducidad: "", precio: "", origen: "fabrica", notas: "",
   };
-  const [claveProd, setClaveProd] = useState("");
-  const [loteId, setLoteId] = useState("");
   const [vals, setVals] = useState<Row>(vacio);
   const [formError, setFormError] = useState<string | null>(null);
   const [campoErr, setCampoErr] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const grupo = grupos.find((g) => g.clave === claveProd) ?? null;
-  const lote = grupo?.lotes.find((l) => String(l.id) === loteId) ?? null;
-  const esAcumulo = Boolean(lote);
+  const grupo = grupos.find((g) => g.clave === String(vals.claveProd ?? "")) ?? null;
+  // Ficha del producto elegido: si todavía no tiene fila propia, se toma el
+  // primer lote (los datos del producto están copiados en cada uno).
+  const ficha = grupo ? (grupo.lotes.find(sinLote) ?? grupo.lotes[0]) : null;
+  const litrosPorGarrafa = ficha ? num(ficha.litros_por_garrafa) : 0;
 
   const set = (name: string, v: unknown): void => {
     setCampoErr((prev) => prev.filter((k) => k !== name));
+    setFormError(null);
     setVals((prev) => ({ ...prev, [name]: v }));
-  };
-  const elegirProducto = (clave: string): void => {
-    setClaveProd(clave); setLoteId(""); setCampoErr([]);
-    const g = grupos.find((x) => x.clave === clave);
-    if (!g) { setVals({ ...vacio }); return; }
-    const base = g.lotes.find(enUso) ?? g.lotes[0];
-    setVals({
-      ...vacio,
-      nombre: g.nombre, marca: g.marca,
-      litros_por_garrafa: base ? String(num(base.litros_por_garrafa)) : "",
-      origen: String(base?.origen ?? "fabrica"),
-      centro_id: (base?.centro_id ?? null) as number | null,
-      fecha_entrada: hoyISO(),
-    });
   };
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    const obligatorios = ["nombre", "num_garrafas", ...(esAcumulo ? [] : ["numero_lote", "litros_por_garrafa"])];
+    const obligatorios = ["claveProd", "numero_lote", "litros", "fecha_entrada", "origen"];
     const vacios = obligatorios.filter((k) => vals[k] === "" || vals[k] == null);
-    if (vacios.length || num(vals.num_garrafas) < 1) {
-      setCampoErr([...vacios, ...(num(vals.num_garrafas) < 1 ? ["num_garrafas"] : [])]);
-      setFormError(vacios.length ? "Revisa los campos marcados en rojo" : "Las garrafas recibidas deben ser 1 o más");
+    if (vacios.length) {
+      setCampoErr(vacios);
+      setFormError("Revisa los campos marcados en rojo");
+      return;
+    }
+    const litros = Number(String(vals.litros).replace(",", "."));
+    if (!Number.isFinite(litros) || litros <= 0) {
+      setCampoErr(["litros"]);
+      setFormError("Los litros de producto deben ser mayores que 0");
+      return;
+    }
+    if (!grupo || !ficha) {
+      setCampoErr(["claveProd"]);
+      setFormError("Elige el producto químico al que pertenece este lote");
+      return;
+    }
+    if (litrosPorGarrafa <= 0) {
+      setFormError(`«${grupo.nombre}» no tiene litros por garrafa: edítalo en la pestaña «Químicos».`);
+      return;
+    }
+    const precio = vals.precio === "" || vals.precio == null ? null : Number(String(vals.precio).replace(",", "."));
+    if (precio !== null && (!Number.isFinite(precio) || precio < 0)) {
+      setCampoErr(["precio"]);
+      setFormError("El precio debe ser un número igual o mayor que 0");
       return;
     }
     setBusy(true); setFormError(null); setCampoErr([]);
     try {
-      const r = await api.post<{ mensaje?: string }>("/api/inventario/entrada", { ...vals, quimico_id: lote ? num(lote.id) : null });
+      const r = await api.post<{ mensaje?: string }>("/api/inventario/entrada", {
+        // Datos de la ficha del producto (el backend los copia al lote).
+        codigo: ficha.codigo ?? null,
+        marca: ficha.marca ?? null,
+        nombre: grupo.nombre,
+        centro_id: ficha.centro_id ?? null,
+        stock_minimo: ficha.stock_minimo ?? 0,
+        litros_por_garrafa: litrosPorGarrafa,
+        // Datos del lote que se registra.
+        numero_lote: String(vals.numero_lote).trim(),
+        litros,
+        fecha_entrada: vals.fecha_entrada,
+        fecha_produccion: vals.fecha_produccion || null,
+        fecha_caducidad: vals.fecha_caducidad || null,
+        precio,
+        origen: vals.origen,
+        notas: String(vals.notas ?? "").trim() || null,
+      });
       onSaved(r.mensaje ?? "Entrada registrada");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "No se pudo registrar la entrada";
-      setFormError(msg); setCampoErr(camposConError(msg, ETIQ_ENTRADA));
+      setFormError(msg);
+      setCampoErr(camposConError(msg, ETIQ_ENTRADA));
     } finally { setBusy(false); }
   };
 
   const campos: FieldDef[] = [
-    { name: "codigo", label: "Código", type: "text", help: "Opcional: déjalo en blanco para los lotes siguientes." },
-    { name: "numero_lote", label: "Nº de lote", type: "text", required: !esAcumulo, help: esAcumulo ? undefined : "Cada garrafa nueva puede traer un lote distinto." },
-    { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: !esAcumulo },
-    { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true, help: "Garrafas que llegan en esta entrada." },
-    { name: "fecha_entrada", label: "Fecha de entrada", type: "date", required: !esAcumulo },
-    { name: "fecha_produccion", label: "Fecha de producción", type: "date" },
-    { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", help: "Deja el campo en blanco si el producto no caduca." },
-    { name: "precio", label: "Precio por garrafa (€)", type: "number" },
+    { name: "numero_lote", label: "Nº de lote", type: "text", required: true, placeholder: "Ej. L-2026-001" },
+    { name: "litros", label: "Litros de producto", type: "number", required: true, help: litrosPorGarrafa > 0 ? `Se convierten en garrafas de ${fmt(litrosPorGarrafa, 2)} L.` : "Elige el producto para ver su litros por garrafa." },
+    { name: "fecha_entrada", label: "Fecha de entrada", type: "date", required: true, help: "Recepción en almacén: ordena el consumo por caducidad (FEFO)." },
+    { name: "fecha_produccion", label: "Fecha de fabricación", type: "date", help: "Opcional: solo informativa, no entra en ningún cálculo." },
+    { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", help: "Opcional: déjalo en blanco si el producto no caduca." },
+    { name: "precio", label: "Precio por garrafa (€)", type: "number", help: "Opcional: déjalo en blanco si no conoces el precio." },
     { name: "origen", label: "Origen", type: "select", required: true, options: ORIGEN_OPTS },
-    { name: "centro_id", label: "Centro", type: "select", options: centros.map((c) => ({ value: Number(c.id), label: String(c.nombre) })) },
     { name: "notas", label: "Notas", type: "textarea" },
   ];
-  // Al sumar garrafas a un lote existente solo cambian la cantidad y las notas:
-  // el resto de datos (lote, fechas, origen…) son los del lote y no se tocan.
-  const visibles = esAcumulo ? campos.filter((f) => f.name === "num_garrafas" || f.name === "notas") : campos;
 
-  return <Modal title="Entrada de producto químico" subtitle="Alta de un lote nuevo o reposición de un lote existente" onClose={onClose}>
+  return <Modal title="Entrada de producto químico" subtitle="Alta de un lote de un producto ya dado de alta en «Químicos»" onClose={onClose}>
     <form onSubmit={submit}>
       {formError && <div className="form-error">{formError}</div>}
       <div className="form-grid">
-        <div><SelectorProducto grupos={grupos} valor={claveProd} onChange={elegirProducto} /></div>
-        <div><div className={"field" + (campoErr.includes("lote") ? " error" : "")}>
-          <label htmlFor="en-lote">Lote</label>
-          <select id="en-lote" className="input" value={loteId} onChange={(e) => { setLoteId(e.target.value); setCampoErr([]); }}>
-            <option value="">— Lote nuevo —</option>
-            {(grupo?.lotes ?? []).map((l) => <option key={String(l.id)} value={String(l.id)}>
-              {String(l.numero_lote)} · {fmt(l.num_garrafas)} g · {fmt(litrosDe(l))} L{l.fecha_caducidad ? ` · caduca ${formatFecha(l.fecha_caducidad)}` : ""}
-            </option>)}
-          </select>
-          <small>{grupo ? "Elige un lote para sumarle garrafas o déjalo en «Lote nuevo»." : "Primero elige el producto."}</small>
-        </div></div>
-        {esAcumulo && <div className="full"><div className="banner">Se sumarán las garrafas al lote <strong>{String(lote?.numero_lote ?? "")}</strong> de «{String(lote?.nombre ?? "")}» y sus fechas se mantienen.</div></div>}
-        {!esAcumulo && <>
-          <div><Field def={{ name: "nombre", label: "Producto", type: "text", required: true }} value={vals.nombre} onChange={(v) => set("nombre", v)} error={campoErr.includes("nombre")} /></div>
-          <div><Field def={{ name: "marca", label: "Marca", type: "text" }} value={vals.marca} onChange={(v) => set("marca", v)} error={campoErr.includes("marca")} /></div>
-        </>}
-        {visibles.map((f) => <div key={f.name} className={f.type === "textarea" ? "full" : ""}>
+        <div><SelectorProducto grupos={grupos} valor={String(vals.claveProd ?? "")} onChange={(v) => set("claveProd", v)} /></div>
+        {campos.map((f) => <div key={f.name} className={f.type === "textarea" ? "full" : ""}>
           <Field def={f} value={vals[f.name]} onChange={(v) => set(f.name, v)} error={campoErr.includes(f.name)} />
         </div>)}
       </div>
       <div className="modal-footer">
         <button type="button" className="btn secondary" onClick={onClose}>Cancelar</button>
-        <button className="btn" disabled={busy}>{busy ? "Registrando…" : esAcumulo ? "Sumar garrafas" : "Registrar entrada"}</button>
+        <button className="btn" disabled={busy}>{busy ? "Registrando…" : "Registrar entrada"}</button>
       </div>
     </form>
   </Modal>;
@@ -268,7 +287,7 @@ function SalidaModal({ grupos, onClose, onSaved }: { grupos: Grupo[]; onClose: (
     <div>
       {formError && <div className="form-error">{formError}</div>}
       <div className="form-grid">
-        <div><SelectorProducto grupos={grupos} valor={claveProd} onChange={(v) => { setClaveProd(v); setFormError(null); }} etiqueta="Producto" soloConStock /></div>
+        <div><SelectorProducto grupos={grupos} valor={claveProd} onChange={(v) => { setClaveProd(v); setFormError(null); }} soloConStock /></div>
         <div className="field">
           <label htmlFor="sa-unidad">Unidad</label>
           <div className="chips">
@@ -439,10 +458,15 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // Todos los productos (fichas incluidas): alimenta los selectores de los
+  // formularios de entrada y salida.
   const gruposTodos = useMemo(() => agrupar(items), [items]);
+  // Solo las filas con lote: la tabla de inventario no muestra las fichas de
+  // producto (que todavía no tienen stock).
   const filtrados = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return items.filter((l) => (centroId === "all" || String(l.centro_id ?? "") === centroId)
+    return items.filter((l) => !sinLote(l)
+      && (centroId === "all" || String(l.centro_id ?? "") === centroId)
       && (mostrarRetirados || enUso(l))
       && (!needle || [l.nombre, l.marca, l.numero_lote, l.codigo].some((k) => String(k ?? "").toLowerCase().includes(needle))));
   }, [items, q, centroId, mostrarRetirados]);
@@ -459,7 +483,7 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
   const guardado = (mensaje: string): void => { setModal(null); setToast({ message: mensaje, kind: "ok" }); void load(); };
   const exportCsv = (): void => {
     downloadCsv(`inventario-quimicos-${hoyISO()}.csv`,
-      ["Producto", "Marca", "Lote", "Estado", "Centro", "L/garrafa", "Garrafas", "Total litros", "Entrada", "Producción", "Caducidad", "Origen", "Precio (€)"],
+      ["Producto", "Marca", "Lote", "Estado", "Centro", "L/garrafa", "Garrafas", "Total litros", "Entrada", "Fabricación", "Caducidad", "Origen", "Precio (€)"],
       filtrados.slice().sort(porProducto).map((l) => [
         String(l.nombre ?? ""), String(l.marca ?? ""), String(l.numero_lote ?? ""),
         estadoDe(l) === "activo" ? "En uso" : estadoDe(l) === "descartado" ? "Descartado" : "Agotado",
@@ -485,8 +509,8 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
       {user.rol !== "usuario" && <button className="btn secondary" onClick={exportCsv} disabled={!filtrados.length}>⬇️ CSV</button>}
       <button className="btn secondary" onClick={() => window.print()} disabled={!paraHoja.length}>🖨️ Hoja de recuento</button>
       {esAdmin && <button className="btn secondary" onClick={() => setModal("salida")}>↗ Salida</button>}
-      {esAdmin && <button className="btn" onClick={() => setModal("entrada")}>＋ Entrada de producto</button>}
-      {esAdmin && <button className="btn" onClick={() => setModal("recuento")} disabled={!paraHoja.length}>📋 Recuento</button>}
+      {esAdmin && <button className="btn" onClick={() => setModal("entrada")}>＋ Nueva entrada</button>}
+      {esAdmin && <button className="btn secondary" onClick={() => setModal("recuento")} disabled={!paraHoja.length}>📋 Recuento</button>}
     </div>
 
     {error && <div className="form-error no-print">{error}</div>}
@@ -498,7 +522,7 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
       </div>
       {loading ? <div className="loading">Cargando…</div> : error ? <div className="empty">⚠️ {error}</div> : !grupos.length
         ? <div className="empty"><span className="icon">📭</span><strong>No hay productos en el inventario</strong>
-            <p>{q || centroId !== "all" ? "Prueba con otra búsqueda u otro filtro." : esAdmin ? "Registra la primera entrada con el botón «Entrada de producto»." : "Todavía no hay stock registrado."}</p></div>
+            <p>{q || centroId !== "all" ? "Prueba con otra búsqueda u otro filtro." : esAdmin ? "Registra la primera entrada con el botón «Nueva entrada»." : "Todavía no hay stock registrado."}</p></div>
         : <div className="table-scroll"><table>
           <thead><tr>
             <th>Producto</th><th>Marca</th><th className="right">Lotes en uso</th><th className="right">Garrafas</th>
@@ -517,15 +541,17 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
             {abiertos.has(g.clave) && <tr>
               <td colSpan={7} style={{ background: "#f8fafc", padding: "0 8px 10px" }}>
                 <table>
-                  <thead><tr><th>Lote</th><th>Estado</th><th className="right">Garrafas</th><th className="right">Litros</th><th>Entrada</th><th>Caducidad</th><th>Centro</th></tr></thead>
-                  <tbody>{g.lotes.map((l) => <tr key={String(l.id)} style={{ opacity: enUso(l) ? 1 : 0.55 }}>
+                  <thead><tr><th>Lote</th><th>Estado</th><th className="right">Garrafas</th><th className="right">Litros</th><th>Entrada</th><th>Fabricación</th><th>Caducidad</th><th>Centro</th><th>Origen</th></tr></thead>
+                  <tbody>{g.lotes.filter((l) => !sinLote(l)).map((l) => <tr key={String(l.id)} style={{ opacity: enUso(l) ? 1 : 0.55 }}>
                     <td>{String(l.numero_lote ?? "—")}</td>
                     <td><Estado estado={estadoDe(l)} /></td>
                     <td className="right">{fmt(l.num_garrafas, 2)}</td>
                     <td className="right">{fmt(litrosDe(l), 2)}</td>
                     <td>{formatFecha(l.fecha_entrada)}</td>
+                    <td>{formatFecha(l.fecha_produccion)}</td>
                     <td><Caducidad fecha={l.fecha_caducidad} /></td>
                     <td>{String(l.centro_nombre ?? "—")}</td>
+                    <td>{String(l.origen ?? "") === "empresa" ? "Empresa" : "Fábrica"}</td>
                   </tr>)}</tbody>
                 </table>
               </td>
@@ -588,7 +614,7 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
       <div className="print-foot">Firma del responsable del recuento: ______________________ · Rellena también la hoja en la aplicación (Consumibles → Inventario → Recuento) para actualizar el stock.</div>
     </div>
 
-    {modal === "entrada" && <EntradaModal grupos={gruposTodos} centros={centros} onClose={() => setModal(null)} onSaved={guardado} />}
+    {modal === "entrada" && <EntradaModal grupos={gruposTodos} onClose={() => setModal(null)} onSaved={guardado} />}
     {modal === "salida" && <SalidaModal grupos={gruposTodos} onClose={() => setModal(null)} onSaved={guardado} />}
     {modal === "recuento" && <RecuentoModal lotes={paraHoja} centroLabel={centroLabel} anteriores={anteriores} onClose={() => setModal(null)} onSaved={guardado} />}
     {toast && <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} />}

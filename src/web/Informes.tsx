@@ -64,7 +64,23 @@ export function Informes({ user }: { user: { rol: string } }) {
     en90: quimicos.filter(q => String(q.estado_caducidad) === "90").length,
   };
   const bajoDe = (rows: Row[], key: string) => rows.filter(row => Number(row.stock_minimo ?? 0) > 0 && Number(row[key] ?? 0) <= Number(row.stock_minimo)).length;
-  const sQ = bajoDe(quimicos, "num_garrafas"), sM = bajoDe(material, "cantidad");
+  // En los químicos el stock mínimo está en litros y pertenece al PRODUCTO: se
+  // compara con la suma de los litros de sus lotes (la ficha manda sobre los
+  // lotes dados de alta con un mínimo anterior).
+  const bajoDeQuimicos = (rows: Row[]) => {
+    const grupos = new Map<string, { litros: number; ficha: number | null; max: number }>();
+    for (const row of rows) {
+      const clave = `${String(row.nombre ?? "").trim().toLowerCase()}|${String(row.marca ?? "").trim().toLowerCase()}`;
+      const g = grupos.get(clave) ?? { litros: 0, ficha: null, max: 0 };
+      g.litros += Number(row.litros_por_garrafa ?? 0) * Number(row.num_garrafas ?? 0);
+      const min = Number(row.stock_minimo ?? 0);
+      if (String(row.numero_lote ?? "").trim() === "") g.ficha = min;
+      else g.max = Math.max(g.max, min);
+      grupos.set(clave, g);
+    }
+    return [...grupos.values()].filter((g) => { const min = g.ficha ?? g.max; return min > 0 && g.litros <= min; }).length;
+  };
+  const sQ = bajoDeQuimicos(quimicos), sM = bajoDe(material, "cantidad");
   const sE = bajoDe(data.epis, "stock"), sR = bajoDe(data.ropas, "stock");
   const stock_bajo = { quimicos: sQ, material: sM, epis: sE, ropa: sR, total: sQ + sM + sE + sR };
   const porColorMap = new Map<string, { color: string; unidades: number; registros: number }>();

@@ -10,7 +10,7 @@ const SCHEMA: string[] = [
   // suma por producto. `fecha_entrada` es la recepción del lote y `estado`
   // indica si sigue en uso (activo), si se gastó (agotado) o si se descartó en
   // un recuento (descartado).
-  `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, fecha_entrada TEXT, estado TEXT NOT NULL DEFAULT 'activo', stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, fecha_entrada TEXT, estado TEXT NOT NULL DEFAULT 'activo', stock_minimo INTEGER NOT NULL DEFAULT 0, stock_maximo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', cantidad INTEGER NOT NULL DEFAULT 1, foto TEXT, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL, subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -91,6 +91,8 @@ const ALTERS: Array<[string, string]> = [
   // descartado en un recuento).
   ["quimicos", "fecha_entrada TEXT"],
   ["quimicos", "estado TEXT NOT NULL DEFAULT 'activo'"],
+  // Stock máximo del producto (en litros): 0 significa «sin máximo».
+  ["quimicos", "stock_maximo INTEGER NOT NULL DEFAULT 0"],
 ];
 
 async function dropColumnIfPresent(db: D1Database, table: string, column: string): Promise<void> {
@@ -126,11 +128,11 @@ async function migrate(db: D1Database): Promise<void> {
   if (qCols.length > 0 && (caducidadObligatoria || !qCols.includes("fecha_produccion"))) {
     // Limpia los restos de un intento anterior por si el proceso se hubiera interrumpido.
     await db.prepare("DROP TABLE IF EXISTS quimicos_new").run();
-    const destino = ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_caducidad", "fecha_produccion", "fecha_entrada", "estado", "stock_minimo", "precio", "origen", "foto", "centro_id", "notas", "created_at", "updated_at"];
+    const destino = ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_caducidad", "fecha_produccion", "fecha_entrada", "estado", "stock_minimo", "stock_maximo", "precio", "origen", "foto", "centro_id", "notas", "created_at", "updated_at"];
     // Se conservan el id (lo referencian estaciones y movimientos) y todas las
     // columnas conocidas que ya existan en la tabla antigua.
     const comunes = ["id", ...qCols.filter((c) => c !== "id" && destino.includes(c))];
-    await db.prepare(`CREATE TABLE quimicos_new (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, fecha_entrada TEXT, estado TEXT NOT NULL DEFAULT 'activo', stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`).run();
+    await db.prepare(`CREATE TABLE quimicos_new (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, fecha_entrada TEXT, estado TEXT NOT NULL DEFAULT 'activo', stock_minimo INTEGER NOT NULL DEFAULT 0, stock_maximo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`).run();
     await db.prepare(`INSERT INTO quimicos_new (${comunes.join(", ")}) SELECT ${comunes.join(", ")} FROM quimicos`).run();
     await db.prepare("DROP TABLE quimicos").run();
     await db.prepare("ALTER TABLE quimicos_new RENAME TO quimicos").run();

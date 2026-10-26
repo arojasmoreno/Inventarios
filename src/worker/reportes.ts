@@ -115,7 +115,23 @@ reportesRoutes.get("/", async (c) => {
     (SELECT COUNT(*) FROM maquinaria WHERE estado NOT IN ('Operativo', 'Operativa', 'Baja')) AS maquinas_paradas`).first<Row>();
   // Solo cantidades: los costes se han eliminado de los consumibles.
   const bajoDe = (rows: Row[], key: string): number => rows.filter((r) => Number(r.stock_minimo ?? 0) > 0 && Number(r[key] ?? 0) <= Number(r.stock_minimo)).length;
-  const sQ = bajoDe(quimicos, "num_garrafas"), sM = bajoDe(material, "cantidad");
+  // En los químicos el stock mínimo está en litros y pertenece al PRODUCTO: se
+  // compara con la suma de los litros de sus lotes (la ficha manda sobre los
+  // lotes dados de alta con un mínimo anterior).
+  const bajoDeQuimicos = (rows: Row[]): number => {
+    const grupos = new Map<string, { litros: number; ficha: number | null; max: number }>();
+    for (const r of rows) {
+      const clave = `${String(r.nombre ?? "").trim().toLowerCase()}|${String(r.marca ?? "").trim().toLowerCase()}`;
+      const g = grupos.get(clave) ?? { litros: 0, ficha: null, max: 0 };
+      g.litros += Number(r.litros_por_garrafa ?? 0) * Number(r.num_garrafas ?? 0);
+      const min = Number(r.stock_minimo ?? 0);
+      if (String(r.numero_lote ?? "").trim() === "") g.ficha = min;
+      else g.max = Math.max(g.max, min);
+      grupos.set(clave, g);
+    }
+    return [...grupos.values()].filter((g) => { const min = g.ficha ?? g.max; return min > 0 && g.litros <= min; }).length;
+  };
+  const sQ = bajoDeQuimicos(quimicos), sM = bajoDe(material, "cantidad");
   const sE = bajoDe(epis, "stock"), sR = bajoDe(ropas, "stock");
   const stockBajo = { quimicos: sQ, material: sM, epis: sE, ropa: sR, total: sQ + sM + sE + sR };
   return c.json({

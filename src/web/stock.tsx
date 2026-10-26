@@ -31,7 +31,12 @@ export function StockPage({ user }: { user: { rol: string } }) {
         api.get<{ items: Row[] }>(cfg.endpoint),
         api.get<{ items: Row[] }>("/api/movimientos"),
       ]);
-      setItems(l.items); setMovimientos(m.items.slice(0, puedeRegistrar ? 15 : 50));
+      // En químicos solo se mueve el stock de los lotes: la ficha del producto
+      // (alta en «Químicos») no tiene cantidad que ajustar.
+      setItems(cfg.key === "quimicos"
+        ? l.items.filter((i) => String(i.numero_lote ?? "").trim() !== "")
+        : l.items);
+      setMovimientos(m.items.slice(0, puedeRegistrar ? 15 : 50));
     } catch { setError("No se pudieron cargar los datos"); }
   }, [cfg.endpoint, puedeRegistrar]);
   useEffect(() => { void load(); }, [load]);

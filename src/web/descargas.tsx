@@ -29,7 +29,7 @@ interface Hoja {
 // Cada hoja es una tabla de la aplicación, lista para descargar en CSV.
 const HOJAS: Hoja[] = [
   { id: "quimicos", icono: "🧪", nombre: "Productos químicos", csvName: "quimicos",
-    descripcion: "Lotes, litros, garrafas, caducidades, origen y precio.", endpoint: "/api/quimicos", filtroServidor: true, config: QUIMICOS },
+    descripcion: "Ficha de cada producto: código, marca, litros por garrafa, stock mínimo, estado y centro.", endpoint: "/api/quimicos", filtroServidor: true, config: QUIMICOS },
   { id: "material", icono: "🧽", nombre: "Material de limpieza", csvName: "material-limpieza",
     descripcion: "Referencias por color, unidades y origen.", endpoint: "/api/material-limpieza", filtroServidor: true, config: MATERIAL },
   { id: "maquinaria", icono: "🧭", nombre: "Maquinaria", csvName: "maquinaria",
@@ -127,8 +127,10 @@ export function DescargasPage() {
   const cargar = useCallback(async (h: Hoja): Promise<Row[]> => {
     const qs = h.filtroServidor && centroId !== "all" ? `?centro_id=${centroId}` : "";
     const r = await api.get<{ items: Row[] }>(`${h.endpoint}${qs}`);
-    if (h.filtroCliente && centroId !== "all") return r.items.filter(x => h.filtroCliente!(x, Number(centroId)));
-    return r.items;
+    // Misma selección de filas que en su pestaña (p. ej. una fila por producto).
+    const items = h.config?.preFilter ? h.config.preFilter(r.items) : r.items;
+    if (h.filtroCliente && centroId !== "all") return items.filter(x => h.filtroCliente!(x, Number(centroId)));
+    return items;
   }, [centroId]);
 
   // Recuento de cada hoja (respeta el filtro de centro seleccionado).

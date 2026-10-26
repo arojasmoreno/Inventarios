@@ -3,19 +3,15 @@ import type { Env, D1Database } from "./d1";
 import type { Variables } from "./types";
 import { requireAuth, requireAdmin } from "./auth";
 import { logMovimiento } from "./audit";
-import { ValidationError, validate, checkUnique, hoyISO } from "./crud";
-import { quimicosSpec } from "./resources";
+import { ValidationError, hoyISO } from "./crud";
 
 // Control de lotes de los productos químicos.
 //
-// Cada fila de `quimicos` es un LOTE: el mismo producto puede llegar con varios
-// lotes (distinto nº de lote, fechas y precios). Estas rutas trabajan a nivel
-// de producto sumando sus lotes:
-//   · entrada  → alta de un lote nuevo o suma de garrafas a un lote existente.
-//   · salida   → descuenta del lote que antes caduca (FEFO) y retira los lotes
-//                que se quedan sin stock.
-//   · recuento → hoja de inventario: los litros reales contados ajustan cada
-//                lote y retiran (descartan) los que quedan a cero.
+// Cada fila de `quimicos` es una ficha de PRODUCTO (alta en la pestaña
+// «Químicos», sin lote) o un LOTE de ese producto (entrada desde la pestaña
+// «Inventario por producto»), que copia los datos de la ficha. Aquí se
+// registran las entradas, las salidas que consumen los lotes que antes caducan
+// (FEFO) y el recuento que ajusta y retira lotes.
 
 type Row = Record<string, unknown>;
 
@@ -99,60 +95,127 @@ const numero = (v: unknown): number => {
   return Number(String(v).replace(",", "."));
 };
 const esEnteroPositivo = (n: unknown): n is number => Number.isInteger(n) && Number(n) > 0;
+// Fecha ISO (YYYY-MM-DD) validada; `obligatoria` decide si se admite en blanco.
+const fecha = (v: unknown, etiqueta: string, obligatoria = false): string | null => {
+  if (v === null || v === undefined || v === "") {
+    if (obligatoria) throw new ValidationError(`${etiqueta}: es obligatoria`);
+    return null;
+  }
+  const s = String(v).trim();
+  const d = new Date(`${s}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+    throw new ValidationError(`${etiqueta}: fecha no válida`);
+  }
+  return s;
+};
+// Número opcional no negativo (precio, stock mínimo…).
+const numeroOptimo = (v: unknown, etiqueta: string): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = numero(v);
+  if (!Number.isFinite(n) || n < 0) throw new ValidationError(`${etiqueta}: debe ser un número igual o mayor que 0`);
+  return n;
+};
 
 export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
   new Hono<{ Bindings: Env; Variables: Variables }>()
-    .use("*", requireAuth)
-
-    // ── Entrada: alta de un lote nuevo o suma de garrafas a un lote ─────────
+    .use("*", requireAuth)    // ── Entrada: alta de un lote de un producto ya dado de alta ─────────────
+    //
+    // El formulario de «Inventario por producto» envía el producto elegido (con
+    // sus datos), el nº de lote y los LITROS recibidos. También se acepta el alta
+    // por garrafas (`num_garrafas`), que es como lo hacen las importaciones.
     .post("/entrada", requireAdmin, async (c) => {
       const body = await cuerpo(c);
+      const nombre = texto(body.nombre, 200);
+      if (!nombre) throw new ValidationError("Producto químico: es obligatorio");
+      const numeroLote = texto(body.numero_lote, 60);
+      if (!numeroLote) throw new ValidationError("Nº de lote: es obligatorio");
+      const litrosPorGarrafa = numero(body.litros_por_garrafa);
+      if (!Number.isFinite(litrosPorGarrafa) || litrosPorGarrafa <= 0) {
+        throw new ValidationError("Litros por garrafa (L): debe ser mayor que 0");
+      }
+      const origen = texto(body.origen, 20);
+      if (origen !== "fabrica" && origen !== "empresa") {
+        throw new ValidationError("Origen: es obligatorio (Fábrica o Empresa)");
+      }
+      // Cantidad recibida: litros (formulario) o garrafas (importaciones).
+      const conLitros = body.litros !== undefined && body.litros !== null && body.litros !== "";
+      let garrafas: number;
+      if (conLitros) {
+        const litros = numero(body.litros);
+        if (!Number.isFinite(litros) || litros <= 0) {
+          throw new ValidationError("Litros de producto: debe ser mayor que 0");
+        }
+        garrafas = redondea(litros / litrosPorGarrafa);
+      } else {
+        const recibidas = numero(body.num_garrafas);
+        if (!Number.isFinite(recibidas) || recibidas < 1) {
+          throw new ValidationError("Nº de garrafas: debe recibir 1 o más");
+        }
+        garrafas = recibidas;
+      }
+      const fechaEntrada = fecha(body.fecha_entrada, "Fecha de entrada") ?? hoyISO();
+      const motivo = texto(body.motivo, 300);
       const acumular = Number(body.quimico_id ?? 0);
       const esAcumulo = Number.isInteger(acumular) && acumular > 0;
-      // En acumulación no se repiden los datos del lote: solo se suma cantidad.
-      const data = validate(quimicosSpec, body, esAcumulo ? "update" : "insert");
-      const recibidas = Number(data.num_garrafas ?? 0);
-      if (!Number.isFinite(recibidas) || recibidas < 1) {
-        throw new ValidationError("Nº de garrafas: debe recibir 1 o más");
-      }
-      const motivo = texto(body.motivo, 300);
       let id: number;
       let detalle: string;
       if (esAcumulo) {
+        // Reposición de un lote existente: solo se suman garrafas a ese lote.
         const previo = await c.env.DB.prepare(
           "SELECT id, nombre, numero_lote, num_garrafas FROM quimicos WHERE id = ?",
         ).bind(acumular).first();
         if (!previo) return c.json({ error: "El lote seleccionado ya no existe" }, 404);
         await c.env.DB.prepare(
           "UPDATE quimicos SET num_garrafas = num_garrafas + ?, estado = 'activo', updated_at = datetime('now') WHERE id = ?",
-        ).bind(recibidas, acumular).run();
+        ).bind(garrafas, acumular).run();
         id = acumular;
         detalle = `${String(previo.nombre)} · lote ${String(previo.numero_lote)}`;
       } else {
-        if (data.fecha_entrada === undefined || data.fecha_entrada === null) data.fecha_entrada = hoyISO();
-        data.estado = "activo";
-        await checkUnique(c.env.DB, quimicosSpec, data, null);
+        // Datos del producto que la ficha aporta (los copia del producto elegido).
+        const data: Row = {
+          codigo: texto(body.codigo, 40),
+          marca: texto(body.marca, 80),
+          nombre,
+          numero_lote: numeroLote,
+          litros_por_garrafa: litrosPorGarrafa,
+          num_garrafas: garrafas,
+          fecha_entrada: fechaEntrada,
+          fecha_produccion: fecha(body.fecha_produccion, "Fecha de fabricación"),
+          fecha_caducidad: fecha(body.fecha_caducidad, "Fecha de caducidad"),
+          precio: numeroOptimo(body.precio, "Precio por garrafa (€)"),
+          origen,
+          // Un lote recién recibido entra en uso; el stock mínimo en litros y el
+          // centro se heredan de la ficha del producto.
+          estado: "activo",
+          stock_minimo: numeroOptimo(body.stock_minimo, "Stock mínimo en litros (L)") ?? 0,
+          centro_id: numeroOptimo(body.centro_id, "Centro"),
+          notas: texto(body.notas, 2000),
+        };
         const keys = Object.keys(data);
         const res = await c.env.DB.prepare(
           `INSERT INTO quimicos (${keys.join(", ")}) VALUES (${placeholders(keys.length)})`,
         ).bind(...keys.map((k) => data[k])).run();
         id = Number((res.meta as { last_row_id?: number }).last_row_id ?? 0);
-        detalle = `${String(data.nombre)} · lote ${String(data.numero_lote)}`;
+        detalle = `${nombre} · lote ${numeroLote}`;
       }
       const row = await c.env.DB.prepare(
         "SELECT id, num_garrafas, litros_por_garrafa, estado FROM quimicos WHERE id = ?",
       ).bind(id).first();
       await logMovimiento(c.env.DB, c.get("user"), "entrada", "quimicos", id,
-        `Entrada: ${detalle} (+${recibidas} garrafas)`, recibidas, motivo);
+        `Entrada: ${detalle} (+${redondea(garrafas)} garrafas)`, garrafas, motivo);
       return c.json({
         ok: true,
         item: {
           id,
+          nombre,
+          numero_lote: numeroLote,
+          litros_por_garrafa: Number(row?.litros_por_garrafa ?? litrosPorGarrafa),
           num_garrafas: Number(row?.num_garrafas ?? 0),
           total_litros: redondea(Number(row?.num_garrafas ?? 0) * Number(row?.litros_por_garrafa ?? 0)),
           estado: String(row?.estado ?? "activo"),
+          fecha_entrada: fechaEntrada,
         },
-        mensaje: `Entrada registrada: ${detalle}. Quedan ${Number(row?.num_garrafas ?? 0)} garrafas.`,
+        mensaje: `Entrada registrada: ${detalle}.`,
       });
     })
 

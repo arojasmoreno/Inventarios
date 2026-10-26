@@ -57,7 +57,12 @@ panelRoutes.get("/", async (c) => {
     ).all<Row>(),
     // Artículos con stock por debajo del mínimo (maquinaria no tiene mínimo).
     db.prepare(
-      `SELECT nombre, num_garrafas AS stock, stock_minimo AS minimo, codigo, 'Químicos' AS categoria, 'quimicos' AS seccion FROM quimicos WHERE stock_minimo > 0 AND num_garrafas <= stock_minimo
+      `SELECT * FROM (
+        SELECT MAX(nombre) AS nombre, SUM(litros_por_garrafa * num_garrafas) AS stock,
+               COALESCE(MAX(CASE WHEN TRIM(COALESCE(numero_lote, '')) = '' THEN stock_minimo END), MAX(stock_minimo)) AS minimo,
+               MAX(codigo) AS codigo, 'Químicos' AS categoria, 'quimicos' AS seccion
+        FROM quimicos GROUP BY LOWER(TRIM(nombre)), LOWER(TRIM(COALESCE(marca, '')))
+      ) WHERE minimo > 0 AND stock <= minimo
        UNION ALL SELECT nombre, cantidad, stock_minimo, codigo, 'Material de limpieza', 'material' FROM material_limpieza WHERE stock_minimo > 0 AND cantidad <= stock_minimo
        UNION ALL SELECT COALESCE(NULLIF(descripcion, ''), codigo), stock, stock_minimo, codigo, 'EPIs', 'epis' FROM epis WHERE stock_minimo > 0 AND stock <= stock_minimo
        UNION ALL SELECT prenda, stock, stock_minimo, codigo, 'Ropa de trabajo', 'ropa' FROM ropa_trabajo WHERE stock_minimo > 0 AND stock <= stock_minimo

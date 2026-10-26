@@ -80,11 +80,13 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       if (key === "quimicos") {
         if (!g("numero_lote")) return fallo(fila, "falta la columna 'numero_lote'");
         out.numero_lote = g("numero_lote");
-        // Ambas fechas son opcionales: la de producción es solo informativa.
+        // Ambas fechas son opcionales: la de fabricación es solo informativa.
         out.fecha_produccion = g("fecha_produccion") ?? null;
         out.fecha_caducidad = g("fecha_caducidad") ?? null;
         out.litros_por_garrafa = id("litros_por_garrafa") ?? 0;
         out.num_garrafas = id("num_garrafas") ?? 0;
+        // Estado del lote: Activo si la columna no viene en el CSV.
+        out.estado = (g("estado") ?? "activo").trim().toLowerCase();
       } else {
         if (!g("color")) return fallo(fila, "falta la columna 'color'");
         out.color = g("color");

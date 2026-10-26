@@ -18,6 +18,8 @@ export interface ResourceConfig {
   }>;
   // Muestra el botón de imprimir el QR del artículo (puesto de consumo).
   qrTipo?: string;
+  // Filtro de fila previo (p. ej. en «Químicos» solo la ficha de cada producto).
+  preFilter?: (rows: Row[]) => Row[];
   // Página de solo consulta (sin altas, ediciones ni borrados).
   readOnlyPage?: boolean;
   // Selector de centros (uno o varios) dentro del formulario de alta/edición.
@@ -51,7 +53,6 @@ const estadoBadge = (estado: unknown) => {
   const cls = e === "Operativo" ? "ok" : e === "En reparación" ? "warn" : e === "Averiado" ? "danger" : e === "Baja" ? "muted" : "info";
   return <span className={`badge ${cls}`}>{e || "—"}</span>;
 };
-const dateBadge = (r: Row) => { const n = diasHasta(r.fecha_caducidad), cls = n === null || n > 90 ? "" : n < 0 ? "danger" : n <= 30 ? "warn" : "info"; const text = n === null || n > 90 ? formatFecha(r.fecha_caducidad) : n < 0 ? `Vencida (${formatFecha(r.fecha_caducidad)})` : `${formatFecha(r.fecha_caducidad)} · ${n} d`; return cls ? <span className={`badge ${cls}`}>{text}</span> : text; };
 const centerCol: Column = { key: "centro_nombre", label: "Centro", render: r => String(r.centro_nombre ?? "—"), csv: r => String(r.centro_nombre ?? "—") };
 const stockMin = { name: "stock_minimo", label: "Stock mínimo (alerta)", type: "integer" as const };
 // Precio unitario opcional (valor del inventario). Si no se conoce el precio
@@ -66,25 +67,64 @@ const fotoField = { name: "foto", label: "Foto", type: "image" as const, help: "
 // Celda de stock con aviso ⚠️ cuando llega al mínimo configurado.
 const stockCell = (r: Row, key: string) => { const n = Number(r[key] ?? 0), min = Number(r.stock_minimo ?? 0); return <>{formatNum(n)}{min > 0 && n <= min ? <> <span className="badge danger">⚠️ mín. {min}</span></> : null}</>; };
 const fotoCol = (endpoint: string): Column => ({ key: "foto", label: "Foto", render: r => Number(r.tiene_foto) === 1 ? <a href={`${endpoint}/${String(r.id)}/foto`} target="_blank" rel="noreferrer"><img className="thumb" src={`${endpoint}/${String(r.id)}/foto`} alt="Foto" loading="lazy" /></a> : "—" });
-// Estado de un lote de químicos: sigue en uso mientras quede stock; cuando el
-// recuento lo deja a cero pasa a «descartado» y cuando se consume, a «agotado».
-const estadoTexto = (r: Row): string => Number(r.num_garrafas ?? 0) > 0 ? "En uso"
-  : String(r.estado ?? "") === "descartado" ? "Descartado" : "Agotado";
-const estadoLote = (r: Row): ReactNode => {
-  const t = estadoTexto(r);
-  return <span className={`badge ${t === "En uso" ? "ok" : t === "Descartado" ? "danger" : "muted"}`}>{t}</span>;
+// Estado del producto tal y como se guarda en su ficha (campo del formulario):
+// Activo, Agotado o Descartado.
+const ESTADOS_PRODUCTO = [{ value: "activo", label: "Activo" }, { value: "agotado", label: "Agotado" }, { value: "descartado", label: "Descartado" }];
+const estadoProducto = (r: Row): ReactNode => {
+  const e = String(r.estado ?? "activo");
+  const label = ESTADOS_PRODUCTO.find(o => o.value === e)?.label ?? (e || "—");
+  return <span className={`badge ${e === "activo" ? "ok" : e === "agotado" ? "warn" : "danger"}`}>{label}</span>;
+};
+// Identidad de producto químico: mismo nombre y misma marca.
+const normClave = (v: unknown): string => String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+const claveProducto = (r: Row): string => `${normClave(r.nombre)}|${normClave(r.marca)}`;
+// Fila de ficha de producto: todavía no tiene lote asignado.
+const esFicha = (r: Row): boolean => String(r.numero_lote ?? "").trim() === "";
+// En «Químicos» cada producto se muestra una sola vez: su ficha o, si todavía
+// no existe (datos antiguos en los que cada lote era una fila completa), el
+// primer lote. El resto de lotes se gestionan en «Inventario por producto».
+const soloFichas = (rows: Row[]): Row[] => {
+  const conFicha = new Set<string>();
+  for (const r of rows) if (esFicha(r)) conFicha.add(claveProducto(r));
+  const vistas = new Set<string>();
+  return rows.filter((r) => {
+    const clave = claveProducto(r);
+    if (esFicha(r)) return true;
+    if (conFicha.has(clave) || vistas.has(clave)) return false;
+    vistas.add(clave);
+    return true;
+  });
 };
 // Badge de próxima revisión de EPI (verde, ámbar a 30 días, rojo si caducada).
 const revisionBadge = (r: Row) => { const f = r.fecha_revision; if (typeof f !== "string" || f.length < 10) return "—"; const n = diasHasta(f); const cls = n === null ? "" : n < 0 ? "danger" : n <= 30 ? "warn" : "ok"; const text = n !== null && n < 0 ? `Caducada (${formatFecha(f)})` : formatFecha(f); return cls ? <span className={`badge ${cls}`}>{text}</span> : text; };
 export const QUIMICOS: ResourceConfig = {
-  title: "Productos químicos", subtitle: "Cada registro es un lote: nº de lote, litros por garrafa, garrafas, fechas de entrada, producción y caducidad y origen", endpoint: "/api/quimicos", csvName: "quimicos", searchKeys: ["nombre", "numero_lote", "centro_nombre"], centroFilter: true, origenFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Producto", type: "text", required: true }, { name: "numero_lote", label: "Nº de lote", type: "text", required: true }, { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true }, { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true }, { name: "fecha_produccion", label: "Fecha de producción", type: "date", help: "Opcional: solo informativa, no entra en ningún cálculo." }, { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", help: "Opcional: deja el campo en blanco si el producto no caduca." }, { name: "fecha_entrada", label: "Fecha de entrada", type: "date", help: "Recepción del lote en almacén: ordena el consumo por caducidad." }, { name: "origen", label: "Origen", type: "select", required: true, options: ORIGEN_OPTS, help: "¿De quién es el consumible?" }, precioField("Precio por garrafa (€)"), center, notes, stockMin, fotoField],
-  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Producto" }, { key: "numero_lote", label: "Lote" }, { key: "litros_por_garrafa", label: "L/garrafa", align: "right", render: r => formatNum(r.litros_por_garrafa, 2) }, { key: "num_garrafas", label: "Garrafas", align: "right", render: r => stockCell(r, "num_garrafas") }, { key: "total_litros", label: "Total litros", align: "right", render: r => <strong>{formatNum(r.total_litros, 2)}</strong> }, { key: "fecha_entrada", label: "Entrada", render: r => formatFecha(r.fecha_entrada) }, { key: "fecha_produccion", label: "Producción", render: r => formatFecha(r.fecha_produccion) }, { key: "fecha_caducidad", label: "Caducidad", render: dateBadge },
-  // Estado del lote: en uso mientras queden garrafas; después, agotado o
-  // descartado (los retira el recuento de inventario).
-  { key: "estado", label: "Estado", render: r => estadoLote(r), csv: r => estadoTexto(r) }, precioCol, origenCol, centerCol, fotoCol("/api/quimicos")],
-  // Totales de la tabla: litros de todo el almacén químico filtrado.
-  totals: [{ key: "total_litros", label: "Total litros" }],
+  title: "Productos químicos",
+  subtitle: "Ficha del producto: código (único, identifica el producto), marca, nombre, litros por garrafa, stock mínimo y máximo en litros, estado, centro y foto. Los lotes se dan de alta en «Inventario por producto»",
+  endpoint: "/api/quimicos", csvName: "quimicos",
+  searchKeys: ["codigo", "marca", "nombre", "centro_nombre"],
+  centroFilter: true, preFilter: soloFichas,
+  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [
+    { name: "codigo", label: "Código de producto", type: "text", required: true, placeholder: "Ej. Q-100", help: "Identifica el producto y no puede repetirse." },
+    { name: "marca", label: "Marca", type: "text", required: true, placeholder: "Ej. Proquima" },
+    { name: "nombre", label: "Nombre de producto", type: "text", required: true },
+    { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true, help: "Debe ser mayor que 0: con él se calculan los litros de cada lote." },
+    { name: "stock_minimo", label: "Stock mínimo en litros (L)", type: "number", required: true, help: "Por debajo de estos litros el producto aparece con aviso de stock bajo." },
+    { name: "stock_maximo", label: "Stock máximo en litros (L)", type: "number", help: "Opcional: déjalo en blanco si no quieres fijar un máximo." },
+    { name: "estado", label: "Estado", type: "select", required: true, options: ESTADOS_PRODUCTO },
+    { name: "centro_id", label: "Centro", type: "select", required: true },
+    fotoField,
+  ],
+  columns: [
+    { key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") },
+    { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") },
+    { key: "nombre", label: "Producto" },
+    { key: "litros_por_garrafa", label: "L/garrafa", align: "right", render: r => formatNum(r.litros_por_garrafa, 2) },
+    { key: "stock_minimo", label: "Stock mínimo", align: "right", render: r => `${formatNum(r.stock_minimo, 2)} L`, csv: r => formatNum(r.stock_minimo, 2) },
+    { key: "stock_maximo", label: "Stock máximo", align: "right", render: r => `${formatNum(r.stock_maximo, 2)} L`, csv: r => formatNum(r.stock_maximo, 2) },
+    { key: "estado", label: "Estado", render: r => estadoProducto(r), csv: r => String(r.estado ?? "") },
+    centerCol, fotoCol("/api/quimicos"),
+  ],
 };
 export const MATERIAL: ResourceConfig = {
   title: "Material de limpieza", subtitle: "Segregado por colores (código de zona de uso) y origen", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["nombre", "color", "centro_nombre"], centroFilter: true, origenFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -314,7 +354,7 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
       }
     }
   }, [config]);
-  const filtered = useMemo(() => { const needle = q.trim().toLowerCase(); return items.filter(row => (centroId === "all" || String(row.centro_id ?? "") === centroId) && (tipoEqId === "all" || String(row.tipo_equipo_id ?? "") === tipoEqId) && (origenId === "all" || String(row.origen ?? "") === origenId) && (!needle || config.searchKeys.some(k => String(row[k] ?? "").toLowerCase().includes(needle)))); }, [items, q, centroId, tipoEqId, origenId, config]);
+  const filtered = useMemo(() => { const base = config.preFilter ? config.preFilter(items) : items; const needle = q.trim().toLowerCase(); return base.filter(row => (centroId === "all" || String(row.centro_id ?? "") === centroId) && (tipoEqId === "all" || String(row.tipo_equipo_id ?? "") === tipoEqId) && (origenId === "all" || String(row.origen ?? "") === origenId) && (!needle || config.searchKeys.some(k => String(row[k] ?? "").toLowerCase().includes(needle)))); }, [items, q, centroId, tipoEqId, origenId, config]);
   // Totales al pie de la tabla (p. ej. los litros de los químicos filtrados).
   const totales = useMemo(() => {
     if (!config.totals?.length) return null;

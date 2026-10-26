@@ -284,7 +284,14 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
     const ep = ART_ENDPOINT[articuloTipo];
     if (!ep) { setArticulos([]); return; }
     let alive = true;
-    api.get<{ items: Row[] }>(ep).then((r) => { if (alive) setArticulos(r.items); }).catch(() => { if (alive) setArticulos([]); });
+    api.get<{ items: Row[] }>(ep).then((r) => {
+      // Los químicos tienen una ficha de producto (sin lote) y sus lotes: una
+      // estación descuenta de un lote concreto, así que la ficha no se ofrece.
+      const items = articuloTipo === "quimicos"
+        ? r.items.filter((i) => String(i.numero_lote ?? "").trim() !== "")
+        : r.items;
+      if (alive) setArticulos(items);
+    }).catch(() => { if (alive) setArticulos([]); });
     return () => { alive = false; };
   }, [articuloTipo]);
 

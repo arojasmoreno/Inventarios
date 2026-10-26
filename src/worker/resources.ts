@@ -10,6 +10,9 @@ export const ROLES = ["admin", "admin_centros", "usuario"];
 // Origen del consumible (químicos y material de limpieza): de fábrica o de la
 // empresa gestora. Solo se admiten estos dos valores.
 export const ORIGENES = ["fabrica", "empresa"] as const;
+const origen = { name: "origen", label: "Origen", type: "enum" as const, required: false, enumValues: [...ORIGENES] };
+// Estado de un producto químico: Activo, Agotado o Descartado.
+const ESTADOS = ["activo", "agotado", "descartado"] as const;
 const centro = { name: "centro_id", label: "Centro", type: "integer" as const, required: false, placeholder: "Sin centro asignado" };
 const notas = { name: "notas", label: "Notas", type: "textarea" as const, required: false, maxLength: 2000 };
 // Foto en base64 (el cliente la recimensiona antes de enviarla).
@@ -18,7 +21,10 @@ const stockMinimo = { name: "stock_minimo", label: "Stock mínimo (alerta)", typ
 // Precio unitario opcional: alimenta el «valor del inventario» de los
 // informes. Los productos sin precio conocido quedan en NULL y no suman.
 const precio = (label: string) => ({ name: "precio", label, type: "number" as const, required: false, min: 0, placeholder: "Opcional" });
-const origen = { name: "origen", label: "Origen", type: "enum" as const, required: false, enumValues: [...ORIGENES] };
+// Stock mínimo de los químicos medido en litros (no en garrafas).
+const stockMinimoLitros = { name: "stock_minimo", label: "Stock mínimo en litros (L)", type: "number" as const, required: true, min: 0 };
+// Stock máximo del producto en litros: vacío o 0 significa «sin máximo».
+const stockMaximoLitros = { name: "stock_maximo", label: "Stock máximo en litros (L)", type: "number" as const, required: false, min: 0 };
 // El origen siempre queda con uno de los dos valores admitidos: si no viene en
 // el payload (importaciones antiguas) se conserva el actual o se asume fábrica.
 // También se asegura la fecha de entrada del lote: hoy en las altas y la que
@@ -32,6 +38,18 @@ const normalizaOrigen = async (_db: unknown, data: Record<string, unknown>, mode
   if (data.fecha_entrada === undefined || data.fecha_entrada === null || data.fecha_entrada === "") {
     data.fecha_entrada = mode === "insert" ? hoyISO() : existing?.fecha_entrada ?? null;
   }
+  // El producto no puede quedar con 0 litros por garrafa: con él se convierten
+  // los litros de cada lote en garrafas en el inventario.
+  if (data.litros_por_garrafa !== undefined && Number(data.litros_por_garrafa) <= 0) {
+    throw new ValidationError("Litros por garrafa (L): debe ser mayor que 0");
+  }
+  // El alta desde la pestaña «Químicos» da de alta el PRODUCTO: todavía no tiene
+  // lote. La columna es NOT NULL, así que se queda vacía; las filas con lote son
+  // las entradas creadas desde «Inventario por producto».
+  if (mode === "insert" && (data.numero_lote === undefined || data.numero_lote === null || data.numero_lote === "")) {
+    data.numero_lote = "";
+    if (data.num_garrafas === undefined || data.num_garrafas === null) data.num_garrafas = 0;
+  }
   return data;
 };
 
@@ -39,24 +57,45 @@ export const quimicosSpec: CrudSpec = {
   table: "quimicos", orderBy: "id", refCentro: true, computed: "t.litros_por_garrafa * t.num_garrafas AS total_litros",
   read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
-    { name: "codigo", label: "Código", type: "text", required: false, unique: true, maxLength: 40 },
-    { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
-    { name: "nombre", label: "Producto", type: "text", required: true, maxLength: 200 },
-    { name: "numero_lote", label: "Nº de lote", type: "text", required: true, maxLength: 60 },
+    // ── Ficha del producto (pestaña «Químicos»): todo obligatorio salvo foto ──
+    { name: "codigo", label: "Código de producto", type: "text", required: true, maxLength: 40 },
+    { name: "marca", label: "Marca", type: "text", required: true, maxLength: 80 },
+    { name: "nombre", label: "Nombre de producto", type: "text", required: true, maxLength: 200 },
     { name: "litros_por_garrafa", label: "Litros por garrafa (L)", type: "number", required: true, min: 0 },
-    { name: "num_garrafas", label: "Nº de garrafas", type: "integer", required: true, min: 0 },
-    // Ambas fechas son opcionales: la de producción es solo informativa y no
-    // interviene en ningún cálculo (los avisos usan la de caducidad).
-    { name: "fecha_produccion", label: "Fecha de producción", type: "date", required: false },
-    { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: false },
+    stockMinimoLitros,
+    stockMaximoLitros,
+    { name: "estado", label: "Estado", type: "enum", required: true, enumValues: [...ESTADOS] },
+    { ...centro, required: true },
+    foto,
+    // ── Datos del lote (pestaña «Inventario por producto») ──────────────────
+    { name: "numero_lote", label: "Nº de lote", type: "text", required: false, maxLength: 60 },
+    { name: "num_garrafas", label: "Nº de garrafas", type: "number", required: false, min: 0 },
     // Recepción del lote en almacén: ordena el consumo FEFO junto a la caducidad.
     { name: "fecha_entrada", label: "Fecha de entrada", type: "date", required: false },
-    stockMinimo, precio("Precio por garrafa (€)"), origen, centro, notas, foto,
+    { name: "fecha_produccion", label: "Fecha de fabricación", type: "date", required: false },
+    { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: false },
+    precio("Precio por garrafa (€)"), origen, notas,
   ],
-  // Estado del lote (en uso / agotado / descartado): se deriva de los movimientos
-  // y de los recuentos, por eso se lee pero no se edita desde el formulario.
-  extraSelect: ["t.estado"],
-  beforeWrite: normalizaOrigen,
+  beforeWrite: async (db, data, mode, existing) => {
+    const out = await normalizaOrigen(db, data, mode, existing);
+    // Stock máximo en litros: vacío o 0 queda guardado como «sin máximo».
+    if (out.stock_maximo === null || out.stock_maximo === undefined || out.stock_maximo === "") out.stock_maximo = 0;
+    // El CÓDIGO es el que identifica al producto: no puede repetirse. La
+    // comprobación se limita a las fichas (fila sin lote), porque los lotes
+    // heredan el código de su producto.
+    const codigo = typeof out.codigo === "string" ? out.codigo.trim() : "";
+    const esFicha = mode === "update"
+      ? String(existing?.numero_lote ?? "").trim() === ""
+      : String(out.numero_lote ?? "").trim() === "";
+    if (codigo && esFicha) {
+      let sql = "SELECT id FROM quimicos WHERE TRIM(COALESCE(codigo, '')) = ? COLLATE NOCASE AND TRIM(COALESCE(numero_lote, '')) = ''";
+      const params: unknown[] = [codigo];
+      if (mode === "update") { sql += " AND id != ?"; params.push(Number(existing?.id)); }
+      const dup = await db.prepare(sql).bind(...params).first();
+      if (dup) throw new ValidationError(`Código de producto: ya existe un producto con el código «${codigo}»`);
+    }
+    return out;
+  },
 };
 export const materialSpec: CrudSpec = {
   table: "material_limpieza", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",

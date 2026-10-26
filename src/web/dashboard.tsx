@@ -157,8 +157,29 @@ export function Dashboard({ user }: { user: { rol: string } }) {
   const bajoDe = (rows: Row[], key: string, categoria: string, nombre: (r: Row) => string): Row[] =>
     rows.filter(r => Number(r.stock_minimo ?? 0) > 0 && Number(r[key] ?? 0) <= Number(r.stock_minimo))
       .map(r => ({ categoria, nombre: nombre(r), codigo: r.codigo ?? "", stock: Number(r[key] ?? 0), minimo: Number(r.stock_minimo ?? 0) }));
+  // En los químicos el stock mínimo está en litros y pertenece al PRODUCTO: se
+  // compara con la suma de los litros de sus lotes (la ficha manda sobre los
+  // lotes dados de alta con un mínimo anterior).
+  const bajoDeQuimicos = (rows: Row[]): Row[] => {
+    const grupos = new Map<string, { nombre: string; codigo: unknown; litros: number; ficha: number | null; max: number }>();
+    for (const r of rows) {
+      const clave = `${String(r.nombre ?? "").trim().toLowerCase()}|${String(r.marca ?? "").trim().toLowerCase()}`;
+      const g = grupos.get(clave) ?? { nombre: String(r.nombre ?? ""), codigo: r.codigo ?? "", litros: 0, ficha: null, max: 0 };
+      g.litros += Number(r.litros_por_garrafa ?? 0) * Number(r.num_garrafas ?? 0);
+      const min = Number(r.stock_minimo ?? 0);
+      if (String(r.numero_lote ?? "").trim() === "") { g.ficha = min; if (r.codigo != null) g.codigo = r.codigo; }
+      else g.max = Math.max(g.max, min);
+      grupos.set(clave, g);
+    }
+    return [...grupos.values()].flatMap((g) => {
+      const minimo = g.ficha ?? g.max;
+      return minimo > 0 && g.litros <= minimo
+        ? [{ categoria: "Químicos", nombre: g.nombre, codigo: g.codigo, stock: g.litros, minimo }]
+        : [];
+    });
+  };
   const stockBajo: Row[] = [
-    ...bajoDe(quimicos, "num_garrafas", "Químicos", r => String(r.nombre ?? "")),
+    ...bajoDeQuimicos(quimicos),
     ...bajoDe(material, "cantidad", "Material", r => String(r.nombre ?? "")),
     ...bajoDe(data.epis, "stock", "EPIs", r => String(r.descripcion ?? r.codigo ?? "")),
     ...bajoDe(data.ropas, "stock", "Ropa", r => String(r.prenda ?? "")),
