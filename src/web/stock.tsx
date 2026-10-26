@@ -9,8 +9,10 @@ const RECURSOS = [
   { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza", stockKey: "cantidad", unidad: "unidades" },
 ] as const;
 
-/** Entradas, salidas y ajustes de stock (solo administradores). */
-export function StockPage() {
+/** Entradas, salidas y ajustes de stock. Registrar movimientos es de
+ *  administradores; el resto de perfiles solo consulta el listado. */
+export function StockPage({ user }: { user: { rol: string } }) {
+  const puedeRegistrar = user.rol === "admin";
   const [recurso, setRecurso] = useState<string>(RECURSOS[0].key);
   const [items, setItems] = useState<Row[]>([]);
   const [movimientos, setMovimientos] = useState<Row[]>([]);
@@ -29,9 +31,9 @@ export function StockPage() {
         api.get<{ items: Row[] }>(cfg.endpoint),
         api.get<{ items: Row[] }>("/api/movimientos"),
       ]);
-      setItems(l.items); setMovimientos(m.items.slice(0, 15));
+      setItems(l.items); setMovimientos(m.items.slice(0, puedeRegistrar ? 15 : 50));
     } catch { setError("No se pudieron cargar los datos"); }
-  }, [cfg.endpoint]);
+  }, [cfg.endpoint, puedeRegistrar]);
   useEffect(() => { void load(); }, [load]);
 
   const item = items.find((i) => String(i.id) === itemId);
@@ -50,7 +52,7 @@ export function StockPage() {
   };
 
   return <>
-    <div className="card card-pad" style={{ maxWidth: 720 }}>
+    {puedeRegistrar && <div className="card card-pad" style={{ maxWidth: 720 }}>
       <div className="section-head"><h3>Entradas / Salidas</h3></div>
       <p style={{ color: "var(--muted)", marginTop: 0 }}>Entradas, salidas y ajustes de stock con motivo. Solo se registra la cantidad consumida: los costes no se gestionan. La ropa y los EPIs no son consumibles: su stock se mueve con las entregas de la sección «Equipación de operarios».</p>
       {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -80,9 +82,13 @@ export function StockPage() {
         {item ? <>Stock actual: <strong>{formatNum(item[cfg.stockKey])}</strong> {cfg.unidad}</> : "Selecciona un registro para ver su stock actual."}
       </p>
       <div className="modal-footer"><button className="btn" onClick={() => void submit()} disabled={busy || !item}>{busy ? "Registrando…" : "Registrar movimiento"}</button></div>
-    </div>
+    </div>}
+    {!puedeRegistrar && error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
     <div className="card">
-      <div className="section-head" style={{ padding: "14px 16px 0" }}><h3>Últimos movimientos</h3></div>
+      <div className="section-head" style={{ padding: "14px 16px 0" }}><h3>Últimos movimientos</h3>
+        {!puedeRegistrar && <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
+          Solo lectura: los administradores registran las entradas y salidas
+        </span>}</div>
       <div className="table-scroll"><table>
         <thead><tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Detalle</th><th className="right">Cant.</th></tr></thead>
         <tbody>{movimientos.map((m) => <tr key={String(m.id)}>

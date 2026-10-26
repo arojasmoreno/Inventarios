@@ -3,10 +3,8 @@
   "name": "inventarios",
   "main": "src/worker/index.ts",
   "compatibility_date": "2025-06-01",
-  // Resumen diario de alertas por correo (06:00 UTC).
-  "triggers": {
-    "crons": ["0 6 * * *"]
-  },
+  // Sin cron: el resumen/dashboard solo se envía por correo cuando un
+  // administrador lo pide desde su botón en el dashboard.
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

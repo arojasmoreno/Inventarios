@@ -63,6 +63,11 @@ async function centroScope(c: Ctx, user: SessionUser, id: number, _mode: "update
   const own = await c.env.DB.prepare("SELECT 1 AS x FROM usuario_centros WHERE usuario_id = ? AND centro_id = ?").bind(user.id, id).first();
   return own ? null : "Solo puedes modificar los centros asignados a tu usuario";
 }
+// Fecha local (ISO, YYYY-MM-DD) para las fechas que se rellenan solas.
+export function hoyISO(): string {
+  const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 10);
+}
 function parseValue(f: FieldSpec, raw: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
   if (raw === null) return { ok: true, value: null };
   switch (f.type) {
@@ -101,7 +106,7 @@ function parseValue(f: FieldSpec, raw: unknown): { ok: true; value: unknown } | 
       return { ok: true, value: raw };
   }
 }
-function validate(spec: CrudSpec, body: Record<string, unknown>, mode: "insert" | "update"): Record<string, unknown> {
+export function validate(spec: CrudSpec, body: Record<string, unknown>, mode: "insert" | "update"): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   for (const f of spec.fields) {
     if (!Object.prototype.hasOwnProperty.call(body, f.name)) { if (mode === "insert" && f.required && f.type !== "password") throw new ValidationError(`${f.label} es obligatorio`); continue; }
@@ -112,7 +117,7 @@ function validate(spec: CrudSpec, body: Record<string, unknown>, mode: "insert" 
   if (mode === "insert") for (const f of spec.fields) if (f.required && f.type !== "password" && (data[f.name] === undefined || data[f.name] === null)) throw new ValidationError(`${f.label} es obligatorio`);
   return data;
 }
-async function checkUnique(db: D1Database, spec: CrudSpec, data: Record<string, unknown>, excludeId: number | null): Promise<void> {
+export async function checkUnique(db: D1Database, spec: CrudSpec, data: Record<string, unknown>, excludeId: number | null): Promise<void> {
   for (const f of spec.fields) {
     if (!f.unique || data[f.name] === undefined || data[f.name] === null) continue;
     const row = await db.prepare(`SELECT id FROM ${spec.table} WHERE ${f.name} = ?${excludeId ? " AND id != ?" : ""}`).bind(...(excludeId ? [data[f.name], excludeId] : [data[f.name]])).first();

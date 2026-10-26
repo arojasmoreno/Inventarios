@@ -16,6 +16,10 @@
 --   * Los antiguos `puntos_consumo` se migran a `estaciones` en el arranque.
 --   * Los usuarios ya no tienen centro único: la asignación es multi-centro
 --     mediante `usuario_centros` (el worker migra la columna antigua al arrancar).
+--   * Cada fila de `quimicos` es un LOTE de producto: `fecha_entrada` (recepción)
+--     y `estado` (activo / agotado / descartado) permiten sumar el inventario por
+--     producto, consumir por FEFO y retirar lotes. Los recuentos de inventario
+--     se guardan en `inventarios` + `inventarios_lineas`.
 --
 -- Aplicar con:
 --   npx wrangler d1 execute inventarios --local  --file=./schema.sql
@@ -27,7 +31,7 @@ CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usern
 
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, expires_at TEXT NOT NULL);
 
-CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, fecha_entrada TEXT, estado TEXT NOT NULL DEFAULT 'activo', stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
 CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
@@ -83,3 +87,9 @@ CREATE TABLE IF NOT EXISTS documento_tipos (id INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TABLE IF NOT EXISTS documentos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo_id INTEGER NOT NULL REFERENCES documento_tipos(id), url TEXT NOT NULL, descripcion TEXT, fabricante TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
 CREATE TABLE IF NOT EXISTS documento_centros (documento_id INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (documento_id, centro_id));
+
+-- Recuentos de inventario de químicos: una fila por recuento validado y una por
+-- cada lote de la hoja (litros del sistema frente a los litros reales contados).
+CREATE TABLE IF NOT EXISTS inventarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER REFERENCES usuarios(id), fecha TEXT NOT NULL DEFAULT (date('now')), notas TEXT, lineas INTEGER NOT NULL DEFAULT 0, diferencia REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS inventarios_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, inventario_id INTEGER NOT NULL REFERENCES inventarios(id) ON DELETE CASCADE, quimico_id INTEGER, nombre TEXT NOT NULL, marca TEXT, numero_lote TEXT, centro TEXT, litros_teoricos REAL NOT NULL DEFAULT 0, litros_reales REAL NOT NULL DEFAULT 0, diferencia REAL NOT NULL DEFAULT 0, estado TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));

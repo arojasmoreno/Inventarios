@@ -42,7 +42,7 @@ Cuando una validación falla, además del mensaje se **sombrea en rojo claro el 
 
 | Zona | Qué contiene |
 |---|---|
-| **Barra lateral izquierda** | Las secciones: Panel de control, Consumibles, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación y Gestión de informes. Debajo, **Cuenta › Mi cuenta**. |
+| **Barra lateral izquierda** | Las secciones: Panel de control, Consumibles, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación, Gestión de informes y **Manuales y ayuda**. Debajo, **Cuenta › Mi cuenta**. |
 | **Cabecera** | 🔎 **Buscar en todo…** (encuentra artículos, zonas, estaciones y usuarios), tu nombre, tu rol, el estado **Activo/Inactivo**, tus centros asignados y el botón **⏻ Salir**. |
 | **Zona central** | El contenido de la sección elegida. |
 
@@ -60,7 +60,7 @@ Cuando una validación falla, además del mensaje se **sombrea en rojo claro el 
 - **📉 Artículos bajo mínimo**: stock por debajo del mínimo configurado, con acceso directo a la ficha.
 - **🔔 Avisos operativos**: máquinas no operativas, revisiones de EPI próximas/vencidas y químicos vencidos o que caducan en 30 días.
 - **🚻 Estaciones sin consumo en 30 días**: enlaces para abrir el modo estación y revisarlas.
-- **📧 Enviar resumen por correo** (solo administradores): manda el parte de alertas a los administradores. También se envía automáticamente cada día a las 06:00 UTC.
+- **📧 Enviar resumen por correo** (solo administradores): manda el parte de alertas a los administradores **solo cuando tú lo pides**. Ya no hay envíos automáticos diarios: el correo únicamente sale al pulsar este botón (o el botón equivalente de la esquina del dashboard).
 
 ---
 
@@ -73,8 +73,9 @@ Pestañas disponibles: **Químicos · Material de limpieza · Estaciones de cons
 En cualquier listado encontrarás:
 
 - **🔍 Buscar…** y el filtro **por centro** (si hay varios centros).
-- **⬇️ CSV** para exportar lo que esté filtrado.
+- **⬇️ CSV** para exportar lo que esté filtrado (solo administradores).
 - **＋ Nuevo registro** para dar de alta (los campos con **\*** son obligatorios).
+- **Precio por garrafa / por unidad (€)**: campo **opcional**. Rellénalo cuando conozcas el coste y los informes calcularán el **valor del inventario**; si un producto no tiene precio, déjalo en blanco y no contará.
 - Iconos de fila para **editar**, **borrar** y, cuando aplica, la **etiqueta QR**.
 
 ![Formulario con validación fallida: los campos obligatorios quedan en rojo](img/admin-formulario-error.png)
@@ -94,7 +95,7 @@ Si pulsas **Guardar** con un campo obligatorio vacío o con un dato inválido, a
 
 Las estaciones son los puntos de la planta (zona › subzona › soporte) donde se coloca un artículo. **Al escanear su QR el stock se descuenta automáticamente**.
 
-- **➖ −1 ud** en la lista descuenta una unidad al instante.
+- **➖ −1 ud** está ahora en la **primera columna** de la lista (junto al nombre de la estación): descuenta una unidad al instante sin tener que desplazar la tabla en el móvil.
 - El **QR de la estación** abre el **modo estación** (pantalla grande, apta para tablet en planta):
 
 ![Modo estación](img/admin-estacion.png)
@@ -192,7 +193,14 @@ Fichas de documentos (hojas de seguridad, procedimientos, manuales) con **URL**,
 
 ![Informes](img/admin-informes.png)
 
-Pestañas: **Informes · Auditoría · Importar CSV**.
+Pestañas: **Dashboard · Informes · Auditoría · Copias de seguridad · Importar CSV**.
+
+### Dashboard
+Vista única con toda la fotografía del planta: KPIs (químicos, material, maquinaria, EPIs, **valor del inventario**, consumo de 30 días y alertas), gráficos de dona y barras (origen, caducidad, consumo diario, caducidades por mes, inventario por planta, maquinaria, colores, consumos por zona y entregas) y las tablas de resumen por planta, caducidades próximas y stock bajo mínimo.
+
+- Filtros por **planta** y por **origen** (Fábrica / Empresa).
+- **⬇️ CSV** en cada tabla y **🖨️ Imprimir / PDF** para archivarlo.
+- **📧 Enviar por correo** (esquina superior derecha): el dashboard **solo se envía si lo pides**; no existe ningún envío automático.
 
 ### Informes
 Bloques con datos listos para exportar: consumos por zona y subzona, entregas por operario, productos químicos, material por color, maquinaria por tipo, EPIs y ropa de trabajo. Cada bloque lleva su botón **⬇️ CSV** y la página completa **🖨️ Imprimir / PDF**.
@@ -200,6 +208,15 @@ Bloques con datos listos para exportar: consumos por zona y subzona, entregas po
 ### Auditoría
 ![Auditoría de movimientos](img/admin-auditoria.png)
 Historial de todos los movimientos de stock (qué, cuánto, cuándo y quién), con búsqueda y exportación a CSV.
+
+### Copias de seguridad (solo administradores)
+Descarga la información introducida **hoja por hoja**, filtrada por centro:
+
+1. Elige el **centro / planta** (o «Todos los centros»).
+2. Pulsa **⬇️ Descargar CSV** en la hoja que necesites: químicos, material, maquinaria, EPIs, ropa, estaciones, entradas y salidas, entregas, zonas, subzonas, documentación, usuarios y centros.
+3. El archivo se genera **en tu navegador** y se guarda en la carpeta de descargas de **tu ordenador**: no se crea ninguna copia en la nube.
+
+> Las hojas marcadas **Global** (entradas y salidas) no se filtran por centro porque registran movimientos de toda la aplicación. La copia completa de la base de datos se hace desde el servidor con `sh ./scripts/backup-d1.sh` y queda en la carpeta local `backups/` (fuera de la nube y de git).
 
 ### Importar CSV (solo administradores)
 ![Importar CSV](img/admin-importar.png)
@@ -228,19 +245,35 @@ Escribe en **🔎 Buscar en todo…** (cabecera) al menos 2 letras. Los resultad
 
 | Sección / acción | Administrador | Administrador de centros | Usuario |
 |---|:-:|:-:|:-:|
-| Consultar inventarios y panel | ✅ | ✅ | ✅ |
+| Consultar sus secciones (estaciones, entradas y salidas, maquinaria, documentación, informes y manuales) | ✅ | ✅ | ✅ |
 | Dar de alta / editar / borrar registros (químicos, material, maquinaria, EPIs, ropa…) | ✅ | — | — |
-| Entradas y salidas de stock | ✅ | — | — |
 | Registrar situaciones de maquinaria | ✅ | — | — |
 | Gestionar zonas y estaciones | ✅ | — | — |
 | Crear/editar usuarios, tipos, tallas e importar CSV | ✅ | — | — |
 | Centros, documentación y entregas de equipación | ✅ | ✅ (sus centros) | solo lectura |
+| Entradas y salidas de stock | ✅ (registro) | solo lectura | solo lectura |
 | Consumir en modo estación (QR) | ✅ | ✅ | ✅ |
+| Descargar CSV / Imprimir PDF de listados e informes | ✅ | ✅ | ❌ |
+| Copias de seguridad (descargas por hoja) | ✅ | ❌ | ❌ |
+| Enviar el dashboard por correo | ✅ | ❌ | ❌ |
+| Secciones visibles en el menú | todas | todas | estaciones de consumo, entradas y salidas, maquinaria, documentación, gestión de informes y manuales |
 | Cambiar su propia contraseña | ✅ | ✅ | ✅ |
 
 ---
 
-## 13. Solución de problemas
+## 13. Manuales y ayuda (sección Ayuda)
+
+La sección **Ayuda › Manuales y ayuda** reúne la documentación de la aplicación:
+
+- **📖 Ver en la web**: los dos manuales se leen directamente en el navegador, con índice de apartados para saltar a cada tema.
+- **⬇️ Descargar PDF** (solo administradores): el mismo manual en PDF para guardarlo o imprimirlo.
+- **💡 Ayuda rápida**: los errores más frecuentes («Failed to fetch», campos en rojo, contraseñas olvidadas…).
+
+Los manuales viven en `docs/manual-administrador.md` y `docs/manual-usuario.md`. Al modificarlos, regenera los PDF con `node make-pdf.mjs` para que la descarga de Ayuda refleje los cambios.
+
+---
+
+## 14. Solución de problemas
 
 | Lo que ves | Causa probable | Solución |
 |---|---|---|

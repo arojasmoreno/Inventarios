@@ -46,6 +46,7 @@ const NAV: NavGroup[] = [
     section: "Consumibles",
     items: [
       { hash: "#/consumibles", label: "Consumibles", icon: "🧴" },
+      { hash: "#/inventario", label: "Inventario de químicos", icon: "📦" },
     ],
   },
   {
@@ -86,7 +87,44 @@ const NAV: NavGroup[] = [
   },
 ];
 
-const NAV_FLAT: NavItem[] = NAV.flatMap((g) => g.items);
+// Menú del perfil «Usuario»: solo estaciones de consumo, entradas y salidas,
+// maquinaria, documentación, gestión de informes y manuales. No ve el panel de
+// control, los consumibles completos, la equipación ni la gestión de centros.
+const NAV_USUARIO: NavGroup[] = [
+  {
+    section: "Consumibles",
+    items: [
+      { hash: "#/estaciones", label: "Estaciones de consumo", icon: "🚻" },
+      { hash: "#/entradas", label: "Entradas y salidas", icon: "🔄" },
+      { hash: "#/inventario", label: "Inventario de químicos", icon: "📦" },
+    ],
+  },
+  {
+    section: "Maquinaria",
+    items: [
+      { hash: "#/maquinaria", label: "Control de maquinaria", icon: "🧭" },
+    ],
+  },
+  {
+    section: "Gestión",
+    items: [
+      { hash: "#/documentacion", label: "Documentación", icon: "📚" },
+    ],
+  },
+  {
+    section: "Gestión de informes",
+    items: [
+      { hash: "#/gestion-informes", label: "Gestión de informes", icon: "📈" },
+    ],
+  },
+  {
+    section: "Ayuda",
+    items: [
+      { hash: "#/ayuda", label: "Manuales y ayuda", icon: "🛟" },
+    ],
+  },
+];
+
 const rolLabel = (rol: string) => (rol === "admin" ? "Administrador" : rol === "admin_centros" ? "Administrador de centros" : "Usuario");
 const rolBadge = (rol: string) => (rol === "admin" ? "info" : rol === "admin_centros" ? "warn" : "muted");
 
@@ -104,11 +142,14 @@ export function App() {
     api.get<{ user: User }>("/api/auth/me").then((r) => { if (!cancelled) setUser(r.user); }).catch(() => { if (!cancelled) setUser(null); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
-  // Con sesión iniciada y sin sección concreta, la URL refleja el panel de control.
-  useEffect(() => { if (user && !window.location.hash) window.location.hash = "#/panel"; }, [user]);
+  // Con sesión iniciada y sin sección concreta, la URL refleja la primera
+  // sección del rol: el panel de control para administradores y las
+  // estaciones de consumo para el perfil usuario.
+  useEffect(() => { if (user && !window.location.hash) window.location.hash = user.rol === "usuario" ? "#/estaciones" : "#/panel"; }, [user]);
   if (loading) return <div className="loading">Cargando Inventarios…</div>;
   if (!user) return <Login onLoggedIn={setUser} />;
   return <Shell user={user} route={route} onUserChange={setUser} />;
+
 }
 
 // Campos de los formularios de acceso: sirven para localizar, en un mensaje
@@ -282,20 +323,32 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   const esTiposMaquinaria = route === "#/tipos";
   // Rutas antiguas que ahora son pestañas de la sección Consumibles.
   const esConsumibles = route === "#/consumibles" || route === "#/quimicos" || route === "#/material" || route.startsWith("#/estaciones")
-    || route === "#/consumibles-tipos" || route === "#/soportes" || route === "#/entradas" || route === "#/costes";
+    || route === "#/consumibles-tipos" || route === "#/soportes" || route === "#/entradas" || route === "#/costes"
+    || route === "#/inventario";
   // Rutas de la sección Gestión de centros (su propia ruta y las antiguas).
   const esGestionCentros = route === "#/gestion-centros" || route === "#/centros" || route === "#/zonas" || route === "#/usuarios" || route === "#/empresa";
   // Rutas de la sección Gestión de informes (su propia ruta y las antiguas).
   const esGestionInformes = route === "#/gestion-informes" || route === "#/movimientos" || route === "#/importar" || route === "#/informes";
-  const nav = (hash: string) => NAV_FLAT.find((n) => n.hash === hash) ?? NAV_FLAT[0];
-  const active = NAV_FLAT.find((n) => n.hash === route || route.startsWith(`${n.hash}?`))
+  // Menú y rutas permitidas según el rol: el perfil «Usuario» solo tiene
+  // acceso a las secciones de su lista; cualquier otra ruta redirige a
+  // «Estaciones de consumo».
+  const gruposBase = user.rol === "usuario" ? NAV_USUARIO : NAV;
+  const nav = (hash: string) => gruposBase.flatMap((g) => g.items).find((n) => n.hash === hash) ?? gruposBase[0].items[0];
+  const permitida = user.rol !== "usuario" || esConsumibles || esGestionInformes
+    || route === "#/maquinaria" || route === "#/tipos" || route === "#/documentacion"
+    || route === "#/ayuda" || route === "#/cuenta";
+  useEffect(() => { if (!permitida) window.location.hash = "#/estaciones"; }, [permitida, route]);
+  const flat = gruposBase.flatMap((g) => g.items);
+  const active = flat.find((n) => n.hash === route || route.startsWith(`${n.hash}?`))
     ?? (esLegacy ? nav("#/equipacion")
       : esTiposMaquinaria ? nav("#/maquinaria")
       : esConsumibles ? nav("#/consumibles")
       : esGestionCentros ? nav("#/gestion-centros")
-      : esGestionInformes ? nav("#/gestion-informes") : NAV_FLAT[0]);
+      : esGestionInformes ? nav("#/gestion-informes") : flat[0]);
+  // Ruta fuera del menú del rol: se redirige a la primera sección permitida.
+  if (!permitida) return <div className="loading">Abriendo tu sección…</div>;
   let page: ReactNode;
-  if (route === "#/ayuda") page = <AyudaPage />;
+  if (route === "#/ayuda") page = <AyudaPage user={user} />;
   else if (route === "#/cuenta") page = <MiCuenta user={user} />;
   else if (route === "#/panel") page = <PanelPage user={user} />;
   else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
@@ -306,7 +359,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   else if (route === "#/equipacion" || route === "#/ropa" || route === "#/epis" || route === "#/tallas" || route === "#/tipos-equipo" || route.startsWith("#/entregas")) page = <EquipacionPage user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;
   else page = <ResourcePage key="#/quimicos" config={QUIMICOS} user={user} />;
-  const grupos = NAV
+  const grupos = gruposBase
     .map((g) => ({ ...g, items: g.items.filter((n) => !n.adminOnly || user.rol === "admin") }))
     .filter((g) => g.items.length > 0);
   // Centros del usuario para la cabecera (los administradores ven todos).

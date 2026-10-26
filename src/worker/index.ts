@@ -11,12 +11,13 @@ import { tallas } from "./tallas";
 import { estaciones } from "./estaciones";
 import { entregasRoutes } from "./entregas";
 import { movimientosRoutes } from "./movimientos";
+import { inventarioRoutes } from "./inventario";
 import { empresaRoutes } from "./empresa";
 import { reportesRoutes } from "./reportes";
 import { panelRoutes } from "./panel";
 import { buscadorRoutes } from "./buscador";
 import { documentos, documentosTipos } from "./documentos";
-import { alertasRoutes, enviarResumenDiario } from "./alertas";
+import { alertasRoutes } from "./alertas";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -66,6 +67,8 @@ app.route("/api/epis", epis as any);
 app.route("/api/ropa-trabajo", ropa as any);
 app.route("/api/movimientos", movimientos as any);
 app.route("/api/movimientos", movimientosRoutes as any);
+// Control de lotes de químicos: entradas, salidas FEFO y recuentos de inventario.
+app.route("/api/inventario", inventarioRoutes);
 app.route("/api/zonas", zonas);
 app.route("/api/subzonas", subzonas);
 app.route("/api/tipos-maquinaria", tipos);
@@ -92,15 +95,6 @@ app.onError((err, c) => {
   console.error("Error no controlado:", err);
   return c.json({ error: "Error interno del servidor" }, 500);
 });
-// Además del fetch, el Worker atiende el cron diario (06:00 UTC) que envía
-// el resumen de alertas a los administradores con correo configurado.
-export default {
-  fetch: app.fetch,
-  scheduled: (_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) => {
-    ctx.waitUntil(
-      enviarResumenDiario(env)
-        .then((r) => console.log(`[alertas] Resumen diario: ${JSON.stringify(r)}`))
-        .catch((err) => console.error("[alertas] Error en el resumen diario:", err)),
-    );
-  },
-};
+// El Worker solo atiende peticiones: el resumen de alertas ya no se envía
+// automáticamente, un administrador lo envía desde el botón del dashboard.
+export default { fetch: app.fetch };

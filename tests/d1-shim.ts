@@ -9,9 +9,9 @@ type V = string | number | null | Uint8Array;
 export function makeD1(db: Database): D1Database {
   const wrap = (sql: string) => {
     const run = async (...values: V[]) => {
-      if (values.length) db.query(sql).run(...(values as never[]));
-      else db.query(sql).run();
-      return { results: [], success: true, meta: {} };
+      // `last_row_id` es lo que el Worker lee de `meta` tras un INSERT.
+      const info = values.length ? db.query(sql).run(...(values as never[])) : db.query(sql).run();
+      return { results: [], success: true, meta: { last_row_id: Number(info.lastInsertRowid ?? 0) } };
     };
     return {
       bind: (...values: V[]) => ({

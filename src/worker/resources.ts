@@ -1,5 +1,5 @@
 import type { CrudSpec } from "./crud";
-import { createCrud, ValidationError, hashPasswordField } from "./crud";
+import { createCrud, ValidationError, hashPasswordField, hoyISO } from "./crud";
 import { requireAuth } from "./auth";
 import { movimientosSpec } from "./movimientos";
 import { seedHistorial } from "./maquinaria-historial";
@@ -21,12 +21,17 @@ const precio = (label: string) => ({ name: "precio", label, type: "number" as co
 const origen = { name: "origen", label: "Origen", type: "enum" as const, required: false, enumValues: [...ORIGENES] };
 // El origen siempre queda con uno de los dos valores admitidos: si no viene en
 // el payload (importaciones antiguas) se conserva el actual o se asume fábrica.
+// También se asegura la fecha de entrada del lote: hoy en las altas y la que
+// ya tuviera al editar (nunca se vacía, porque ordena el consumo FEFO).
 const normalizaOrigen = async (_db: unknown, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>): Promise<Record<string, unknown>> => {
   const raw = typeof data.origen === "string" ? data.origen.trim().toLowerCase() : "";
   const esOrigen = (v: string): v is (typeof ORIGENES)[number] => (ORIGENES as readonly string[]).includes(v);
   data.origen = esOrigen(raw) ? raw
     : mode === "update" && typeof existing?.origen === "string" && esOrigen(existing.origen) ? existing.origen
     : "fabrica";
+  if (data.fecha_entrada === undefined || data.fecha_entrada === null || data.fecha_entrada === "") {
+    data.fecha_entrada = mode === "insert" ? hoyISO() : existing?.fecha_entrada ?? null;
+  }
   return data;
 };
 
@@ -44,8 +49,13 @@ export const quimicosSpec: CrudSpec = {
     // interviene en ningún cálculo (los avisos usan la de caducidad).
     { name: "fecha_produccion", label: "Fecha de producción", type: "date", required: false },
     { name: "fecha_caducidad", label: "Fecha de caducidad", type: "date", required: false },
+    // Recepción del lote en almacén: ordena el consumo FEFO junto a la caducidad.
+    { name: "fecha_entrada", label: "Fecha de entrada", type: "date", required: false },
     stockMinimo, precio("Precio por garrafa (€)"), origen, centro, notas, foto,
   ],
+  // Estado del lote (en uso / agotado / descartado): se deriva de los movimientos
+  // y de los recuentos, por eso se lee pero no se edita desde el formulario.
+  extraSelect: ["t.estado"],
   beforeWrite: normalizaOrigen,
 };
 export const materialSpec: CrudSpec = {

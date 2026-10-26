@@ -52,6 +52,8 @@ export function MaquinariaPage({ user }: { user: { rol: string; centro_id: numbe
  *  marca, modelo y centro, con borrado (que recalcula el estado). */
 function HistorialMaquinaria({ user }: { user: { rol: string } }) {
   const admin = user.rol === "admin";
+  // Los usuarios consultan el histórico pero no lo exportan.
+  const puedeDescargar = user.rol !== "usuario";
   const [items, setItems] = useState<Row[]>([]);
   const [maquinas, setMaquinas] = useState<Row[]>([]);
   const [situaciones, setSituaciones] = useState<Row[]>([]);
@@ -161,7 +163,7 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
       <input className="input" style={{ maxWidth: 150 }} type="date" value={desde} onChange={e => setDesde(e.target.value)} aria-label="Desde fecha" title="Desde fecha" />
       <input className="input" style={{ maxWidth: 150 }} type="date" value={hasta} onChange={e => setHasta(e.target.value)} aria-label="Hasta fecha" title="Hasta fecha" />
       <div className="spacer" />
-      <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>
+      {puedeDescargar && <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>}
       {admin && <button className="btn" onClick={openForm}>＋ Registrar situación</button>}
     </div>
     <div className="card">

@@ -11,10 +11,10 @@ Guía para el perfil **Usuario** (operario) de la aplicación **Inventarios**: c
 | Puedes ✅ | No puedes ❌ (solo administradores) |
 |---|---|
 | Entrar con tu usuario y contraseña | Crear, editar o borrar registros de químicos, material, maquinaria, EPIs o ropa |
-| Ver el panel de control y todos los inventarios | Registrar entradas y salidas de stock |
-| Buscar en todo con la lupa de la cabecera | Dar de alta usuarios, centros, zonas o tipos |
-| **Consumir material en planta escaneando el QR de una estación** | Registrar situaciones de maquinaria o importar CSV |
-| Consultar la documentación y abrir los documentos | |
+| Ver **estaciones de consumo, entradas y salidas, maquinaria, documentación, gestión de informes y manuales** | Ver el panel de control, la equipación ni la gestión de centros |
+| **Consumir material en planta escaneando el QR de la estación** o con el botón **➖ −1 ud** | Registrar entradas y salidas (tu vista es de solo lectura) o importar CSV |
+| Consultar la documentación y abrir los documentos | Descargar listados en CSV o PDF (ningún listado es descargable en tu perfil) |
+| Consultar el dashboard y los informes | Dar de alta usuarios, centros, zonas o tipos |
 | Cambiar **tu** contraseña | |
 
 Si intentas abrir una sección sin permisos verás un aviso 🔒 **Sección restringida**; simplemente no aparecerán los botones que no te corresponden.
@@ -50,48 +50,51 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 
 ![Vista general para usuario](img/usuario-panel.png)
 
-- **Barra lateral**: Panel de control, Consumibles, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación y Gestión de informes. Abajo, **Cuenta › Mi cuenta** y el botón **Cerrar sesión**.
+- **Barra lateral**: Estaciones de consumo, Entradas y salidas, Control de maquinaria, Documentación, Gestión de informes y Manuales y ayuda. Abajo, **Cuenta › Mi cuenta** y el botón **Cerrar sesión**. Son las únicas secciones que un usuario ve: el resto de la aplicación está reservada a administradores.
 - **Cabecera**: 🔎 **Buscar en todo…**, tu nombre, tu rol (**Usuario**), tu estado y los centros asignados. Pulsa **⏻ Salir** para cerrar la sesión.
 - Los datos se agrupan por **centro**: si trabajas en varios, usa el filtro de centro de cada listado.
 
 ---
 
-## 4. Panel de control
+## 4. Tus secciones
 
-![Panel de control](img/usuario-panel.png)
+![Vista general para usuario](img/usuario-panel.png)
 
-- **Consumo de hoy**, **últimos 7 días**, **estaciones activas** y **alertas**.
-- **📊 Consumo por día (14 días)** y **📍 Consumos por zona (30 días)**: pulsa una zona para ver sus estaciones.
-- **📉 Artículos bajo mínimo**: lo que hay que reponer.
-- **🔔 Avisos operativos**: máquinas no operativas, revisiones de EPI y químicos por caducar.
+- **🚻 Estaciones de consumo** (pantalla inicial): la lista de estaciones con su stock; el botón **➖ −1 ud** de la primera columna descuenta una unidad al instante y **▶ Consumir** abre el modo estación.
+- **🔄 Entradas y salidas**: registro de movimientos de stock **en solo lectura** (los administradores son quienes registran entradas y salidas).
+- **🧭 Control de maquinaria**: máquinas, su estado y el histórico de situaciones.
+- **📚 Documentación**: fichas y documentos de seguridad y técnicas.
+- **📈 Gestión de informes**: dashboard, informes y auditoría **para consultar**; los botones de descarga (CSV / PDF) no aparecen en tu perfil.
+- **🛟 Manuales y ayuda**: esta misma guía en formato web (y en PDF para administradores).
 
 ---
 
 ## 5. Consultar los inventarios
 
-Todas las secciones de consulta comparten los mismos controles: **🔍 Buscar…**, filtro **por centro**, **⬇️ CSV** (exportar) y, en las filas, el icono de **ver detalle**.
+Tus secciones de consulta comparten los mismos controles: **🔍 Buscar…** y filtro **por centro**. En tu perfil **no aparecen los botones de descarga** (⬇️ CSV ni 🖨️ Imprimir / PDF): los listados son de solo consulta.
 
-### Consumibles
-![Productos químicos](img/usuario-quimicos.png)
+### Estaciones de consumo
+![Estaciones de consumo](img/usuario-estaciones.png)
 
-Pestañas: **Químicos · Material de limpieza · Estaciones de consumo · Tipos de consumible · Soportes · Consumos**. Aquí ves lotes, litros por garrafa, número de garrafas, fecha de caducidad y stock por centro.
+Lista agrupada por centro › zona › subzona con el stock de cada estación, el botón **➖ −1 ud** en la primera columna y **▶ Consumir** para abrir el modo estación.
+
+### Entradas y salidas
+
+Registro de movimientos (consumos, entradas y salidas) **en solo lectura**: ves quién ha hecho cada movimiento, cuándo y con qué motivo; el alta de movimientos corresponde a los administradores.
 
 ### Control de maquinaria
 ![Maquinaria](img/usuario-maquinaria.png)
 
 Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**. El estado de cada máquina es su último registro del histórico (Operativa, En reparación, Averiada…).
 
-### Equipación de operarios
-![Equipación](img/usuario-equipacion.png)
-
-Pestañas: **Ropa de trabajo · EPIs · Entregas · Tipos de equipo**. Consulta el stock de prendas y EPIs y las entregas ya realizadas.
-
-### Gestión de centros y documentación
-![Centros y zonas](img/usuario-centros.png)
+### Documentación
 ![Documentación](img/usuario-documentacion.png)
 
-- **Centros** y **Zonas y subzonas**: la estructura de la planta y sus puntos de consumo.
-- **Documentación**: abre las fichas y documentos compartidos (hojas de seguridad, procedimientos…).
+Abre las fichas y documentos compartidos (hojas de seguridad, procedimientos…).
+
+### Gestión de informes
+
+**Dashboard**, **Informes** y **Auditoría** con los datos de la planta, **para consultar**; los botones de exportación y el envío por correo no están disponibles en tu perfil.
 
 ---
 
@@ -110,11 +113,11 @@ Es la acción principal de un operario: descontar unidades de un artículo al us
 5. **📷 Escanear otra estación** permite continuar con el siguiente punto sin salir.
 
 **Opción B · Desde la lista**
-1. Ve a **Consumibles › Estaciones de consumo**:
+1. Ve a **Estaciones de consumo** en el menú lateral:
 
 ![Estaciones de consumo](img/usuario-estaciones.png)
 
-2. Pulsa sobre la estación (o usa el botón **➖ −1 ud** para descontar una unidad al instante).
+2. Pulsa **➖ −1 ud** (primera columna: se ve en el móvil sin desplazar la tabla) para descontar una unidad al instante, o **▶ Consumir** para abrir el modo estación.
 
 > El consumo queda registrado con fecha y usuario, y actualiza el panel y los informes al momento.
 
@@ -133,7 +136,7 @@ Es la acción principal de un operario: descontar unidades de un artículo al us
 
 | Lo que ves | Causa probable | Solución |
 |---|---|---|
-| **Sección restringida 🔒** o no ves ciertos botones | Tu rol es de solo lectura | Es normal: pide a un administrador cualquier alta o modificación. |
+| **Sección restringida 🔒**, no ves ciertas secciones ni los botones de descarga | Tu perfil es de solo lectura y solo ve sus secciones | Es normal: es el comportamiento del rol **Usuario**. Pide a un administrador cualquier alta, modificación o descarga. |
 | **Failed to fetch** | Sin conexión con el servidor | Revisa internet/VPN y recarga (F5). |
 | **Usuario o contraseña incorrectos** | Credenciales equivocadas o bloqueo de 15 minutos | Usa tu cuenta real o recupera la contraseña desde el enlace de acceso. |
 | Un campo en **rojo** | Ese campo es obligatorio o tiene un dato inválido | Corrige el campo marcado: el rojo desaparece al escribir. |
