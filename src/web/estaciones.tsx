@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { api } from "./api";
-import { Modal, Toast, camposConError, downloadCsv, formatNum } from "./ui";
+import { ColorSwatch, Modal, Toast, camposConError, downloadCsv, formatNum } from "./ui";
 import { QrLoteModal, QrModal } from "./qr";
 
 type Row = Record<string, unknown>;
@@ -73,6 +73,8 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
   const [qrRow, setQrRow] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
   const canWrite = user.rol === "admin";
+  // Los usuarios consultan las estaciones pero no exportan la tabla.
+  const puedeDescargar = user.rol !== "usuario";
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -172,7 +174,7 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
       </button>
       <div className="spacer" />
       <button className="btn secondary" onClick={() => setQrLote(filtered)} disabled={!filtered.length}>🖨️ QR ({filtered.length})</button>
-      <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>
+      {puedeDescargar && <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>}
       {canWrite && <button className="btn" onClick={() => setEditing("new")}>＋ Nueva estación</button>}
     </div>
     <div className="card">
@@ -189,7 +191,21 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
           <tbody>{grupos.map((g) => <Fragment key={g.titulo}>
             <tr className="grp"><td colSpan={8}>📍 {g.titulo} · {g.rows.length} estación{g.rows.length === 1 ? "" : "es"}</td></tr>
             {g.rows.map((e) => <tr key={String(e.id)}>
-            <td><strong>{nombreEstacion(e)}</strong></td>
+            <td>
+              {/* Cuadrado con el color del consumible de la estación
+                  (código de segregación del material). */}
+              <ColorSwatch color={String(e.articulo_color ?? "")} />
+              <strong>{nombreEstacion(e)}</strong>
+              {/* Botón «−1» en la primera columna: en móvil se ve sin desplazar
+                  la tabla y no hay que tocar la columna de acciones. */}
+              <div className="row-actions" style={{ justifyContent: "flex-start", marginTop: 6 }}>
+                <button className="btn small" title="Descuenta ahora 1 unidad del consumible de esta estación"
+                  onClick={() => void descontar1(e)}
+                  disabled={busyId === Number(e.id) || Number(e.activo) !== 1 || Number(e.articulo_stock ?? 0) < 1}>
+                  {busyId === Number(e.id) ? "Descontando…" : "➖ −1 ud"}
+                </button>
+              </div>
+            </td>
             <td>{String(e.centro_nombre ?? "—")}</td>
             <td>{String(e.tipo_nombre ?? "—")}</td>
             <td>{String(e.articulo_nombre ?? "—")}{e.articulo_codigo ? <span style={{ color: "var(--muted)" }}> · {String(e.articulo_codigo)}</span> : null}</td>
@@ -201,11 +217,6 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
               ? <><span style={{ color: "var(--muted)", fontSize: 12 }}>{fechaCorta(e.ultimo_consumo_fecha)}</span><br /><span style={{ fontSize: 12 }}>{String(e.ultimo_consumo_detalle ?? "—")}</span></>
               : "—"}</td>
             <td className="right"><div className="row-actions">
-              <button className="btn small" title="Descuenta ahora 1 unidad del consumible de esta estación"
-                onClick={() => void descontar1(e)}
-                disabled={busyId === Number(e.id) || Number(e.activo) !== 1 || Number(e.articulo_stock ?? 0) < 1}>
-                {busyId === Number(e.id) ? "Descontando…" : "➖ −1 ud"}
-              </button>
               <button className="btn secondary small" onClick={() => setQrRow(e)}>🏷️ QR</button>
               <button className="btn secondary small" onClick={() => onModo(Number(e.id))}>▶ Consumir</button>
               {canWrite && <>
@@ -218,7 +229,7 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
         </table></div>}
     </div>
     <p className="no-print" style={{ color: "var(--muted)", margin: 0 }}>
-      {filtered.length} de {items.length} estaciones · agrupadas por centro › zona › subzona · «➖ −1 ud» descuenta una unidad al instante y el QR abre el modo estación para descontar más unidades y poder deshacerlo.
+      {filtered.length} de {items.length} estaciones · agrupadas por centro › zona › subzona · «➖ −1 ud» (primera columna) descuenta una unidad al instante y el QR abre el modo estación para descontar más unidades y poder deshacerlo.
     </p>
     {qrRow && <QrModal tipo="estacion" id={Number(qrRow.id)} title={nombreEstacion(qrRow)} onClose={() => setQrRow(null)} />}
     {qrLote && <QrLoteModal

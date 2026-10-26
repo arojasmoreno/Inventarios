@@ -33,7 +33,7 @@ export const estacionesSpec: CrudSpec = {
     "COALESCE(aq.nombre, am.nombre, ae.descripcion, ar.prenda, amq.nombre) AS articulo_nombre",
     "COALESCE(aq.codigo, am.codigo, ae.codigo, ar.codigo) AS articulo_codigo",
     "COALESCE(aq.numero_lote, ae.codigo, ar.codigo) AS articulo_lote",
-    "am.color AS articulo_color",
+    "COALESCE(am.color, ae.color, ar.color) AS articulo_color",
     "COALESCE(aq.num_garrafas, am.cantidad, ae.stock, ar.stock, amq.cantidad) AS articulo_stock",
     "COALESCE(aq.stock_minimo, am.stock_minimo, ae.stock_minimo, ar.stock_minimo, 0) AS articulo_stock_minimo",
     `${ULTIMO_CONSUMO} AS ultimo_consumo_id`,
