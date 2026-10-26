@@ -119,6 +119,16 @@ function Caducidad({ fecha, soloTexto = false }: { fecha: unknown; soloTexto?: b
   return cls ? <span className={`badge ${cls}`}>{texto}</span> : <>{texto}</>;
 }
 
+/** Etiqueta al lado de los litros totales de un producto, al estilo de las de
+ *  caducidad: roja si el total baja del mínimo configurado en su ficha y ámbar
+ *  si supera el máximo. Sin ficha (o sin umbral fijado) no se muestra nada. */
+function AvisoStock({ litros, umbrales }: { litros: number; umbrales?: { min: number; max: number } }) {
+  if (!umbrales) return null;
+  if (umbrales.min > 0 && litros < umbrales.min) return <> <span className="badge danger">⚠️ mín. {fmt(umbrales.min, 2)} L</span></>;
+  if (umbrales.max > 0 && litros > umbrales.max) return <> <span className="badge warn">⬆ máx. {fmt(umbrales.max, 2)} L</span></>;
+  return null;
+}
+
 /** Selector de producto (agrupado) reutilizado por los formularios. */
 function SelectorProducto({ grupos, valor, onChange, etiqueta = "Producto químico", soloConStock = false }: {
   grupos: Grupo[]; valor: string; onChange: (clave: string) => void; etiqueta?: string; soloConStock?: boolean;
@@ -471,6 +481,20 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
       && (!needle || [l.nombre, l.marca, l.numero_lote, l.codigo].some((k) => String(k ?? "").toLowerCase().includes(needle))));
   }, [items, q, centroId, mostrarRetirados]);
   const grupos = useMemo(() => agrupar(filtrados), [filtrados]);
+  // Umbrales de stock por producto: manda la ficha (la fila sin lote, que sí
+  // guarda stock máximo); los lotes heredan el mínimo y por eso se completan
+  // lo que la ficha no cubre. Clave = producto + marca, igual que en `agrupar`.
+  const umbrales = useMemo(() => {
+    const map = new Map<string, { min: number; max: number }>();
+    for (const l of items) {
+      const clave = claveDe(l);
+      const u = { min: num(l.stock_minimo), max: num(l.stock_maximo) };
+      const prev = map.get(clave);
+      if (!prev || sinLote(l)) map.set(clave, u);
+      else map.set(clave, { min: prev.min || u.min, max: prev.max || u.max });
+    }
+    return map;
+  }, [items]);
   // Lotes en uso del centro elegido: es la base de la hoja imprimible y del recuento.
   const paraHoja = useMemo(() => items.filter((l) => enUso(l) && (centroId === "all" || String(l.centro_id ?? "") === centroId)).sort(porProducto), [items, centroId]);
   const totales = useMemo(() => grupos.reduce((t, g) => ({ productos: t.productos + 1, garrafas: t.garrafas + g.garrafas, litros: t.litros + g.litros }), { productos: 0, garrafas: 0, litros: 0 }), [grupos]);
@@ -534,7 +558,7 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
               <td>{g.marca || "—"}</td>
               <td className="right">{fmt(g.uso)}</td>
               <td className="right">{fmt(g.garrafas, 2)}</td>
-              <td className="right"><strong>{fmt(g.litros, 2)}</strong> L</td>
+              <td className="right"><strong>{fmt(g.litros, 2)}</strong> L<AvisoStock litros={g.litros} umbrales={umbrales.get(g.clave)} /></td>
               <td><Caducidad fecha={g.caducidad} soloTexto /></td>
               <td className="right">{abiertos.has(g.clave) ? "▲" : "▼"}</td>
             </tr>

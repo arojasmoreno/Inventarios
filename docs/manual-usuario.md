@@ -11,8 +11,9 @@ Guía para el perfil **Usuario** (operario) de la aplicación **Inventarios**: c
 | Puedes ✅ | No puedes ❌ (solo administradores) |
 |---|---|
 | Entrar con tu usuario y contraseña | Crear, editar o borrar registros de químicos, material, maquinaria, EPIs o ropa |
-| Ver **estaciones de consumo, entradas y salidas, maquinaria, documentación, gestión de informes y manuales** | Ver el panel de control, la equipación ni la gestión de centros |
+| Ver **estaciones de consumo, entradas y salidas, inventario de químicos, maquinaria, documentación, gestión de informes y manuales** | Ver el panel de control, la equipación ni la gestión de centros |
 | **Consumir material en planta escaneando el QR de la estación** o con el botón **➖ −1 ud** | Registrar entradas y salidas (tu vista es de solo lectura) o importar CSV |
+| **Consultar el inventario de químicos**: litros por producto, avisos de stock y **🖨️ imprimir la hoja de recuento** | Registrar entradas, salidas o recuentos, o exportarlo a CSV |
 | Consultar la documentación y abrir los documentos | Descargar listados en CSV o PDF (ningún listado es descargable en tu perfil) |
 | Consultar el dashboard y los informes | Dar de alta usuarios, centros, zonas o tipos |
 | Cambiar **tu** contraseña | |
@@ -50,7 +51,7 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 
 ![Vista general para usuario](img/usuario-panel.png)
 
-- **Barra lateral**: Estaciones de consumo, Entradas y salidas, Control de maquinaria, Documentación, Gestión de informes y Manuales y ayuda. Abajo, **Cuenta › Mi cuenta** y el botón **Cerrar sesión**. Son las únicas secciones que un usuario ve: el resto de la aplicación está reservada a administradores.
+- **Barra lateral**: Estaciones de consumo, Entradas y salidas, **Inventario de químicos**, Control de maquinaria, Documentación, Gestión de informes y Manuales y ayuda. Abajo, **Cuenta › Mi cuenta** y el botón **Cerrar sesión**. Son las únicas secciones que un usuario ve: el resto de la aplicación está reservada a administradores.
 - **Cabecera**: 🔎 **Buscar en todo…**, tu nombre, tu rol (**Usuario**), tu estado y los centros asignados. Pulsa **⏻ Salir** para cerrar la sesión.
 - Los datos se agrupan por **centro**: si trabajas en varios, usa el filtro de centro de cada listado.
 
@@ -62,6 +63,7 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 
 - **🚻 Estaciones de consumo** (pantalla inicial): la lista de estaciones con su stock; el botón **➖ −1 ud** de la primera columna descuenta una unidad al instante y **▶ Consumir** abre el modo estación.
 - **🔄 Entradas y salidas**: registro de movimientos de stock **en solo lectura** (los administradores son quienes registran entradas y salidas).
+- **📦 Inventario de químicos**: consulta del stock agrupado por producto, con sus avisos de stock y la hoja de recuento imprimible.
 - **🧭 Control de maquinaria**: máquinas, su estado y el histórico de situaciones.
 - **📚 Documentación**: fichas y documentos de seguridad y técnicas.
 - **📈 Gestión de informes**: dashboard, informes y auditoría **para consultar**; los botones de descarga (CSV / PDF) no aparecen en tu perfil.
@@ -71,7 +73,7 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 
 ## 5. Consultar los inventarios
 
-Tus secciones de consulta comparten los mismos controles: **🔍 Buscar…** y filtro **por centro**. En tu perfil **no aparecen los botones de descarga** (⬇️ CSV ni 🖨️ Imprimir / PDF): los listados son de solo consulta.
+Tus secciones de consulta comparten los mismos controles: **🔍 Buscar…** y filtro **por centro**. En tu perfil **no aparecen los botones de descarga** (⬇️ CSV ni 🖨️ Imprimir / PDF): los listados son de solo consulta. **Única excepción**: en el inventario de químicos puedes imprimir la **🖨️ Hoja de recuento**.
 
 ### Estaciones de consumo
 ![Estaciones de consumo](img/usuario-estaciones.png)
@@ -81,6 +83,14 @@ Lista agrupada por centro › zona › subzona con el stock de cada estación, e
 ### Entradas y salidas
 
 Registro de movimientos (consumos, entradas y salidas) **en solo lectura**: ves quién ha hecho cada movimiento, cuándo y con qué motivo; el alta de movimientos corresponde a los administradores.
+
+### Inventario de químicos
+
+Consulta agrupada de todo el stock de químicos: una fila por producto con sus **lotes en uso**, **garrafas**, **total de litros** y **próxima caducidad**; pulsa la fila para desplegar o plegar sus lotes.
+
+- Junto al total de litros aparecen los avisos de stock: **⚠️ mín. X L** si el producto ha bajado de su mínimo y **⬆ máx. X L** si supera el máximo fijado en su ficha.
+- Puedes **🔍 buscar** producto o lote, filtrar **por centro**, marcar **Ver lotes retirados** y **🖨️ imprimir la hoja de recuento** (los lotes en uso con una columna en blanco para anotar los litros reales).
+- No hay botones de entrada, salida ni recuento, ni exportación a CSV: es una pantalla de consulta.
 
 ### Control de maquinaria
 ![Maquinaria](img/usuario-maquinaria.png)
@@ -141,6 +151,7 @@ Es la acción principal de un operario: descontar unidades de un artículo al us
 | **Usuario o contraseña incorrectos** | Credenciales equivocadas o bloqueo de 15 minutos | Usa tu cuenta real o recupera la contraseña desde el enlace de acceso. |
 | Un campo en **rojo** | Ese campo es obligatorio o tiene un dato inválido | Corrige el campo marcado: el rojo desaparece al escribir. |
 | El QR no abre la estación | Cámara bloqueada o enlace copiado a medias | Abre la lista **Consumibles › Estaciones de consumo** y pulsa la estación. |
+| Ves **⚠️ mín.** o **⬆ máx.** junto a los litros de un producto | Su total está por debajo del mínimo o por encima del máximo de su ficha | Es un aviso informativo de stock; pide a un administrador que revise la reposición. |
 | Te salta a la pantalla de acceso | La sesión caducó (dura 7 días) | Vuelve a entrar. |
 | Los datos no cambian | Caché del navegador | Recarga con **Ctrl/Cmd + F5**. |
 

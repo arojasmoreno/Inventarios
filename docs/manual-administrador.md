@@ -42,7 +42,7 @@ Cuando una validación falla, además del mensaje se **sombrea en rojo claro el 
 
 | Zona | Qué contiene |
 |---|---|
-| **Barra lateral izquierda** | Las secciones: Panel de control, Consumibles, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación, Gestión de informes y **Manuales y ayuda**. Debajo, **Cuenta › Mi cuenta**. |
+| **Barra lateral izquierda** | Las secciones: Panel de control, Consumibles, **Inventario de químicos**, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación, Gestión de informes y **Manuales y ayuda**. Debajo, **Cuenta › Mi cuenta**. |
 | **Cabecera** | 🔎 **Buscar en todo…** (encuentra artículos, zonas, estaciones y usuarios), tu nombre, tu rol, el estado **Activo/Inactivo**, tus centros asignados y el botón **⏻ Salir**. |
 | **Zona central** | El contenido de la sección elegida. |
 
@@ -68,7 +68,9 @@ Cuando una validación falla, además del mensaje se **sombrea en rojo claro el 
 
 ![Sección de productos químicos](img/admin-quimicos.png)
 
-Pestañas disponibles: **Químicos · Material de limpieza · Estaciones de consumo · Tipos de consumible · Soportes · Entradas / Salidas · Consumos**.
+Pestañas disponibles: **Químicos · Inventario por producto · Material de limpieza · Estaciones de consumo · Tipos de consumible · Soportes · Entradas / Salidas · Consumos**.
+
+> **Ficha vs. lote**: en **Químicos** se dan de alta las *fichas* de producto (una fila por producto) y en **Inventario por producto** se gestionan sus *lotes* (nº de lote, fechas, garrafas y litros). El menú lateral muestra además **📦 Inventario de químicos**, la misma pantalla del inventario como sección propia.
 
 En cualquier listado encontrarás:
 
@@ -76,13 +78,29 @@ En cualquier listado encontrarás:
 - **⬇️ CSV** para exportar lo que esté filtrado (solo administradores).
 - **＋ Nuevo registro** para dar de alta (los campos con **\*** son obligatorios).
 - **Precio por garrafa / por unidad (€)**: campo **opcional**. Rellénalo cuando conozcas el coste y los informes calcularán el **valor del inventario**; si un producto no tiene precio, déjalo en blanco y no contará.
+- **Stock mínimo en litros (L)** (obligatorio) y **Stock máximo en litros (L)** (opcional, en blanco = sin máximo): son los umbrales de la ficha. El inventario compara con ellos el total de litros de cada producto y muestra el aviso **⚠️ mín. X L** o **⬆ máx. X L** (véase 4.1).
 - Iconos de fila para **editar**, **borrar** y, cuando aplica, la **etiqueta QR**.
 
 ![Formulario con validación fallida: los campos obligatorios quedan en rojo](img/admin-formulario-error.png)
 
 Si pulsas **Guardar** con un campo obligatorio vacío o con un dato inválido, aparece el mensaje de error **y el campo se sombrea en rojo** hasta que lo corrijas.
 
-### 4.1 Entradas / Salidas de stock
+### 4.1 Inventario por producto (litros, lotes y recuento)
+
+La pestaña **Inventario por producto** (y la sección del menú **📦 Inventario de químicos**) agrupa el stock por producto y marca y despliega sus lotes:
+
+- Una fila por producto con **lotes en uso**, **garrafas**, **total de litros** y **próxima caducidad**; pulsa la fila para abrir o cerrar el desglose de sus lotes.
+- **Avisos de stock**: junto al total de litros aparece **⚠️ mín. X L** cuando el producto ha bajado de su mínimo y **⬆ máx. X L** cuando supera el máximo fijado. Los umbrales salen de la ficha (*Stock mínimo / máximo en litros*); sin umbral fijado no se muestra nada.
+- **Filtros**: 🔍 buscar producto o lote, filtro **por centro** y la casilla **Ver lotes retirados** (agotados o descartados).
+- **⬇️ CSV** (solo administradores y administradores de centros) exporta los lotes filtrados con sus fechas, litros y precio.
+- **🖨️ Hoja de recuento** imprime la lista de lotes en uso con una columna en blanco para anotar a mano los litros reales (firmada por el responsable).
+- **↗ Salida**: registra una salida de litros; el descuento se reparte por caducidad — **FEFO**, primero lo que caduca antes — y retira los lotes que quedan vacíos.
+- **＋ Nueva entrada**: da de alta un lote de un producto ya existente (el producto en sí se crea antes en la pestaña Químicos).
+- **📋 Recuento**: introduce los litros reales de cada lote; al validar, el stock se ajusta, los lotes vacíos se retiran y la hoja queda en **Últimos recuentos** (fecha, usuario, observaciones, lotes y diferencia).
+
+El perfil **Usuario** ve esta pantalla en consulta: puede buscar, filtrar, ver los avisos de stock e imprimir la hoja de recuento, pero no exporta CSV ni registra entradas, salidas o recuentos.
+
+### 4.2 Entradas / Salidas de stock
 
 ![Entradas y salidas](img/admin-entradas.png)
 
@@ -91,7 +109,7 @@ Si pulsas **Guardar** con un campo obligatorio vacío o con un dato inválido, a
 3. Indica la **cantidad** y un **motivo** (opcional pero recomendado).
 4. Pulsa el botón de registrar. El movimiento queda en **Últimos movimientos** y en la auditoría.
 
-### 4.2 Estaciones de consumo (QR)
+### 4.3 Estaciones de consumo (QR)
 
 Las estaciones son los puntos de la planta (zona › subzona › soporte) donde se coloca un artículo. **Al escanear su QR el stock se descuenta automáticamente**.
 
@@ -252,11 +270,12 @@ Escribe en **🔎 Buscar en todo…** (cabecera) al menos 2 letras. Los resultad
 | Crear/editar usuarios, tipos, tallas e importar CSV | ✅ | — | — |
 | Centros, documentación y entregas de equipación | ✅ | ✅ (sus centros) | solo lectura |
 | Entradas y salidas de stock | ✅ (registro) | solo lectura | solo lectura |
+| Inventario de químicos (entradas, salidas y recuento) | ✅ | solo lectura (puede consultar y imprimir la hoja) | solo lectura (puede consultar y imprimir la hoja) |
 | Consumir en modo estación (QR) | ✅ | ✅ | ✅ |
 | Descargar CSV / Imprimir PDF de listados e informes | ✅ | ✅ | ❌ |
 | Copias de seguridad (descargas por hoja) | ✅ | ❌ | ❌ |
 | Enviar el dashboard por correo | ✅ | ❌ | ❌ |
-| Secciones visibles en el menú | todas | todas | estaciones de consumo, entradas y salidas, maquinaria, documentación, gestión de informes y manuales |
+| Secciones visibles en el menú | todas | todas | estaciones de consumo, entradas y salidas, inventario de químicos, maquinaria, documentación, gestión de informes y manuales |
 | Cambiar su propia contraseña | ✅ | ✅ | ✅ |
 
 ---

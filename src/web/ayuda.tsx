@@ -27,7 +27,7 @@ const MANUALES: Manual[] = [
     icono: "🛠️",
     titulo: "Manual del administrador",
     publico: "Administradores",
-    resumen: "Guía completa: acceso, panel de control, altas y ediciones de registros, estaciones con QR, usuarios, centros, informes, copias de seguridad y mantenimiento de la aplicación.",
+    resumen: "Guía completa: acceso, panel de control, altas y ediciones de registros, inventario de químicos con entradas, salidas y recuentos, estaciones con QR, usuarios, centros, informes, copias de seguridad y mantenimiento de la aplicación.",
     pdf: "docs/manual-administrador.pdf",
     md: manualAdminMd,
   },
@@ -36,7 +36,7 @@ const MANUALES: Manual[] = [
     icono: "🧭",
     titulo: "Manual del usuario",
     publico: "Operarios y usuarios de consulta",
-    resumen: "Guía breve para el día a día: entrar, qué secciones ves, consumir material en planta con el QR y cambiar tu contraseña.",
+    resumen: "Guía breve para el día a día: entrar, qué secciones ves, consultar el inventario de químicos, consumir material en planta con el QR y cambiar tu contraseña.",
     pdf: "docs/manual-usuario.pdf",
     md: manualUsuarioMd,
   },
@@ -231,6 +231,7 @@ export function AyudaPage({ user }: { user: { rol: string } }) {
         <li><strong>«Usuario o contraseña incorrectos»</strong>: revisa mayúsculas; tras 5 fallos en 15 minutos la cuenta se bloquea 15 minutos.</li>
         <li><strong>«Failed to fetch»</strong>: no hay conexión con el servidor (red, VPN o firewall); recarga la página.</li>
         <li><strong>Un campo en rojo</strong>: ese dato es obligatorio o no es válido; el color desaparece al corregirlo.</li>
+        <li><strong>⚠️ mín. / ⬆ máx. junto a los litros</strong>: el total del producto ha bajado de su mínimo o superado su máximo (ficha del producto en Consumibles › Químicos).</li>
         <li><strong>Olvidé mi contraseña</strong>: en la pantalla de acceso, «¿Has olvidado tu contraseña?».</li>
         <li><strong>Contraseña propia</strong>: se cambia en <em>Cuenta › Mi cuenta</em>.</li>
         <li><strong>Los botones de descarga (CSV / PDF) no aparecen</strong>: son exclusivos de los administradores.</li>
