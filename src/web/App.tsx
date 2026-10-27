@@ -356,7 +356,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   const gruposBase = user.rol === "usuario" ? NAV_USUARIO : NAV;
   const nav = (hash: string) => gruposBase.flatMap((g) => g.items).find((n) => n.hash === hash) ?? gruposBase[0].items[0];
   const permitida = user.rol !== "usuario" || esConsumibles || esGestionInformes
-    || route === "#/maquinaria" || route === "#/tipos" || route === "#/documentacion"
+    || route.startsWith("#/maquinaria") || route === "#/tipos" || route === "#/documentacion"
     || route === "#/ayuda" || route === "#/cuenta";
   useEffect(() => { if (!permitida) window.location.hash = "#/estaciones"; }, [permitida, route]);
   const flat = gruposBase.flatMap((g) => g.items);
@@ -375,7 +375,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;
   else if (esGestionInformes) page = <GestionInformesPage key={route} user={user} />;
-  else if (route === "#/maquinaria" || route === "#/tipos") page = <MaquinariaPage key={route} user={user} />;
+  else if (route.startsWith("#/maquinaria") || route === "#/tipos") page = <MaquinariaPage key={route} user={user} />;
   else if (route === "#/documentacion") page = <DocumentosPage user={user} />;
   else if (route === "#/equipacion" || route === "#/ropa" || route === "#/epis" || route === "#/tallas" || route === "#/tipos-equipo" || route.startsWith("#/entregas")) page = <EquipacionPage user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;

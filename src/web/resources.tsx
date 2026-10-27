@@ -50,12 +50,6 @@ const origenCol: Column = {
     : s === "fabrica" ? <span className="badge info">🏭 Fábrica</span> : <span className="badge muted">—</span>; },
   csv: r => origenLabel(r.origen),
 };
-// Estado actual de una máquina: sale del último registro de su histórico.
-const estadoBadge = (estado: unknown) => {
-  const e = String(estado ?? "");
-  const cls = e === "Operativo" ? "ok" : e === "En reparación" ? "warn" : e === "Averiado" ? "danger" : e === "Baja" ? "muted" : "info";
-  return <span className={`badge ${cls}`}>{e || "—"}</span>;
-};
 const centerCol: Column = { key: "centro_nombre", label: "Centro", render: r => String(r.centro_nombre ?? "—"), csv: r => String(r.centro_nombre ?? "—") };
 const stockMin = { name: "stock_minimo", label: "Stock mínimo (alerta)", type: "integer" as const };
 // Precio unitario opcional (valor del inventario). Si no se conoce el precio
@@ -183,9 +177,14 @@ export const MAQUINARIA: ResourceConfig = {
     centerCol,
     { key: "zona_nombre", label: "Zona", render: r => String(r.zona_nombre ?? "—") },
     { key: "subzona_nombre", label: "Subzona", render: r => String(r.subzona_nombre ?? "—") },
-    { key: "estado", label: "Estado", render: estadoBadge },
     fotoCol("/api/maquinaria"),
   ],
+  // «Histórico» por máquina: abre la pestaña del histórico filtrada por esa
+  // máquina, donde se ven sus fechas, estados y notas.
+  extraAction: {
+    icon: "🕘", label: "Histórico", title: "Ver el histórico de esta máquina",
+    run: row => { window.location.hash = `#/maquinaria?tab=historial&maquina=${encodeURIComponent(String(row.id))}`; },
+  },
 };
 export const CENTROS: ResourceConfig = {
   title: "Centros", subtitle: "Plantas o ubicaciones donde se guarda el material", endpoint: "/api/centros", csvName: "centros", searchKeys: ["nombre", "ciudad", "responsable", "direccion"], perms: { read: "all", create: "centros", update: "centros", delete: "centros" },

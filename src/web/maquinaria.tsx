@@ -23,11 +23,16 @@ const sitBadge = (nombre: unknown) => {
 };
 
 /** Sección «Control de maquinaria»: la tabla de máquinas (solo sus datos y
- *  ubicación), el histórico de situaciones (fecha + situación, marca, modelo y
- *  centro; de ahí sale el estado actual) y el catálogo de situaciones. */
+ *  ubicación), el histórico por máquina (fecha, estado y notas de cada cambio,
+ *  filtrable por máquina, centro, estado y periodo; de ahí sale el estado
+ *  actual) y el catálogo de situaciones. */
 export function MaquinariaPage({ user }: { user: { rol: string; centro_id: number | null } }) {
   const hash = typeof window !== "undefined" ? window.location.hash : "";
-  const [tab, setTab] = useState<Tab>(hash === "#/tipos" ? "tipos" : "maquinaria");
+  // «#/maquinaria?tab=historial&maquina=ID»: enlace directo al histórico de una
+  // máquina (acción «Histórico» de la tabla de maquinaria).
+  const params = new URLSearchParams(hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "");
+  const maquinaEnlace = params.get("maquina") ?? "";
+  const [tab, setTab] = useState<Tab>(params.get("tab") === "historial" ? "historial" : hash === "#/tipos" ? "tipos" : "maquinaria");
 
   return <>
     <div className="toolbar no-print" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -42,15 +47,15 @@ export function MaquinariaPage({ user }: { user: { rol: string; centro_id: numbe
       </span>
     </div>
     {tab === "maquinaria" && <ResourcePage key="maquinaria" config={MAQUINARIA} user={user} />}
-    {tab === "historial" && <HistorialMaquinaria key="historial" user={user} />}
+    {tab === "historial" && <HistorialMaquinaria key={`historial-${maquinaEnlace}`} user={user} maquinaEnlace={maquinaEnlace} />}
     {tab === "situaciones" && <ResourcePage key="situaciones" config={SITUACIONES} user={user} />}
     {tab === "tipos" && <ResourcePage key="tipos" config={TIPOS} user={user} />}
   </>;
 }
 
-/** Histórico de situaciones: registro por máquina con fecha, situación,
- *  marca, modelo y centro, con borrado (que recalcula el estado). */
-function HistorialMaquinaria({ user }: { user: { rol: string } }) {
+/** Histórico por máquina: fecha, estado y notas de cada cambio, con filtros
+ *  por máquina, centro, estado y periodo, y borrado (recalcula el estado). */
+function HistorialMaquinaria({ user, maquinaEnlace = "" }: { user: { rol: string }; maquinaEnlace?: string }) {
   const admin = user.rol === "admin";
   // Los usuarios consultan el histórico pero no lo exportan.
   const puedeDescargar = user.rol !== "usuario";
@@ -61,7 +66,8 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
-  const [maquinaId, setMaquinaId] = useState("all");
+  const [maquinaId, setMaquinaId] = useState(maquinaEnlace || "all");
+  const [centroId, setCentroId] = useState("all");
   const [situacionId, setSituacionId] = useState("all");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
@@ -91,6 +97,7 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
     const needle = q.trim().toLowerCase();
     return items.filter(r =>
       (maquinaId === "all" || String(r.maquina_id) === maquinaId) &&
+      (centroId === "all" || String(r.centro_id ?? "") === centroId) &&
       (situacionId === "all" || String(r.situacion_id) === situacionId) &&
       (!desde || String(r.fecha ?? "") >= desde) &&
       (!hasta || String(r.fecha ?? "") <= hasta) &&
@@ -99,19 +106,21 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
   })();
 
   const exportCsv = () => downloadCsv(`historial-maquinaria-${hoy()}.csv`,
-    ["Fecha", "Máquina", "Nº serie", "Situación", "Marca", "Modelo", "Centro"],
+    ["Fecha", "Máquina", "Nº serie", "Estado", "Marca", "Modelo", "Centro", "Notas"],
     filtered.map(r => [
       String(r.fecha ?? ""), String(r.maquina_nombre ?? ""), String(r.numero_serie ?? ""),
       String(r.situacion_nombre ?? ""), String(r.marca ?? ""), String(r.modelo ?? ""), String(r.centro_nombre ?? ""),
+      String(r.notas ?? ""),
     ]));
 
-  const openForm = () => { setFormError(null); setCampoErr([]); setForm({ maquina_id: "", fecha: hoy(), situacion_id: "", marca: "", modelo: "", centro_id: "" }); };
+  const openForm = () => { setFormError(null); setCampoErr([]); setForm({ maquina_id: "", fecha: hoy(), situacion_id: "", marca: "", modelo: "", centro_id: "", notas: "" }); };
   // Al escribir en un campo se le quita el sombreado de error.
   const limpiaErr = (k: string) => setCampoErr(prev => prev.filter(x => x !== k));
   const ETIQUETAS = [
     { clave: "maquina_id", etiqueta: "Máquina" }, { clave: "fecha", etiqueta: "Fecha" },
     { clave: "situacion_id", etiqueta: "Situación" }, { clave: "marca", etiqueta: "Marca" },
     { clave: "modelo", etiqueta: "Modelo" }, { clave: "centro_id", etiqueta: "Centro" },
+    { clave: "notas", etiqueta: "Notas" },
   ];
   // Al elegir otra máquina se precargan sus marca, modelo y centro.
   const elegirMaquina = (id: string) => {
@@ -134,6 +143,7 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
         marca: String(form.marca || "").trim() || null,
         modelo: String(form.modelo || "").trim() || null,
         centro_id: form.centro_id === "" ? null : Number(form.centro_id),
+        notas: String(form.notas ?? "").trim() || null,
       });
       setForm(null); setToast({ message: "Situación registrada", kind: "ok" });
       await load();
@@ -156,6 +166,10 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
         <option value="all">Todas las máquinas</option>
         {maquinas.map(m => <option key={String(m.id)} value={String(m.id)}>{String(m.nombre ?? `#${String(m.id)}`)}</option>)}
       </select>
+      <select className="input" style={{ maxWidth: 200 }} value={centroId} onChange={e => setCentroId(e.target.value)} aria-label="Filtrar por centro">
+        <option value="all">Todos los centros</option>
+        {centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
+      </select>
       <select className="input" style={{ maxWidth: 200 }} value={situacionId} onChange={e => setSituacionId(e.target.value)} aria-label="Filtrar por situación">
         <option value="all">Todas las situaciones</option>
         {situaciones.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.nombre)}</option>)}
@@ -169,10 +183,10 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
     <div className="card">
       {loading ? <div className="loading">Cargando…</div>
         : error ? <div className="empty">⚠️ {error}</div>
-        : !filtered.length ? <div className="empty"><span className="icon">🕘</span><strong>Sin registros</strong><p>{q || maquinaId !== "all" || situacionId !== "all" || desde || hasta ? "Prueba con otra búsqueda u otro filtro." : "Pulsa «Registrar situación» para añadir el primero."}</p></div>
+        : !filtered.length ? <div className="empty"><span className="icon">🕘</span><strong>Sin registros</strong><p>{q || maquinaId !== "all" || centroId !== "all" || situacionId !== "all" || desde || hasta ? "Prueba con otra búsqueda u otro filtro." : "Pulsa «Registrar situación» para añadir el primero."}</p></div>
         : <div className="table-scroll"><table>
             <thead><tr>
-              <th>Fecha</th><th>Máquina</th><th>Situación</th><th>Marca</th><th>Modelo</th><th>Centro</th>
+              <th>Fecha</th><th>Máquina</th><th>Estado</th><th>Marca</th><th>Modelo</th><th>Centro</th><th>Notas</th>
               {admin && <th className="right">Acciones</th>}
             </tr></thead>
             <tbody>{filtered.map(r => <tr key={String(r.id)}>
@@ -182,12 +196,13 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
               <td>{String(r.marca ?? "—")}</td>
               <td>{String(r.modelo ?? "—")}</td>
               <td>{String(r.centro_nombre ?? "—")}</td>
+              <td>{String(r.notas ?? "—")}</td>
               {admin && <td className="right"><div className="row-actions"><button className="btn danger small" onClick={() => void remove(r)}>🗑️ Borrar</button></div></td>}
             </tr>)}</tbody>
           </table></div>}
     </div>
     <p className="no-print" style={{ color: "var(--muted)", margin: 0 }}>
-      {filtered.length} de {items.length} registros · fecha, situación, marca, modelo y centro de cada cambio
+      {filtered.length} de {items.length} registros · fecha, estado y notas de cada cambio de máquina
     </p>
 
     {form && <Modal title="Registrar situación" subtitle="Pasa a ser el estado actual de la máquina" onClose={() => setForm(null)}>
@@ -226,6 +241,10 @@ function HistorialMaquinaria({ user }: { user: { rol: string } }) {
               <option value="">El de la máquina</option>
               {centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}
             </select>
+          </div>
+          <div className={"full field" + (campoErr.includes("notas") ? " error" : "")}>
+            <label>Notas</label>
+            <textarea className={"input" + (campoErr.includes("notas") ? " error" : "")} rows={3} value={String(form.notas ?? "")} onChange={e => { limpiaErr("notas"); setForm({ ...form, notas: e.target.value }); }} placeholder="Observaciones de este registro (mantenimiento, repuestos, incidencias…)" />
           </div>
         </div>
         <div className="modal-footer">

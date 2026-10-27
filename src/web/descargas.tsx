@@ -33,7 +33,7 @@ const HOJAS: Hoja[] = [
   { id: "material", icono: "🧽", nombre: "Material de limpieza", csvName: "material-limpieza",
     descripcion: "Referencias por color, unidades y origen.", endpoint: "/api/material-limpieza", filtroServidor: true, config: MATERIAL },
   { id: "maquinaria", icono: "🧭", nombre: "Maquinaria", csvName: "maquinaria",
-    descripcion: "Máquinas con su tipo, ubicación y estado actual.", endpoint: "/api/maquinaria", filtroServidor: true, config: MAQUINARIA },
+    descripcion: "Máquinas con su tipo, marca, modelo y ubicación.", endpoint: "/api/maquinaria", filtroServidor: true, config: MAQUINARIA },
   { id: "epis", icono: "🦺", nombre: "EPIs", csvName: "epis",
     descripcion: "Equipos de protección con stock y próxima revisión.", endpoint: "/api/epis", filtroServidor: true, config: EPIS },
   { id: "ropa", icono: "🥼", nombre: "Ropa de trabajo", csvName: "ropa-trabajo",

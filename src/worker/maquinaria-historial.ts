@@ -41,9 +41,8 @@ maquinariaHistorial.use("*", requireAuth);
 maquinariaHistorial.get("/", async (c) => {
   const raw = Number(c.req.query("maquina_id"));
   const filtrar = Number.isInteger(raw) && raw >= 1;
-  const res = await c.env.DB.prepare(
-    `SELECT h.id, h.maquina_id, h.fecha, h.situacion_id, st.nombre AS situacion_nombre,
-            h.marca, h.modelo, h.centro_id, c.nombre AS centro_nombre,
+  const res = await c.env.DB.prepare(     `SELECT h.id, h.maquina_id, h.fecha, h.situacion_id, st.nombre AS situacion_nombre,
+            h.marca, h.modelo, h.notas, h.centro_id, c.nombre AS centro_nombre,
             m.nombre AS maquina_nombre, m.numero_serie, m.tipo
      FROM maquinaria_historial h
      JOIN situaciones st ON st.id = h.situacion_id
@@ -73,6 +72,7 @@ maquinariaHistorial.post("/", async (c) => {
   const fecha = typeof body.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha) ? body.fecha : null;
   const marca = typeof body.marca === "string" && body.marca.trim() ? body.marca.trim() : (maquina.marca ?? null);
   const modelo = typeof body.modelo === "string" && body.modelo.trim() ? body.modelo.trim() : (maquina.modelo ?? null);
+  const notas = typeof body.notas === "string" && body.notas.trim() ? body.notas.trim().slice(0, 2000) : null;
   const centroRaw = Number(body.centro_id);
   const centroId = Number.isInteger(centroRaw) && centroRaw >= 1 ? centroRaw : (maquina.centro_id ?? null);
   if (centroId !== null) {
@@ -80,8 +80,8 @@ maquinariaHistorial.post("/", async (c) => {
     if (!ce) return c.json({ error: "El centro seleccionado no existe" }, 400);
   }
   await c.env.DB.prepare(
-    "INSERT INTO maquinaria_historial (maquina_id, fecha, situacion_id, marca, modelo, centro_id) VALUES (?, COALESCE(?, date('now')), ?, ?, ?, ?)",
-  ).bind(maquinaId, fecha, situacionId, marca, modelo, centroId).run();
+    "INSERT INTO maquinaria_historial (maquina_id, fecha, situacion_id, marca, modelo, centro_id, notas) VALUES (?, COALESCE(?, date('now')), ?, ?, ?, ?, ?)",
+  ).bind(maquinaId, fecha, situacionId, marca, modelo, centroId, notas).run();
   await sincronizarEstado(c.env.DB, maquinaId);
   await logMovimiento(c.env.DB, user, "situacion", "maquinaria", maquinaId,
     `Situación «${String(sit.nombre)}» registrada en «${String(maquina.nombre)}»`, null);
