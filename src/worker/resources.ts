@@ -113,7 +113,8 @@ export const materialSpec: CrudSpec = {
 // (centro → zona → subzona). Sin cantidad y sin estado editable: el estado es
 // el último registro del histórico (columna derivada `estado`, sincronizada).
 export const maquinariaSpec: CrudSpec = {
-  table: "maquinaria", orderBy: "id", refCentro: true,
+  // La tabla de máquinas se muestra ordenada por tipo (luego por nombre).
+  table: "maquinaria", orderBy: "tipo", refCentro: true,
   extraJoins: [" LEFT JOIN zonas z ON z.id = t.zona_id", " LEFT JOIN subzonas sb ON sb.id = t.subzona_id"],
   extraSelect: [
     "z.nombre AS zona_nombre",
@@ -311,7 +312,8 @@ export const ropa = createCrud(ropaSpec);
 // sección del frontend; no se expone desde aquí.
 // ---- Tipos de maquinaria (CRUD gestionado) ----
 export const tiposSpec: CrudSpec = {
-  table: "tipos_maquinaria", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
+  // La lista de tipos de maquinaria se muestra ordenada por nombre.
+  table: "tipos_maquinaria", orderBy: "nombre", read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "nombre", label: "Nombre del tipo", type: "text", required: true, unique: true, maxLength: 80 },
     { name: "notas", label: "Notas", type: "textarea", required: false, maxLength: 2000 },
