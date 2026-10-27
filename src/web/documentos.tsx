@@ -6,8 +6,26 @@ import { Toast, camposConError } from "./ui";
 // de ella. Los que no lo son siguen abriéndose en una pestaña.
 const PdfViewer = lazy(() => import("./pdf-viewer"));
 
-/** ¿La URL de la ficha apunta directamente a un PDF? */
-const esPdf = (url: string): boolean => /\.pdf([?#].*)?$/i.test(url.trim());
+/** ID de un archivo de Google Drive (…/file/d/ID/view o …?id=ID). */
+const driveId = (url: string): string | null => {
+  const u = url.trim();
+  const m = /drive\.google\.com\/file\/d\/([\w-]{10,})/.exec(u);
+  if (m) return m[1];
+  if (!/^https?:\/\/(drive|docs)\.google\.com\//i.test(u)) return null;
+  const q = /[?&]id=([\w-]{10,})/.exec(u);
+  return q ? q[1] : null;
+};
+
+/** ¿La ficha apunta a un PDF? (acaba en .pdf o es un archivo de Google Drive,
+ *  que es como se guardan la mayoría de fichas del catálogo). */
+const esPdf = (url: string): boolean => /\.pdf([?#].*)?$/i.test(url.trim()) || driveId(url) !== null;
+
+/** URL que el lector puede descargar: la página de vista de Drive devuelve HTML,
+ *  así que se usa su descarga directa (que sí sirve los bytes con CORS). */
+const urlLectura = (url: string): string => {
+  const id = driveId(url);
+  return id ? `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t` : url.trim();
+};
 
 type Row = Record<string, unknown>;
 
@@ -170,7 +188,7 @@ export function DocumentosPage({ user }: { user: { rol: string } }) {
       }}
     />}
     {leyendo && <Suspense fallback={null}>
-      <PdfViewer src={String(leyendo.url)} title={String(leyendo.nombre)} onClose={() => setLeyendo(null)} />
+      <PdfViewer src={urlLectura(String(leyendo.url))} openUrl={String(leyendo.url)} title={String(leyendo.nombre)} onClose={() => setLeyendo(null)} />
     </Suspense>}
     {toast && <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} />}
   </div>;

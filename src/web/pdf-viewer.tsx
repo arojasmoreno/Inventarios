@@ -23,6 +23,9 @@ type RenderTaskLike = { promise: Promise<void>; cancel: () => void };
 interface PdfViewerProps {
   /** URL del PDF (misma origen o externa). */
   src: string;
+  /** Enlace de repuesto del botón «Abrir en una pestaña» (si difiere de `src`,
+   *  p. ej. la página de vista de Drive cuando la descarga directa falla). */
+  openUrl?: string;
   /** Título que se muestra en la barra del lector. */
   title: string;
   /** Cierra el lector y vuelve a la pantalla anterior. */
@@ -30,7 +33,7 @@ interface PdfViewerProps {
 }
 
 /** Modal a pantalla completa con navegación por hojas (← →), zoom y cierre (Esc). */
-export default function PdfViewer({ src, title, onClose }: PdfViewerProps) {
+export default function PdfViewer({ src, openUrl, title, onClose }: PdfViewerProps) {
   const [numPages, setNumPages] = useState(0);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
@@ -189,7 +192,7 @@ export default function PdfViewer({ src, title, onClose }: PdfViewerProps) {
           <div className="pdf-msg">
             <strong>⚠️ No se pudo mostrar el PDF aquí.</strong>
             <span className="pdf-msg-det">{error}</span>
-            <a className="pdf-btn" href={src} target="_blank" rel="noreferrer">↗ Abrir en una pestaña</a>
+            <a className="pdf-btn" href={openUrl ?? src} target="_blank" rel="noreferrer">↗ Abrir en una pestaña</a>
           </div>
         )}
         {!cargando && !error && numPages > 0 && <canvas ref={canvasRef} />}
