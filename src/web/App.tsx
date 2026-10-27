@@ -175,15 +175,36 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   };
   if (view === "recover") return <Recover onBack={() => setView("login")} />;
   if (view === "code") return <CodeLogin onLoggedIn={onLoggedIn} onBack={() => setView("login")} />;
-  return <div className="login-wrap"><form className="login-card" onSubmit={submit}>
-    <h1>Inventarios</h1><p className="sub">Químicos · Material de limpieza · Maquinaria</p>
+  // Portada pública (estilo Doc Manager): presentación de la aplicación a la
+  // izquierda y tarjeta de acceso a la derecha. El botón lleva al formulario.
+  const irAlAcceso = () => {
+    document.querySelector(".login-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => document.getElementById("u")?.focus(), 350);
+  };
+  return <div className="login-wrap landing">
+    <section className="landing-intro">
+      <span className="landing-eyebrow">📦 Gestión de planta</span>
+      <h1>Inventarios</h1>
+      <p className="landing-sub">Químicos · Material de limpieza · Maquinaria</p>
+      <p className="landing-desc">Gestiona el inventario de tus centros de trabajo desde un solo lugar: consumibles con control de stock y caducidad, estaciones de consumo con QR, maquinaria con su histórico de estados y equipación de operarios, con informes y manuales listos para descargar.</p>
+      <div className="landing-features">
+        <div className="landing-feature"><span className="fi">🧴</span><div><h3>Consumibles</h3><p>Fichas de químicos y limpieza con lotes, litros y alertas de stock.</p></div></div>
+        <div className="landing-feature"><span className="fi">🚻</span><div><h3>Estaciones QR</h3><p>Descuentan el stock al escanear, agrupadas por centro y zona.</p></div></div>
+        <div className="landing-feature"><span className="fi">🧭</span><div><h3>Maquinaria</h3><p>Histórico de situaciones por máquina y fecha: operativo, averiado, baja…</p></div></div>
+        <div className="landing-feature"><span className="fi">📈</span><div><h3>Informes</h3><p>Panel con KPIs, exportaciones CSV y manuales descargables.</p></div></div>
+      </div>
+      <div className="landing-cta">
+        <button type="button" className="landing-btn" onClick={irAlAcceso}>🔑 Entrar en la aplicación</button>
+      </div>
+    </section>
+    <form className="login-card" onSubmit={submit}>
+    <h1>Iniciar sesión</h1><p className="sub">Accede con tu usuario para continuar</p>
     {error && <div className="form-error">{error}</div>}
     <div className={"field" + (campoErr.includes("u") ? " error" : "")} style={{ marginBottom: 12 }}><label htmlFor="u">Usuario</label><input id="u" className={"input" + (campoErr.includes("u") ? " error" : "")} autoComplete="username" value={username} onChange={(e) => { setCampoErr([]); setUsername(e.target.value); }} required /></div>
     <div className={"field" + (campoErr.includes("p") ? " error" : "")} style={{ marginBottom: 16 }}><label htmlFor="p">Contraseña</label><input id="p" className={"input" + (campoErr.includes("p") ? " error" : "")} type="password" autoComplete="current-password" value={password} onChange={(e) => { setCampoErr([]); setPassword(e.target.value); }} required /></div>
     <button className="btn" style={{ width: "100%" }} disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button>
     <button type="button" className="login-link" onClick={() => setView("code")}>🔑 Entrar con código por correo</button>
     <button type="button" className="login-link" onClick={() => setView("recover")}>¿Has olvidado tu contraseña?</button>
-    <div className="login-hint">Primer acceso: <strong>admin / admin123</strong> (administrador) y <strong>operario / operario123</strong> (usuario). Cambia las contraseñas desde <em>Usuarios</em> o <em>Mi cuenta</em>.</div>
   </form></div>;
 }
 
