@@ -13,6 +13,7 @@
   "dependencies": {
     "hono": "^4.13.13",
     "jsqr": "^1.4.0",
+    "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

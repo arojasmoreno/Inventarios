@@ -12,6 +12,9 @@ export interface ResourceConfig {
   // Selects de otros recursos (operario, prenda…): endpoint + etiqueta por fila.
   links?: Record<string, {
     endpoint?: string; endpoints?: string[]; label: (r: Row) => string; value?: (r: Row) => string | number;
+    // Filtrado fijo de las opciones cargadas (p. ej. solo los tipos de
+    // consumible cuyo artículo es de esta tabla).
+    filter?: (r: Row) => boolean;
     // Select en cascada: `parent` es el campo del formulario cuyo valor (en
     // `parentField` de cada fila) filtra las opciones de este campo.
     parent?: string; parentField?: string;
@@ -127,9 +130,31 @@ export const QUIMICOS: ResourceConfig = {
   ],
 };
 export const MATERIAL: ResourceConfig = {
-  title: "Material de limpieza", subtitle: "Segregado por colores (código de zona de uso) y origen", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["nombre", "color", "centro_nombre"], centroFilter: true, origenFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  fields: [{ name: "codigo", label: "Código", type: "text" }, { name: "marca", label: "Marca", type: "text" }, { name: "nombre", label: "Material", type: "text", required: true }, { name: "color", label: "Color", type: "enum", required: true, enumValues: colors }, { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true }, { name: "origen", label: "Origen", type: "select", required: true, options: ORIGEN_OPTS, help: "¿De quién es el consumible?" }, precioField("Precio por unidad (€)"), center, notes, stockMin, fotoField],
-  columns: [{ key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") }, { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") }, { key: "nombre", label: "Material" }, { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> }, { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") }, precioCol, origenCol, centerCol, { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") }, fotoCol("/api/material-limpieza")],
+  title: "Material de limpieza", subtitle: "Código, marca, color, tipo de consumible y origen", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["codigo", "marca", "nombre", "color", "tipo_consumible_nombre", "centro_nombre"], centroFilter: true, origenFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  // El select de tipo solo ofrece tipos de consumible cuyo artículo es
+  // material de limpieza (los químicos/maquinaria no aplican aquí).
+  links: { tipo_consumible_id: { endpoint: "/api/consumibles-tipos", label: r => String(r.nombre), filter: r => String(r.articulo_tipo ?? "") === "material_limpieza" } },
+  fields: [
+    { name: "codigo", label: "Código", type: "text" },
+    { name: "marca", label: "Marca", type: "text" },
+    { name: "nombre", label: "Material", type: "text", required: true },
+    { name: "color", label: "Color", type: "enum", required: true, enumValues: colors },
+    { name: "tipo_consumible_id", label: "Tipo de consumible", type: "select", required: true },
+    { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true },
+    { name: "origen", label: "Origen", type: "select", required: true, options: ORIGEN_OPTS, help: "¿De quién es el consumible?" },
+    precioField("Precio por unidad (€)"), center, notes, stockMin, fotoField,
+  ],
+  columns: [
+    { key: "codigo", label: "Código", render: r => String(r.codigo ?? "—") },
+    { key: "marca", label: "Marca", render: r => String(r.marca ?? "—") },
+    { key: "nombre", label: "Material" },
+    { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> },
+    { key: "tipo_consumible_nombre", label: "Tipo de consumible", render: r => String(r.tipo_consumible_nombre ?? "—"), csv: r => String(r.tipo_consumible_nombre ?? "") },
+    { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") },
+    precioCol, origenCol, centerCol,
+    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
+    fotoCol("/api/material-limpieza"),
+  ],
 };
 export const MAQUINARIA: ResourceConfig = {
   title: "Maquinaria", subtitle: "Marca, modelo, nº de serie, tipo y ubicación · el estado sale del histórico", endpoint: "/api/maquinaria", csvName: "maquinaria", searchKeys: ["nombre", "marca", "modelo", "tipo", "numero_serie", "zona_nombre", "subzona_nombre", "centro_nombre"], centroFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -371,7 +396,7 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
       // cuyo parentField coincida con el valor elegido en el padre.
       const padre = link.parent ? String(editing?.values[link.parent] ?? "") : null;
       const key = link.parentField ?? link.parent ?? "";
-      const rows = (linkRows[f.name] ?? []).filter(r => padre === null || String(r[key] ?? "") === padre);
+      const rows = (linkRows[f.name] ?? []).filter(r => (padre === null || String(r[key] ?? "") === padre) && (!link.filter || link.filter(r)));
       return { ...f, options: rows.map(r => ({ value: link.value ? link.value(r) : Number(r.id), label: link.label(r) })) };
     }
     if (f.name === "usuario_id") return { ...f, options: users.map(c => ({ value: Number(c.id), label: `${String(c.nombre)} (${String(c.username)})` })) };

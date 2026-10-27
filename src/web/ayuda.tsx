@@ -3,9 +3,12 @@
  *  El contenido sale de los Markdown de docs/ (fuente única) y las capturas
  *  de public/docs/img, que sirve el build. */
 
-import { useState, type MouseEvent } from "react";
+import { lazy, Suspense, useState, type MouseEvent } from "react";
 import manualAdminMd from "../../docs/manual-administrador.md?raw";
 import manualUsuarioMd from "../../docs/manual-usuario.md?raw";
+
+// Lector de PDF en modal (pdf.js se carga solo al abrir el primero).
+const PdfViewer = lazy(() => import("./pdf-viewer"));
 
 type Clave = "admin" | "usuario";
 
@@ -138,6 +141,8 @@ function ManualWeb({ manual, onVolver, onIrA, puedePdf }: {
   onIrA: (clave: Clave) => void;
   puedePdf: boolean;
 }) {
+  // Lectura del PDF dentro de la aplicación (modal, hoja a hoja).
+  const [leyendo, setLeyendo] = useState(false);
   const irA = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -157,6 +162,7 @@ function ManualWeb({ manual, onVolver, onIrA, puedePdf }: {
       <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
         {manual.apartados} apartados · {manual.capturas} capturas
       </span>
+      {puedePdf && <button className="btn secondary" onClick={() => setLeyendo(true)}>📖 Leer PDF</button>}
       {puedePdf && <a className="btn secondary" href={manual.pdf} download>⬇️ Descargar PDF</a>}
     </div>
 
@@ -173,6 +179,9 @@ function ManualWeb({ manual, onVolver, onIrA, puedePdf }: {
       </aside>
       <article className="manual-cuerpo" onClick={onClickCuerpo} dangerouslySetInnerHTML={{ __html: manual.html }} />
     </div>
+    {leyendo && <Suspense fallback={null}>
+      <PdfViewer src={manual.pdf} title={manual.titulo} onClose={() => setLeyendo(false)} />
+    </Suspense>}
   </>;
 }
 
@@ -181,6 +190,8 @@ export function AyudaPage({ user }: { user: { rol: string } }) {
   // El PDF se descarga solo para administradores; todos leen la versión web.
   const puedePdf = user.rol !== "usuario";
   const [abierto, setAbierto] = useState<Clave | null>(null);
+  // PDF en lectura desde las tarjetas (modal hoja a hoja).
+  const [leyendo, setLeyendo] = useState<(typeof PARSEADOS)[number] | null>(null);
 
   const actual = abierto ? PARSEADOS.find(m => m.clave === abierto) : null;
   if (actual) {
@@ -219,11 +230,16 @@ export function AyudaPage({ user }: { user: { rol: string } }) {
           </ul>
           <div className="ayuda-acciones">
             <button className="btn" onClick={() => setAbierto(m.clave)}>📖 Ver en la web</button>
+            {puedePdf && <button className="btn secondary" onClick={() => setLeyendo(m)}>📕 Leer PDF</button>}
             {puedePdf && <a className="btn secondary" href={m.pdf} download>⬇️ Descargar PDF</a>}
           </div>
         </div>
       ))}
     </div>
+
+    {leyendo && <Suspense fallback={null}>
+      <PdfViewer src={leyendo.pdf} title={leyendo.titulo} onClose={() => setLeyendo(null)} />
+    </Suspense>}
 
     <div className="card card-pad">
       <div className="section-head"><h3>💡 Ayuda rápida</h3></div>

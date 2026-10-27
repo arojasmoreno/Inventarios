@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Toast, camposConError } from "./ui";
+
+// Lector de PDF en modal: los PDF se leen dentro de la aplicación sin salir
+// de ella. Los que no lo son siguen abriéndose en una pestaña.
+const PdfViewer = lazy(() => import("./pdf-viewer"));
+
+/** ¿La URL de la ficha apunta directamente a un PDF? */
+const esPdf = (url: string): boolean => /\.pdf([?#].*)?$/i.test(url.trim());
 
 type Row = Record<string, unknown>;
 
@@ -38,6 +45,8 @@ export function DocumentosPage({ user }: { user: { rol: string } }) {
 
   const [editing, setEditing] = useState<Row | null | "new">(null);
   const [nuevoTipo, setNuevoTipo] = useState(false);
+  // Ficha PDF abierta en el lector integrado (modal hoja a hoja).
+  const [leyendo, setLeyendo] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
 
   // Búsqueda profunda con debounce (la hace el backend sobre todos los campos).
@@ -130,7 +139,10 @@ export function DocumentosPage({ user }: { user: { rol: string } }) {
               {r.descripcion ? <div className="docs-desc">{String(r.descripcion)}</div> : null}</td>
             <td><div className="docs-chips">{nombreCentros(r).map((cn) => <span className="d-chip" key={cn}>{cn}</span>)}</div></td>
             <td>{r.fabricante ? String(r.fabricante) : <span className="muted">—</span>}</td>
-            <td><a className="docs-link" href={String(r.url)} target="_blank" rel="noreferrer">Abrir ↗</a></td>
+            <td>{esPdf(String(r.url))
+              ? <button className="docs-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit" }}
+                  onClick={() => setLeyendo(r)}>📖 Leer aquí</button>
+              : <a className="docs-link" href={String(r.url)} target="_blank" rel="noreferrer">Abrir ↗</a>}</td>
             <td className="docs-fecha">{fechaCorta(r.updated_at ?? r.created_at)}</td>
             {canManage && <td className="right"><div className="row-actions">
               <button className="d-btn ghost small" onClick={() => setEditing(r)}>✏️ Editar</button>
@@ -157,6 +169,9 @@ export function DocumentosPage({ user }: { user: { rol: string } }) {
         setTipos(t.items);
       }}
     />}
+    {leyendo && <Suspense fallback={null}>
+      <PdfViewer src={String(leyendo.url)} title={String(leyendo.nombre)} onClose={() => setLeyendo(null)} />
+    </Suspense>}
     {toast && <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} />}
   </div>;
 }

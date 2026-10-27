@@ -21,6 +21,7 @@ export const estacionesSpec: CrudSpec = {
     " LEFT JOIN consumibles_tipos ct ON ct.id = t.tipo_consumible_id",
     " LEFT JOIN quimicos aq ON aq.id = t.articulo_id AND t.articulo_tipo = 'quimicos'",
     " LEFT JOIN material_limpieza am ON am.id = t.articulo_id AND t.articulo_tipo = 'material_limpieza'",
+    " LEFT JOIN consumibles_tipos act ON act.id = am.tipo_consumible_id",
     " LEFT JOIN epis ae ON ae.id = t.articulo_id AND t.articulo_tipo = 'epis'",
     " LEFT JOIN ropa_trabajo ar ON ar.id = t.articulo_id AND t.articulo_tipo = 'ropa_trabajo'",
     " LEFT JOIN maquinaria amq ON amq.id = t.articulo_id AND t.articulo_tipo = 'maquinaria'",
@@ -28,6 +29,7 @@ export const estacionesSpec: CrudSpec = {
   extraSelect: [
     "z.nombre AS zona_nombre", "s.nombre AS subzona_nombre", "sp.nombre AS soporte_nombre",
     "ct.nombre AS tipo_nombre",
+    "act.nombre AS articulo_tipo_consumible",
     "t.articulo_tipo",
     "(t.articulo_tipo || ':' || t.articulo_id) AS articulo",
     "COALESCE(aq.nombre, am.nombre, ae.descripcion, ar.prenda, amq.nombre) AS articulo_nombre",

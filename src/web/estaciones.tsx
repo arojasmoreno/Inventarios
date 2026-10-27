@@ -68,6 +68,10 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
   });
   const [busyId, setBusyId] = useState<number | null>(null);
   const [fBajo, setFBajo] = useState(false);
+  // Filtro por tipo de consumible (los tipos clasifican también el artículo
+  // de la estación, así que sirven para acotar la búsqueda).
+  const [fTipo, setFTipo] = useState("all");
+  const [tipos, setTipos] = useState<Row[]>([]);
   const [qrLote, setQrLote] = useState<Row[] | null>(null);
   const [editing, setEditing] = useState<Row | null | "new">(null);
   const [qrRow, setQrRow] = useState<Row | null>(null);
@@ -79,12 +83,13 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [e, c, z] = await Promise.all([
+      const [e, c, z, tp] = await Promise.all([
         api.get<{ items: Row[] }>("/api/estaciones"),
         api.get<{ items: Row[] }>("/api/centros"),
         api.get<{ items: Row[] }>("/api/zonas"),
+        api.get<{ items: Row[] }>("/api/consumibles-tipos"),
       ]);
-      setItems(e.items); setCentros(c.items); setZonas(z.items);
+      setItems(e.items); setCentros(c.items); setZonas(z.items); setTipos(tp.items);
     }
     catch (e) { setError(e instanceof Error ? e.message : "Error cargando estaciones"); }
     finally { setLoading(false); }
@@ -96,10 +101,11 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
     return items.filter((e) =>
       (fCentro === "all" || String(e.centro_id) === fCentro) &&
       (fZona === "all" || String(e.zona_id) === fZona) &&
+      (fTipo === "all" || String(e.tipo_consumible_id ?? "") === fTipo) &&
       (!fBajo || (Number(e.articulo_stock_minimo ?? 0) > 0 && Number(e.articulo_stock ?? 0) <= Number(e.articulo_stock_minimo))) &&
-      (!needle || [nombreEstacion(e), e.centro_nombre, e.tipo_nombre, e.articulo_nombre, e.articulo_codigo]
+      (!needle || [nombreEstacion(e), e.centro_nombre, e.tipo_nombre, e.articulo_nombre, e.articulo_codigo, e.articulo_tipo_consumible]
         .some((v) => String(v ?? "").toLowerCase().includes(needle))));
-  }, [items, q, fCentro, fZona, fBajo]);
+  }, [items, q, fCentro, fZona, fTipo, fBajo]);
 
   // Estaciones cuyo artículo ha llegado al stock mínimo (o por debajo).
   const conStockBajo = useMemo(
@@ -169,6 +175,10 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
         <option value="all">Todas las zonas</option>
         {zonasOptions.map((z) => <option key={String(z.id)} value={String(z.id)}>{String(z.nombre)}</option>)}
       </select>
+      <select className="input" style={{ maxWidth: 200 }} value={fTipo} onChange={(e) => setFTipo(e.target.value)} aria-label="Filtrar por tipo de consumible">
+        <option value="all">Todos los tipos</option>
+        {tipos.map((t) => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}
+      </select>
       <button className="chip" style={{ padding: "7px 12px" }} onClick={() => setFBajo((v) => !v)} aria-pressed={fBajo}>
         📉 Stock bajo{conStockBajo.length ? ` (${conStockBajo.length})` : ""}
       </button>
@@ -180,7 +190,7 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
     <div className="card">
       {!filtered.length
         ? <div className="empty"><span className="icon">🚻</span><strong>No hay estaciones</strong>
-            <p>{q || fCentro !== "all" || fZona !== "all" || fBajo
+            <p>{q || fCentro !== "all" || fZona !== "all" || fTipo !== "all" || fBajo
               ? "Ninguna estación coincide con la búsqueda o los filtros actuales."
               : "Crea estaciones de consumo: cada una apunta a una zona, subzona y soporte, y descuenta su artículo al escanear el QR."}</p></div>
         : <div className="table-scroll"><table>
@@ -249,6 +259,8 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
   const [soportes, setSoportes] = useState<Row[]>([]);
   const [tipos, setTipos] = useState<Row[]>([]);
   const [articulos, setArticulos] = useState<Row[]>([]);
+  // Búsqueda de artículo dentro del formulario (nombre, código, color…).
+  const [qArt, setQArt] = useState("");
   const [values, setValues] = useState<Record<string, string | boolean>>(() => ({
     centro_id: initial ? String(initial.centro_id ?? "") : "",
     zona_id: initial ? String(initial.zona_id ?? "") : "",
@@ -297,6 +309,20 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
 
   const zonasDelCentro = useMemo(() => zonas.filter((z) => String(z.centro_id) === String(values.centro_id)), [zonas, values.centro_id]);
   const subsDeZona = useMemo(() => subzonas.filter((s) => String(s.zona_id) === String(values.zona_id)), [subzonas, values.zona_id]);
+
+  // Artículos ofrecidos: los del tipo elegido, clasificados por el mismo tipo
+  // de consumible (los sin clasificar siempre se muestran) y por la búsqueda.
+  const articulosVisibles = useMemo(() => {
+    const needle = qArt.trim().toLowerCase();
+    const lista = articulos.filter((a) => {
+      const t = String(a.tipo_consumible_id ?? "");
+      const tipoOk = t === "" || t === tipoId;
+      const campos = [a.nombre, a.codigo, a.color, a.descripcion, a.modelo, a.prenda];
+      return tipoOk && (!needle || campos.some((v) => String(v ?? "").toLowerCase().includes(needle)));
+    });
+    const elegido = articulos.find((a) => String(a.id) === String(values.articulo_id));
+    return elegido && !lista.includes(elegido) ? [elegido, ...lista] : lista;
+  }, [articulos, qArt, tipoId, values.articulo_id]);
 
   const set = (k: string, v: string | boolean) => {
     const ef = ETIQUETAS[k]?.ef;
@@ -351,7 +377,9 @@ function EstacionForm({ initial, onClose, onSaved }: { initial: Row | null; onCl
       {sel("ef-sub", "Subzona", String(values.subzona_id), subsDeZona.map((s) => ({ v: String(s.id), l: String(s.nombre) })), (v) => set("subzona_id", v))}
       {sel("ef-soporte", "Soporte", String(values.soporte_id), soportes.map((s) => ({ v: String(s.id), l: String(s.nombre) })), (v) => set("soporte_id", v))}
       {sel("ef-tipo", "Tipo de consumible *", tipoId, tipos.map((t) => ({ v: String(t.id), l: String(t.nombre) })), (v) => set("tipo_consumible_id", v), "— Elige tipo —")}
-      {sel("ef-art", "Artículo *", String(values.articulo_id), articulos.map((a) => ({ v: String(a.id), l: etiquetaArt(articuloTipo, a) })), (v) => set("articulo_id", v), articulos.length ? "— Elige artículo —" : "Primero el tipo")}
+      {articulos.length > 0 && <div className="field"><label htmlFor="ef-art-q">Buscar artículo</label>
+        <input id="ef-art-q" className="input" placeholder="🔍 Nombre, código, color…" value={qArt} onChange={(e) => setQArt(e.target.value)} /></div>}
+      {sel("ef-art", "Artículo *", String(values.articulo_id), articulosVisibles.map((a) => ({ v: String(a.id), l: etiquetaArt(articuloTipo, a) })), (v) => set("articulo_id", v), !articulos.length ? "Primero el tipo" : articulosVisibles.length ? "— Elige artículo —" : "Sin coincidencias")}
       <div className="full">
         <label className="field checkbox" htmlFor="ef-activo">
           <input id="ef-activo" type="checkbox" checked={values.activo === true} onChange={(e) => set("activo", e.target.checked)} />

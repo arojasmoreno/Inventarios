@@ -98,16 +98,38 @@ export const quimicosSpec: CrudSpec = {
   },
 };
 export const materialSpec: CrudSpec = {
-  table: "material_limpieza", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "material_limpieza", orderBy: "id", refCentro: true,
+  // El tipo de consumible del producto (clasificación para filtrarlo en
+  // «Puntos de consumo»): se muestra junto a su nombre.
+  extraJoins: [" LEFT JOIN consumibles_tipos tcon ON tcon.id = t.tipo_consumible_id"],
+  extraSelect: ["tcon.nombre AS tipo_consumible_nombre"],
+  extraSearchCols: ["tcon.nombre"],
+  read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: false, unique: true, maxLength: 40 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
     { name: "nombre", label: "Material", type: "text", required: true, maxLength: 200 },
     { name: "color", label: "Color", type: "enum", required: true, enumValues: COLORES },
+    { name: "tipo_consumible_id", label: "Tipo de consumible", type: "integer", required: false, min: 1 },
     { name: "cantidad", label: "Cantidad (uds.)", type: "integer", required: true, min: 0 },
     stockMinimo, precio("Precio por unidad (€)"), origen, centro, notas, foto,
   ],
-  beforeWrite: normalizaOrigen,
+  // IMPORTANTE: aquí NO vale `normalizaOrigen` (la de los químicos): insertaba
+  // `numero_lote`, `num_garrafas` y `fecha_entrada`, columnas que no existen en
+  // `material_limpieza`, y el alta fallaba con un 500 «Error interno».
+  beforeWrite: async (db, data, mode, existing) => {
+    // Origen: siempre uno de los dos admitidos; al editar se conserva el actual.
+    const esOrigen = (v: unknown): v is (typeof ORIGENES)[number] => typeof v === "string" && (ORIGENES as readonly string[]).includes(v);
+    const actual = mode === "update" && esOrigen(existing?.origen) ? existing.origen : null;
+    data.origen = esOrigen(data.origen) ? data.origen : actual ?? "fabrica";
+    // Tipo de consumible opcional, pero si se indica debe existir en la
+    // pestaña «Tipos de consumible».
+    if (data.tipo_consumible_id !== undefined && data.tipo_consumible_id !== null) {
+      const t = await db.prepare("SELECT id FROM consumibles_tipos WHERE id = ?").bind(Number(data.tipo_consumible_id)).first();
+      if (!t) throw new ValidationError("El tipo de consumible seleccionado no existe");
+    }
+    return data;
+  },
 };
 // Máquinas: solo sus datos (marca, modelo, nº de serie, tipo) y su ubicación
 // (centro → zona → subzona). Sin cantidad y sin estado editable: el estado es

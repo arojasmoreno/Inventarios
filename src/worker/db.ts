@@ -11,7 +11,7 @@ const SCHEMA: string[] = [
   // indica si sigue en uso (activo), si se gastó (agotado) o si se descartó en
   // un recuento (descartado).
   `CREATE TABLE IF NOT EXISTS quimicos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, numero_lote TEXT NOT NULL, litros_por_garrafa REAL NOT NULL DEFAULT 0, num_garrafas INTEGER NOT NULL DEFAULT 0, fecha_caducidad TEXT, fecha_produccion TEXT, fecha_entrada TEXT, estado TEXT NOT NULL DEFAULT 'activo', stock_minimo INTEGER NOT NULL DEFAULT 0, stock_maximo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS material_limpieza (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, marca TEXT, nombre TEXT NOT NULL, color TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, stock_minimo INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', foto TEXT, centro_id INTEGER REFERENCES centros(id), tipo_consumible_id INTEGER REFERENCES consumibles_tipos(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS maquinaria (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, marca TEXT, modelo TEXT, numero_serie TEXT, estado TEXT NOT NULL DEFAULT 'Operativa', cantidad INTEGER NOT NULL DEFAULT 1, foto TEXT, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL, subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS password_recovery_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, code TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Códigos de acceso por correo (login sin contraseña).
@@ -82,6 +82,9 @@ const ALTERS: Array<[string, string]> = [
   ["movimientos", "updated_at TEXT"],
   ["quimicos", "codigo TEXT"], ["quimicos", "marca TEXT"],
   ["material_limpieza", "codigo TEXT"], ["material_limpieza", "marca TEXT"],
+  // Tipo de consumible del producto: clasifica el material para poder
+  // filtrarlo al buscar un consumible en «Puntos de consumo».
+  ["material_limpieza", "tipo_consumible_id INTEGER REFERENCES consumibles_tipos(id)"],
   ["maquinaria", "marca TEXT"], ["maquinaria", "modelo TEXT"], ["maquinaria", "numero_serie TEXT"],
   ["ropa_trabajo", "marca TEXT"],
   ["movimientos", "motivo TEXT"],
