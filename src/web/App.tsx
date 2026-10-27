@@ -46,7 +46,8 @@ const NAV: NavGroup[] = [
     section: "Consumibles",
     items: [
       { hash: "#/consumibles", label: "Consumibles", icon: "🧴" },
-      { hash: "#/inventario", label: "Inventario de químicos", icon: "📦" },
+      // El inventario de químicos ya no es una entrada propia del menú: se
+      // abre como pestaña «Inventario por producto» dentro de Consumibles.
     ],
   },
   {

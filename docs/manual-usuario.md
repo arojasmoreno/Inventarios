@@ -64,7 +64,7 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 - **🚻 Estaciones de consumo** (pantalla inicial): la lista de estaciones con su stock; el botón **➖ −1 ud** de la primera columna descuenta una unidad al instante y **▶ Consumir** abre el modo estación.
 - **🔄 Entradas y salidas**: registro de movimientos de stock **en solo lectura** (los administradores son quienes registran entradas y salidas).
 - **📦 Inventario de químicos**: consulta del stock agrupado por producto, con sus avisos de stock y la hoja de recuento imprimible.
-- **🧭 Control de maquinaria**: máquinas, su estado y el histórico de situaciones.
+- **🧭 Control de maquinaria**: máquinas y su histórico, con fecha, estado y notas de cada cambio.
 - **📚 Documentación**: fichas y documentos de seguridad y técnicas.
 - **📈 Gestión de informes**: dashboard, informes y auditoría **para consultar**; los botones de descarga (CSV / PDF) no aparecen en tu perfil.
 - **🛟 Manuales y ayuda**: esta misma guía en formato web (y en PDF para administradores).
@@ -95,7 +95,7 @@ Consulta agrupada de todo el stock de químicos: una fila por producto con sus *
 ### Control de maquinaria
 ![Maquinaria](img/usuario-maquinaria.png)
 
-Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**. El estado de cada máquina es su último registro del histórico (Operativa, En reparación, Averiada…).
+Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**. La tabla de máquinas **ya no muestra la columna de estado**: el estado de cada máquina es su último registro del histórico (Operativa, En reparación, Averiada…). El histórico se filtra por máquina, **centro**, estado y periodo, y cada registro indica **fecha, estado y notas**.
 
 ### Documentación
 ![Documentación](img/usuario-documentacion.png)

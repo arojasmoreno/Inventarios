@@ -42,7 +42,7 @@ Cuando una validación falla, además del mensaje se **sombrea en rojo claro el 
 
 | Zona | Qué contiene |
 |---|---|
-| **Barra lateral izquierda** | Las secciones: Panel de control, Consumibles, **Inventario de químicos**, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación, Gestión de informes y **Manuales y ayuda**. Debajo, **Cuenta › Mi cuenta**. |
+| **Barra lateral izquierda** | Las secciones: Panel de control, Consumibles, Control de maquinaria, Equipación de operarios, Gestión de centros, Documentación, Gestión de informes y **Manuales y ayuda**. Debajo, **Cuenta › Mi cuenta**. |
 | **Cabecera** | 🔎 **Buscar en todo…** (encuentra artículos, zonas, estaciones y usuarios), tu nombre, tu rol, el estado **Activo/Inactivo**, tus centros asignados y el botón **⏻ Salir**. |
 | **Zona central** | El contenido de la sección elegida. |
 
@@ -70,7 +70,7 @@ Cuando una validación falla, además del mensaje se **sombrea en rojo claro el 
 
 Pestañas disponibles: **Químicos · Inventario por producto · Material de limpieza · Estaciones de consumo · Tipos de consumible · Soportes · Entradas / Salidas · Consumos**.
 
-> **Ficha vs. lote**: en **Químicos** se dan de alta las *fichas* de producto (una fila por producto) y en **Inventario por producto** se gestionan sus *lotes* (nº de lote, fechas, garrafas y litros). El menú lateral muestra además **📦 Inventario de químicos**, la misma pantalla del inventario como sección propia.
+> **Ficha vs. lote**: en **Químicos** se dan de alta las *fichas* de producto (una fila por producto) y en **Inventario por producto** se gestionan sus *lotes* (nº de lote, fechas, garrafas y litros). El menú lateral ya no tiene una entrada aparte de inventario: esa pantalla es la pestaña **Inventario por producto** de esta misma sección.
 
 En cualquier listado encontrarás:
 
@@ -87,7 +87,7 @@ Si pulsas **Guardar** con un campo obligatorio vacío o con un dato inválido, a
 
 ### 4.1 Inventario por producto (litros, lotes y recuento)
 
-La pestaña **Inventario por producto** (y la sección del menú **📦 Inventario de químicos**) agrupa el stock por producto y marca y despliega sus lotes:
+La pestaña **Inventario por producto** agrupa el stock por producto y marca y despliega sus lotes:
 
 - Una fila por producto con **lotes en uso**, **garrafas**, **total de litros** y **próxima caducidad**; pulsa la fila para abrir o cerrar el desglose de sus lotes.
 - **Avisos de stock**: junto al total de litros aparece **⚠️ mín. X L** cuando el producto ha bajado de su mínimo y **⬆ máx. X L** cuando supera el máximo fijado. Los umbrales salen de la ficha (*Stock mínimo / máximo en litros*); sin umbral fijado no se muestra nada.
@@ -130,12 +130,12 @@ En el modo estación puedes restar unidades con los botones grandes, escanear ot
 
 Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**.
 
-- **Maquinaria**: ficha de cada máquina (marca, modelo, nº de serie, tipo, ubicación y estado). El **estado sale del histórico**: es el último registro.
-- **Histórico**: registro de situaciones por máquina (fecha, situación, marca, modelo y centro). Desde aquí se crean y borran registros.
+- **Maquinaria**: ficha de cada máquina (marca, modelo, nº de serie, tipo y ubicación). La tabla **ya no tiene columna de estado**: el estado vive en el **Histórico** y cada fila ofrece la acción **🕘 Histórico**, que abre el registro de esa máquina ya filtrado.
+- **Histórico**: historial por máquina con **fecha, estado y notas** (además de marca, modelo y centro). Se filtra por máquina, **centro**, estado y periodo, se busca por texto y se exporta a **⬇️ CSV**. Desde aquí se crean y borran registros.
 
 ![Histórico de situaciones](img/admin-historial.png)
 
-- **＋ Registrar situación** (solo administradores): cambia el estado de la máquina (Operativa, En reparación, Averiada, Baja…).
+- **＋ Registrar situación** (solo administradores): cambia el estado de la máquina (Operativa, En reparación, Averiada, Baja…) y le añade unas **notas** (mantenimiento, repuestos, incidencias) que quedan guardadas en el histórico.
 - **Situaciones** y **Tipos de máquina**: catálogos que después aparecen en los desplegables.
 
 ---
