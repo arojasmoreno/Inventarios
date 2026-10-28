@@ -1,6 +1,7 @@
 import type { CrudSpec } from "./crud";
-import { createCrud, ValidationError, hashPasswordField, hoyISO } from "./crud";
+import { allowed, createCrud, ValidationError, hashPasswordField, hoyISO } from "./crud";
 import { requireAuth } from "./auth";
+import { logMovimiento } from "./audit";
 import { movimientosSpec } from "./movimientos";
 import { seedHistorial } from "./maquinaria-historial";
 
@@ -475,3 +476,80 @@ export const tiposEquipo = createCrud(tiposEquipoSpec);
 // ---- Soportes y tipos de consumible (listas gestionadas de estaciones) ----
 export const soportes = createCrud(soportesSpec);
 export const consumiblesTipos = createCrud(consumiblesTiposSpec);
+// ---- Productos disponibles (catálogo de lo que se puede pedir) ----
+// La relación con «Material de limpieza» es el CÓDIGO: cada producto muestra
+// las unidades que ya hay de ese código en esa tabla (`unidades_almacen`) y,
+// al aplicar un pedido, las cantidades se suman ahí por ese mismo código.
+export const productosDisponiblesSpec: CrudSpec = {
+  table: "productos_disponibles", orderBy: "id",
+  extraSelect: [
+    `(SELECT COALESCE(SUM(ml.cantidad), 0) FROM material_limpieza ml
+      WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(t.codigo))) AS unidades_almacen`,
+    `EXISTS (SELECT 1 FROM material_limpieza ml2
+      WHERE ml2.codigo IS NOT NULL AND TRIM(UPPER(ml2.codigo)) = TRIM(UPPER(t.codigo))) AS en_almacen`,
+  ],
+  read: "all", create: "admin", update: "admin", delete: "admin",
+  fields: [
+    { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
+    { name: "producto", label: "Producto", type: "text", required: true, maxLength: 200 },
+    { name: "precio", label: "Precio (€)", type: "number", required: false, min: 0, placeholder: "Opcional" },
+  ],
+};
+export const productosDisponibles = createCrud(productosDisponiblesSpec);
+// ---- Pedido de material (pestaña «Pedido material») ----
+// Cada línea guarda código, producto, cantidad, precio y origen. Las líneas
+// pendientes se suman en «Material de limpieza» al pulsar «Aplicar».
+export const pedidosSpec: CrudSpec = {
+  table: "pedidos_material", orderBy: "id",
+  read: "all", create: "admin", update: "admin", delete: "admin",
+  fields: [
+    { name: "codigo", label: "Código", type: "text", required: true, maxLength: 40 },
+    { name: "producto", label: "Producto", type: "text", required: true, maxLength: 200 },
+    { name: "cantidad", label: "Cantidad", type: "integer", required: true, min: 1 },
+    precio("Precio unitario (€)"),
+    origen,
+    { name: "aplicado", label: "Aplicado", type: "boolean", required: false },
+  ],
+  beforeWrite: async (_db, data, mode, existing) => {
+    // El origen sigue el mismo criterio que en el resto de consumibles.
+    const esOrigen = (v: unknown): v is (typeof ORIGENES)[number] => typeof v === "string" && (ORIGENES as readonly string[]).includes(v);
+    data.origen = esOrigen(data.origen) ? data.origen : "fabrica";
+    // `aplicado` lo gestiona el servidor: una línea nueva nace pendiente y una
+    // línea ya aplicada no puede volver a quedar pendiente (su stock ya sumó).
+    if (mode === "insert" || !existing?.aplicado) data.aplicado = 0;
+    else data.aplicado = 1;
+    return data;
+  },
+};
+export const pedidos = createCrud(pedidosSpec);
+// Aplicar el pedido: suma las cantidades pendientes en «Material de limpieza»
+// por código (si el producto todavía no está ahí, se da de alta con su código,
+// producto, precio y origen) y deja las líneas marcadas como aplicadas.
+pedidos.post("/aplicar", requireAuth, async (c) => {
+  if (!allowed(c.get("user"), "admin")) return c.json({ error: "No tienes permiso para aplicar el pedido" }, 403);
+  const pend = (await c.env.DB.prepare("SELECT * FROM pedidos_material WHERE aplicado = 0 ORDER BY id").all()).results as Array<Record<string, unknown>>;
+  if (!pend.length) return c.json({ error: "No hay líneas pendientes de aplicar" }, 400);
+  let creados = 0, actualizados = 0;
+  for (const l of pend) {
+    const codigo = String(l.codigo ?? "").trim();
+    const cantidad = Number(l.cantidad ?? 0);
+    if (!codigo || cantidad < 1) continue;
+    const existe = await c.env.DB.prepare(
+      "SELECT id FROM material_limpieza WHERE codigo IS NOT NULL AND TRIM(UPPER(codigo)) = TRIM(UPPER(?)) ORDER BY id LIMIT 1",
+    ).bind(codigo).first();
+    if (existe) {
+      await c.env.DB.prepare("UPDATE material_limpieza SET cantidad = cantidad + ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(cantidad, Number(existe.id)).run();
+      actualizados++;
+    } else {
+      await c.env.DB.prepare(
+        "INSERT INTO material_limpieza (codigo, nombre, color, cantidad, precio, origen) VALUES (?, ?, 'Otro', ?, ?, ?)",
+      ).bind(codigo, String(l.producto ?? codigo), cantidad, l.precio ?? null, String(l.origen ?? "fabrica")).run();
+      creados++;
+    }
+    await c.env.DB.prepare("UPDATE pedidos_material SET aplicado = 1, updated_at = datetime('now') WHERE id = ?").bind(Number(l.id)).run();
+    await logMovimiento(c.env.DB, c.get("user"), "entrada", "material_limpieza", null,
+      `Pedido de material: +${cantidad} uds · ${String(l.producto ?? codigo)} (${codigo})`, cantidad, "Pedido material");
+  }
+  return c.json({ ok: true, lineas: pend.length, creados, actualizados });
+});

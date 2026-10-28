@@ -32,6 +32,7 @@ const TABLA_NOMBRE: Record<string, string> = {
   tipos_maquinaria: "Tipo de maquinaria", zonas: "Zona", subzonas: "Subzona", estaciones: "Estación",
   situaciones: "Situación", tipos_equipo: "Tipo de equipo",
   soportes: "Soporte", consumibles_tipos: "Tipo de consumible",
+  productos_disponibles: "Producto disponible", pedidos_material: "Línea de pedido",
 };
 function nombreDe(spec: CrudSpec, row: Record<string, unknown>): string {
   const n = row.nombre ?? row.username ?? row.codigo ?? row.prenda ?? row.email;

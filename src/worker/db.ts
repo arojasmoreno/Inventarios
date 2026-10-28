@@ -51,6 +51,13 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS documento_tipos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS documentos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo_id INTEGER NOT NULL REFERENCES documento_tipos(id), url TEXT NOT NULL, descripcion TEXT, fabricante TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS documento_centros (documento_id INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (documento_id, centro_id))`,
+  // Catálogo de productos que se pueden pedir (código, producto y precio).
+  // Su código lo relaciona con `material_limpieza` (unidades en almacén) y
+  // alimenta la pestaña «Pedido material».
+  `CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Líneas del pedido de material: código, producto, cantidad, precio y origen.
+  // Al aplicar el pedido, las cantidades pendientes se suman en `material_limpieza`.
+  `CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Recuentos de inventario de químicos: una fila por recuento validado y una
   // por cada lote del listado (litros del sistema frente a los litros reales
   // contados). Es la «hoja de inventario» que deja por escrito qué lotes se
@@ -320,6 +327,10 @@ export async function bootstrap(db: D1Database): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_epis_revision ON epis(fecha_revision)",
     "CREATE INDEX IF NOT EXISTS idx_tallas_usuario ON tallas_operarios(usuario_id)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_usuario ON sessions(user_id)",
+    // Pedido de material: aplicar el pedido solo toca las líneas pendientes y
+    // busca en material_limpieza por su código.
+    "CREATE INDEX IF NOT EXISTS idx_pedidos_aplicado ON pedidos_material(aplicado)",
+    "CREATE INDEX IF NOT EXISTS idx_mat_codigo ON material_limpieza(codigo)",
   ] as const) await db.prepare(idx).run();
   ready = true;
 }

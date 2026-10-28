@@ -4,13 +4,16 @@ import { EstacionesPage } from "./estaciones";
 import { InventarioQuimicosPage } from "./inventario";
 import { StockPage } from "./stock";
 import { ConsumosCostesPage } from "./costes";
+import { PedidoMaterialPage, ProductosDisponiblesPage } from "./pedido";
 
-type Tab = "quimicos" | "inventario" | "material" | "estaciones" | "tipos" | "soportes" | "entradas" | "costes";
+type Tab = "quimicos" | "inventario" | "material" | "disponibles" | "pedido" | "estaciones" | "tipos" | "soportes" | "entradas" | "costes";
 
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "quimicos", label: "Químicos", icon: "🧴" },
   { id: "inventario", label: "Inventario por producto", icon: "📦" },
   { id: "material", label: "Material de limpieza", icon: "🧽" },
+  { id: "disponibles", label: "Productos disponibles", icon: "📋" },
+  { id: "pedido", label: "Pedido material", icon: "🛒" },
   { id: "estaciones", label: "Estaciones de consumo", icon: "🚻" },
   { id: "tipos", label: "Tipos de consumible", icon: "🏷️" },
   { id: "soportes", label: "Soportes", icon: "📌" },
@@ -28,6 +31,8 @@ const TABS_USUARIO: Tab[] = ["estaciones", "entradas", "inventario"];
 export function ConsumiblesPage({ user }: { user: { rol: string; nombre: string; centro_id: number | null } }) {
   const hash = typeof window !== "undefined" ? window.location.hash : "";
   const inicial: Tab = hash === "#/material" ? "material"
+    : hash === "#/productos-disponibles" ? "disponibles"
+    : hash === "#/pedido-material" ? "pedido"
     : hash.startsWith("#/estaciones") ? "estaciones"
     : hash === "#/consumibles-tipos" ? "tipos"
     : hash === "#/soportes" ? "soportes"
@@ -54,6 +59,8 @@ export function ConsumiblesPage({ user }: { user: { rol: string; nombre: string;
     {activa === "quimicos" && <ResourcePage key="quimicos" config={QUIMICOS} user={user} />}
     {activa === "inventario" && <InventarioQuimicosPage key="inventario" user={user} />}
     {activa === "material" && <ResourcePage key="material" config={MATERIAL} user={user} />}
+    {activa === "disponibles" && <ProductosDisponiblesPage key="disponibles" user={user} />}
+    {activa === "pedido" && <PedidoMaterialPage key="pedido" user={user} />}
     {activa === "estaciones" && <EstacionesPage key="estaciones" user={user} />}
     {activa === "tipos" && <ResourcePage key="tipos" config={TIPOS_CONSUMIBLES} user={user} />}
     {activa === "soportes" && <ResourcePage key="soportes" config={SOPORTES} user={user} />}

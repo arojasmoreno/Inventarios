@@ -346,7 +346,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   // Rutas antiguas que ahora son pestañas de la sección Consumibles.
   const esConsumibles = route === "#/consumibles" || route === "#/quimicos" || route === "#/material" || route.startsWith("#/estaciones")
     || route === "#/consumibles-tipos" || route === "#/soportes" || route === "#/entradas" || route === "#/costes"
-    || route === "#/inventario";
+    || route === "#/inventario" || route === "#/productos-disponibles" || route === "#/pedido-material";
   // Rutas de la sección Gestión de centros (su propia ruta y las antiguas).
   const esGestionCentros = route === "#/gestion-centros" || route === "#/centros" || route === "#/zonas" || route === "#/usuarios" || route === "#/empresa";
   // Rutas de la sección Gestión de informes (su propia ruta y las antiguas).
