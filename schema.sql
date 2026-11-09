@@ -102,3 +102,20 @@ CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMEN
 CREATE TABLE IF NOT EXISTS inventarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER REFERENCES usuarios(id), fecha TEXT NOT NULL DEFAULT (date('now')), notas TEXT, lineas INTEGER NOT NULL DEFAULT 0, diferencia REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
 CREATE TABLE IF NOT EXISTS inventarios_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, inventario_id INTEGER NOT NULL REFERENCES inventarios(id) ON DELETE CASCADE, quimico_id INTEGER, nombre TEXT NOT NULL, marca TEXT, numero_lote TEXT, centro TEXT, litros_teoricos REAL NOT NULL DEFAULT 0, litros_reales REAL NOT NULL DEFAULT 0, diferencia REAL NOT NULL DEFAULT 0, estado TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+
+-- Plan de higiene (sección Limpieza): calendario mensual propio de cada
+-- centro y turno. Las faenas se crean manualmente y se les marcan los días del
+-- mes; `limpieza_registros` guarda qué operario realizó cada tarea. Los
+-- festivos son del centro y se muestran en sus tres turnos.
+CREATE TABLE IF NOT EXISTS limpieza_faenas (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, anio INTEGER NOT NULL, mes INTEGER NOT NULL, turno TEXT NOT NULL, zona TEXT NOT NULL, subzona TEXT, frecuencia_informativa TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS limpieza_dias (faena_id INTEGER NOT NULL REFERENCES limpieza_faenas(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (faena_id, fecha));
+
+CREATE TABLE IF NOT EXISTS limpieza_registros (faena_id INTEGER NOT NULL, fecha TEXT NOT NULL, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (faena_id, fecha), FOREIGN KEY (faena_id, fecha) REFERENCES limpieza_dias(faena_id, fecha) ON DELETE CASCADE);
+
+CREATE TABLE IF NOT EXISTS limpieza_festivos (centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (centro_id, fecha));
+
+CREATE INDEX IF NOT EXISTS idx_limpieza_faenas_plan ON limpieza_faenas(centro_id, anio, mes, turno);
+CREATE INDEX IF NOT EXISTS idx_limpieza_dias_fecha ON limpieza_dias(fecha);
+CREATE INDEX IF NOT EXISTS idx_limpieza_registros_usuario ON limpieza_registros(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_limpieza_festivos_fecha ON limpieza_festivos(fecha);

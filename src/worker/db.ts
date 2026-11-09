@@ -64,6 +64,14 @@ const SCHEMA: string[] = [
   // retiran y cuánta diferencia ha habido.
   `CREATE TABLE IF NOT EXISTS inventarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER REFERENCES usuarios(id), fecha TEXT NOT NULL DEFAULT (date('now')), notas TEXT, lineas INTEGER NOT NULL DEFAULT 0, diferencia REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS inventarios_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, inventario_id INTEGER NOT NULL REFERENCES inventarios(id) ON DELETE CASCADE, quimico_id INTEGER, nombre TEXT NOT NULL, marca TEXT, numero_lote TEXT, centro TEXT, litros_teoricos REAL NOT NULL DEFAULT 0, litros_reales REAL NOT NULL DEFAULT 0, diferencia REAL NOT NULL DEFAULT 0, estado TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  // Plan de higiene mensual: cada centro tiene sus propias faenas, separadas
+  // por turno (día, tarde y noche). Los días programados se guardan como filas
+  // para poder marcarlos individualmente; los registros guardan qué operario
+  // realizó cada tarea y los festivos son del centro (afectan a sus 3 turnos).
+  `CREATE TABLE IF NOT EXISTS limpieza_faenas (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, anio INTEGER NOT NULL, mes INTEGER NOT NULL, turno TEXT NOT NULL, zona TEXT NOT NULL, subzona TEXT, frecuencia_informativa TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS limpieza_dias (faena_id INTEGER NOT NULL REFERENCES limpieza_faenas(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (faena_id, fecha))`,
+  `CREATE TABLE IF NOT EXISTS limpieza_registros (faena_id INTEGER NOT NULL, fecha TEXT NOT NULL, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (faena_id, fecha), FOREIGN KEY (faena_id, fecha) REFERENCES limpieza_dias(faena_id, fecha) ON DELETE CASCADE)`,
+  `CREATE TABLE IF NOT EXISTS limpieza_festivos (centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (centro_id, fecha))`,
 ];
 
 // Migraciones para tablas creadas antes de añadir estas columnas.
@@ -331,6 +339,12 @@ export async function bootstrap(db: D1Database): Promise<void> {
     // busca en material_limpieza por su código.
     "CREATE INDEX IF NOT EXISTS idx_pedidos_aplicado ON pedidos_material(aplicado)",
     "CREATE INDEX IF NOT EXISTS idx_mat_codigo ON material_limpieza(codigo)",
+    // Plan de higiene: consulta del calendario por centro/mes/turno y marcado
+    // de tareas por día.
+    "CREATE INDEX IF NOT EXISTS idx_limpieza_faenas_plan ON limpieza_faenas(centro_id, anio, mes, turno)",
+    "CREATE INDEX IF NOT EXISTS idx_limpieza_dias_fecha ON limpieza_dias(fecha)",
+    "CREATE INDEX IF NOT EXISTS idx_limpieza_registros_usuario ON limpieza_registros(usuario_id)",
+    "CREATE INDEX IF NOT EXISTS idx_limpieza_festivos_fecha ON limpieza_festivos(fecha)",
   ] as const) await db.prepare(idx).run();
   ready = true;
 }

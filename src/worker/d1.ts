@@ -17,6 +17,8 @@ export interface D1Statement {
 export interface D1Database {
   prepare(sql: string): D1Statement;
   exec(sql: string): Promise<unknown>;
+  // Ejecuta varias sentencias en una sola transacción (importaciones masivas).
+  batch?<T = Record<string, unknown>>(statements: D1Statement[]): Promise<Array<D1Result<T>>>;
 }
 
 export interface AssetsBinding {

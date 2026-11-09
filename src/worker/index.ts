@@ -18,6 +18,7 @@ import { panelRoutes } from "./panel";
 import { buscadorRoutes } from "./buscador";
 import { documentos, documentosTipos } from "./documentos";
 import { alertasRoutes } from "./alertas";
+import { limpiezaRoutes } from "./limpieza";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -58,6 +59,8 @@ app.use("*", async (c, next) => {
 app.route("/api/auth", authRoutes);
 app.route("/api/quimicos", quimicos);
 app.route("/api/material-limpieza", material);
+// Plan de higiene (sección Limpieza): calendario mensual por centro y turno.
+app.route("/api/limpieza", limpiezaRoutes);
 app.route("/api/maquinaria", maquinaria as any);
 app.route("/api/maquinaria-historial", maquinariaHistorial);
 app.route("/api/situaciones", situaciones);

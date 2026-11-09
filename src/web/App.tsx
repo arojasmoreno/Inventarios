@@ -10,7 +10,9 @@ import { EquipacionPage } from "./equipacion";
 import { PanelPage } from "./panel";
 import { GlobalSearch } from "./busqueda";
 import { DocumentosPage } from "./documentos";
-import { AyudaPage } from "./ayuda";export interface User {
+import { AyudaPage } from "./ayuda";
+import { LimpiezaPage } from "./limpieza";
+export interface User {
   id: number;
   username: string;
   nombre: string;
@@ -51,6 +53,12 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    section: "Limpieza",
+    items: [
+      { hash: "#/limpieza", label: "Limpieza", icon: "🧹" },
+    ],
+  },
+  {
     section: "Maquinaria",
     items: [
       { hash: "#/maquinaria", label: "Control de maquinaria", icon: "🧭" },
@@ -88,9 +96,10 @@ const NAV: NavGroup[] = [
   },
 ];
 
-// Menú del perfil «Usuario»: solo estaciones de consumo, entradas y salidas,
-// maquinaria, documentación, gestión de informes y manuales. No ve el panel de
-// control, los consumibles completos, la equipación ni la gestión de centros.
+// Menú del perfil «Usuario»: estaciones de consumo, entradas y salidas,
+// limpieza (para marcar sus tareas), maquinaria, documentación, gestión de
+// informes y manuales. No ve el panel de control, los consumibles completos, la
+// equipación ni la gestión de centros.
 const NAV_USUARIO: NavGroup[] = [
   {
     section: "Consumibles",
@@ -98,6 +107,12 @@ const NAV_USUARIO: NavGroup[] = [
       { hash: "#/estaciones", label: "Estaciones de consumo", icon: "🚻" },
       { hash: "#/entradas", label: "Entradas y salidas", icon: "🔄" },
       { hash: "#/inventario", label: "Inventario de químicos", icon: "📦" },
+    ],
+  },
+  {
+    section: "Limpieza",
+    items: [
+      { hash: "#/limpieza", label: "Limpieza", icon: "🧹" },
     ],
   },
   {
@@ -357,8 +372,8 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   const gruposBase = user.rol === "usuario" ? NAV_USUARIO : NAV;
   const nav = (hash: string) => gruposBase.flatMap((g) => g.items).find((n) => n.hash === hash) ?? gruposBase[0].items[0];
   const permitida = user.rol !== "usuario" || esConsumibles || esGestionInformes
-    || route.startsWith("#/maquinaria") || route === "#/tipos" || route === "#/documentacion"
-    || route === "#/ayuda" || route === "#/cuenta";
+    || route === "#/limpieza" || route.startsWith("#/maquinaria") || route === "#/tipos"
+    || route === "#/documentacion" || route === "#/ayuda" || route === "#/cuenta";
   useEffect(() => { if (!permitida) window.location.hash = "#/estaciones"; }, [permitida, route]);
   const flat = gruposBase.flatMap((g) => g.items);
   const active = flat.find((n) => n.hash === route || route.startsWith(`${n.hash}?`))
@@ -373,6 +388,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   if (route === "#/ayuda") page = <AyudaPage user={user} />;
   else if (route === "#/cuenta") page = <MiCuenta user={user} />;
   else if (route === "#/panel") page = <PanelPage user={user} />;
+  else if (route === "#/limpieza") page = <LimpiezaPage user={user} />;
   else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;
   else if (esGestionInformes) page = <GestionInformesPage key={route} user={user} />;
@@ -397,7 +413,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       <div className="nav-section">Cuenta</div><a className={"nav-item" + (route === "#/cuenta" ? " active" : "")} href="#/cuenta"><span>⚙️</span> Mi cuenta</a>
       <div className="sidebar-footer"><div className="who">{user.nombre}</div><div>{rolLabel(user.rol)}</div><button className="btn secondary small" style={{ marginTop: 10 }} onClick={logout}>Cerrar sesión</button></div>
     </aside>
-    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print">
+    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : route === "#/limpieza" ? "Plan de higiene por centro y turno" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print">
         <GlobalSearch />
         <div className="user-box">
           <div className="user-box-info">
