@@ -24,7 +24,7 @@ Si intentas abrir una sección sin permisos verás un aviso 🔒 **Sección rest
 
 ## 2. Entrar en la aplicación
 
-1. Abre **https://inventarios.freebuff.app** en el navegador de tu móvil, tablet u ordenador.
+1. Abre **https://insuma.freebuff.app** en el navegador de tu móvil, tablet u ordenador.
 2. Escribe tu **usuario** y tu **contraseña** y pulsa **Entrar**.
 
 ![Pantalla de acceso](img/acceso.png)

@@ -194,7 +194,7 @@ export function EntregaPage({ user }: { user: { rol: string; centro_id: number |
       <div class="meta"><strong>Operario:</strong> ${esc(primero.usuario_nombre)} · <strong>Centro:</strong> ${esc(primero.centro_nombre ?? "—")} · <strong>Fecha:</strong> ${esc(hoy().split("-").reverse().join("/"))}</div>
       <table><thead><tr><th>Artículo</th><th>Tipo</th><th class="r">Cant.</th><th>Talla</th><th>Color</th><th>Fecha entrega</th></tr></thead><tbody>${filas}</tbody></table>
       <div class="firma"><div>Firma del recibido</div><div>VoBo administración</div></div>
-      <div class="pie">Documento generado por Inventarios · ${esc(hoy().split("-").reverse().join("/"))}</div>
+      <div class="pie">Documento generado por Insuma · ${esc(hoy().split("-").reverse().join("/"))}</div>
       </body></html>`);
     win.document.close();
     win.focus();

@@ -109,5 +109,5 @@ src/web/      SPA React: App.tsx (login y navegación), resources.tsx (páginas 
 - **CI** (`.github/workflows/ci.yml`): en cada push y PR ejecuta `bun tsc -b --noEmit`, `bun test` y `bun run build`.
 - **Tests**: `bun test` — tests unitarios del histórico de maquinaria (creación, idempotencia y sincronización del estado) con un shim de D1 sobre `bun:sqlite` (`tests/`).
 - **GitHub Pages** (`.github/workflows/pages.yml`): publica `dist/` en <https://arojasmoreno.github.io/Inventarios/> con la API apuntando al Worker. Si Pages no está habilitado, el workflow termina en verde con un aviso (se activa en *Settings → Pages → Source: GitHub Actions*).
-- **Producción**: el frontend se sirve en <https://inventarios.freebuff.app> (Freebuff) y la API en el Worker de Cloudflare; se despliega con `freebuff-deploy start` (frontend) y `npx wrangler deploy` (Worker). Un cron diario (06:00 UTC) envía el resumen de alertas por correo.
+- **Producción**: el frontend se sirve en <https://insuma.freebuff.app> (Freebuff) y la API en el Worker de Cloudflare; se despliega con `freebuff-deploy start` (frontend) y `npx wrangler deploy` (Worker). Un cron diario (06:00 UTC) envía el resumen de alertas por correo.
 - **Backup de la base de datos**: `sh ./scripts/backup-d1.sh` exporta D1 a `backups/` (carpeta ignorada por git).

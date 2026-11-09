@@ -29,6 +29,17 @@ const TRUSTED_ORIGINS = new Set([
   "http://127.0.0.1:5173",
 ]);
 
+// Cualquier subdominio de Freebuff vale como origen: el despliegue puede
+// cambiar de nombre (insuma, inventarios…) sin volver a tocar el Worker.
+function isFreebuffOrigin(origin: string): boolean {
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === "freebuff.app" || hostname.endsWith(".freebuff.app");
+  } catch {
+    return false;
+  }
+}
+
 function isTrustedOrigin(origin: string | undefined, requestUrl: string): boolean {
   if (!origin) return true;
   try {
@@ -36,11 +47,11 @@ function isTrustedOrigin(origin: string | undefined, requestUrl: string): boolea
   } catch {
     return false;
   }
-  return TRUSTED_ORIGINS.has(origin);
+  return TRUSTED_ORIGINS.has(origin) || isFreebuffOrigin(origin);
 }
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
-// CORS para que inventarios.freebuff.app (otro origen) pueda llamar a la API
+// CORS para que el frontend de Freebuff (otro origen) pueda llamar a la API
 // con cookies incluidas; responde también a los preflight OPTIONS.
 app.use("*", cors({
   origin: (origin, c) => (isTrustedOrigin(origin, c.req.url) ? origin : ""),

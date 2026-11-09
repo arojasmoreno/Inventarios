@@ -162,7 +162,7 @@ export function App() {
   // sección del rol: el panel de control para administradores y las
   // estaciones de consumo para el perfil usuario.
   useEffect(() => { if (user && !window.location.hash) window.location.hash = user.rol === "usuario" ? "#/estaciones" : "#/panel"; }, [user]);
-  if (loading) return <div className="loading">Cargando Inventarios…</div>;
+  if (loading) return <div className="loading">Cargando Insuma…</div>;
   if (!user) return <Login onLoggedIn={setUser} />;
   return <Shell user={user} route={route} onUserChange={setUser} />;
 
@@ -200,7 +200,7 @@ function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   return <div className="login-wrap landing">
     <section className="landing-intro">
       <span className="landing-eyebrow">📦 Gestión de planta</span>
-      <h1>Inventarios</h1>
+      <h1>Insuma</h1>
       <p className="landing-sub">Químicos · Material de limpieza · Maquinaria</p>
       <p className="landing-desc">Gestiona el inventario de tus centros de trabajo desde un solo lugar: consumibles con control de stock y caducidad, estaciones de consumo con QR, maquinaria con su histórico de estados y equipación de operarios, con informes y manuales listos para descargar.</p>
       <div className="landing-features">
@@ -405,7 +405,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
     ? user.centros.map((c) => c.nombre).join(" · ")
     : user.rol === "admin" ? "Todos los centros" : "Sin centros asignados";
   return <div className="app">
-    <aside className="sidebar no-print"><div className="brand"><span className="logo">📦</span> Inventarios</div>
+    <aside className="sidebar no-print"><div className="brand"><span className="logo">📦</span> Insuma</div>
       {grupos.map((g) => <Fragment key={g.section}>
         <div className="nav-section">{g.section}</div>
         {g.items.map((n) => <a key={n.hash} className={"nav-item" + (n.hash === active.hash ? " active" : "")} href={n.hash}><span>{n.icon}</span> {n.label}</a>)}
@@ -413,7 +413,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       <div className="nav-section">Cuenta</div><a className={"nav-item" + (route === "#/cuenta" ? " active" : "")} href="#/cuenta"><span>⚙️</span> Mi cuenta</a>
       <div className="sidebar-footer"><div className="who">{user.nombre}</div><div>{rolLabel(user.rol)}</div><button className="btn secondary small" style={{ marginTop: 10 }} onClick={logout}>Cerrar sesión</button></div>
     </aside>
-    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Inventarios")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : route === "#/limpieza" ? "Plan de higiene por centro y turno" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print">
+    <main className="main"><header className="topbar"><div><h1>{route === "#/cuenta" ? "Mi cuenta" : (active.label ?? "Insuma")}</h1><p>{route === "#/cuenta" ? "Datos de acceso y contraseña" : route === "#/limpieza" ? "Plan de higiene por centro y turno" : "Gestión del inventario de planta"}</p></div><div className="topbar-right no-print">
         <GlobalSearch />
         <div className="user-box">
           <div className="user-box-info">

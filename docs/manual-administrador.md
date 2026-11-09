@@ -8,7 +8,7 @@ Guía completa de la aplicación **Inventarios** (químicos, material de limpiez
 
 ## 1. Acceso a la aplicación
 
-1. Abre el navegador (Chrome, Edge, Firefox o Safari) y ve a **https://inventarios.freebuff.app**.
+1. Abre el navegador (Chrome, Edge, Firefox o Safari) y ve a **https://insuma.freebuff.app**.
 2. Escribe tu **usuario** y tu **contraseña** y pulsa **Entrar**.
 
 ![Pantalla de acceso](img/acceso.png)
