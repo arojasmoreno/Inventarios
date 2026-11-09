@@ -353,3 +353,25 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
   .cal-actions>.btn{flex:1}
   .cal-foot{flex-direction:column;align-items:flex-start}
 }
+
+/* Plan de higiene: carga masiva del Excel y tabla de tareas. */
+.modal.wide{max-width:940px}
+.plan-step{border-top:1px solid var(--border);padding:16px 0}
+.plan-step:first-of-type{border-top:0;padding-top:0}
+.plan-step h3{font-size:14.5px;margin-bottom:6px}
+.plan-help{color:var(--muted);font-size:12.5px;line-height:1.55;margin:0 0 10px}
+.plan-help code{background:#f1f5f9;border-radius:4px;padding:1px 4px;font-size:11.5px}
+.plan-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.plan-actions .input{flex:1;min-width:220px}
+.plan-preview{margin-top:12px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px}
+.plan-preview strong{font-size:13.5px}
+.plan-preview .btn{margin-top:10px}
+.plan-errores,.plan-avisos{margin:8px 0 0;padding-left:18px;font-size:12.5px;line-height:1.55}
+.plan-errores{color:#991b1b}
+.plan-avisos{color:#92400e}
+.plan-ok{background:#dcfce7;border:1px solid #bbf7d0;color:#166534;border-radius:8px;font-size:13px;margin:12px 0 0;padding:9px 12px}
+.plan-table-wrap{max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:10px}
+.plan-table{font-size:12.5px}
+.plan-table th,.plan-table td{padding:7px 10px}
+.cal-zona-text{min-width:0;flex:1}
+.cal-elemento{display:block;color:var(--muted);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -3,6 +3,7 @@ import { requireAuth, centrosDeUsuario, type SessionUser } from "./auth";
 import { logMovimiento } from "./audit";
 import type { D1Database, D1Statement, Env } from "./d1";
 import type { Variables } from "./types";
+import { fechasDelMes, normalizar, parseFecha, parseFrecuencia, sumarIntervalo } from "./limpieza-plan";
 
 // Plan de higiene: cada centro gestiona su propio calendario mensual y cada
 // turno (día, tarde y noche) tiene sus faenas independientes. Las faenas se
@@ -24,6 +25,7 @@ interface FaenaDb {
   zona: string;
   subzona: string | null;
   frecuencia_informativa: string | null;
+  plan_id: number | null;
 }
 
 interface FaenaCalendario {
@@ -31,6 +33,8 @@ interface FaenaCalendario {
   zona: string;
   subzona: string | null;
   frecuencia_informativa: string | null;
+  elemento: string | null;
+  tipo_limpieza: string | null;
   dias: number[];
   registros: Array<{ dia: number; usuario_id: number; usuario: string; creado: string }>;
 }
@@ -119,7 +123,7 @@ async function puedeGestionarCentro(db: D1Database, user: SessionUser, centroId:
 
 async function cargarFaena(db: D1Database, id: number): Promise<FaenaDb | null> {
   return db.prepare(
-    `SELECT id, centro_id, anio, mes, turno, zona, subzona, frecuencia_informativa
+    `SELECT id, centro_id, anio, mes, turno, zona, subzona, frecuencia_informativa, plan_id
      FROM limpieza_faenas WHERE id = ?`,
   ).bind(id).first<FaenaDb>();
 }
@@ -170,9 +174,10 @@ limpiezaRoutes.get("/calendario", async (c) => {
   const hasta = fechaISO(anio, mes, diasMes);
   const [filas, festivos, zonas, subzonas] = await Promise.all([
     db.prepare(
-      `SELECT f.id, f.zona, f.subzona, f.frecuencia_informativa,
+      `SELECT f.id, f.zona, f.subzona, f.frecuencia_informativa, p.elemento, p.tipo_limpieza,
               d.fecha, r.usuario_id, u.nombre AS usuario, r.created_at AS creado
        FROM limpieza_faenas f
+       LEFT JOIN limpieza_plan p ON p.id = f.plan_id
        LEFT JOIN limpieza_dias d ON d.faena_id = f.id AND d.fecha BETWEEN ? AND ?
        LEFT JOIN limpieza_registros r ON r.faena_id = d.faena_id AND r.fecha = d.fecha
        LEFT JOIN usuarios u ON u.id = r.usuario_id
@@ -180,6 +185,7 @@ limpiezaRoutes.get("/calendario", async (c) => {
        ORDER BY f.zona COLLATE NOCASE, f.subzona COLLATE NOCASE, f.id, d.fecha`,
     ).bind(desde, hasta, centroId, anio, mes, turno).all<{
       id: number; zona: string; subzona: string | null; frecuencia_informativa: string | null;
+      elemento: string | null; tipo_limpieza: string | null;
       fecha: string | null; usuario_id: number | null; usuario: string | null; creado: string | null;
     }>(),
     db.prepare("SELECT fecha FROM limpieza_festivos WHERE centro_id = ? AND fecha BETWEEN ? AND ? ORDER BY fecha")
@@ -203,6 +209,8 @@ limpiezaRoutes.get("/calendario", async (c) => {
         zona: String(fila.zona),
         subzona: fila.subzona ? String(fila.subzona) : null,
         frecuencia_informativa: fila.frecuencia_informativa ? String(fila.frecuencia_informativa) : null,
+        elemento: fila.elemento ? String(fila.elemento) : null,
+        tipo_limpieza: fila.tipo_limpieza ? String(fila.tipo_limpieza) : null,
         dias: [],
         registros: [],
       };
@@ -439,6 +447,301 @@ limpiezaRoutes.put("/festivos", async (c) => {
   return c.json({ ok: true, festivos: fechas });
 });
 
+// --------------------------------------------------------------- Plan de higiene
+// El plan de higiene llega en Excel (una fila por tarea y centro) y se guarda
+// aparte del calendario. De él se generan las faenas de cada mes usando
+// proxima_fecha = última realización + frecuencia_calculo.
+
+interface PlanDb {
+  id: number;
+  zona: string;
+  subzona: string | null;
+  tipo_limpieza: string | null;
+  elemento: string | null;
+  frecuencia_calculo: string;
+  frecuencia_informativa: string | null;
+  turno: string;
+  fecha_inicio: string | null;
+  ultima_realizacion: string | null;
+  proxima_fecha: string | null;
+}
+
+interface PlanImportada {
+  fila: number;
+  centro_id: number;
+  tipo_limpieza: string | null;
+  zona: string;
+  subzona: string | null;
+  tipo_zona: string | null;
+  elemento: string | null;
+  frecuencia_calculo: string;
+  frecuencia_informativa: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
+  turno: Turno;
+  auditable: number;
+  fecha_inicio: string | null;
+  ultima_realizacion: string | null;
+  proxima_fecha: string | null;
+}
+
+/** Número de una celda de Excel (admite coma decimal). */
+function decimal(valor: unknown): number | null {
+  if (typeof valor === "number") return Number.isFinite(valor) ? valor : null;
+  if (typeof valor !== "string" || !valor.trim()) return null;
+  const n = Number(valor.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Casilla «auditable»: admite sí/no, x, true/false y 1/0. */
+function booleano(valor: unknown): number {
+  if (typeof valor === "boolean") return valor ? 1 : 0;
+  if (typeof valor === "number") return valor ? 1 : 0;
+  const t = normalizar(String(valor ?? ""));
+  return t === "si" || t === "x" || t === "true" || t === "1" || t === "yes" ? 1 : 0;
+}
+
+/** Identifica una tarea del plan: al reimportar se actualiza la existente en
+ *  lugar de duplicarla. */
+function clavePlan(t: { zona: string; subzona: string | null; elemento: string | null; tipo_limpieza: string | null; turno: string }): string {
+  return [t.zona, t.subzona, t.elemento, t.tipo_limpieza, t.turno].map((v) => normalizar(v ?? "")).join("|");
+}
+
+async function ejecutarLotes(db: D1Database, statements: D1Statement[], tam = 80): Promise<void> {
+  for (let i = 0; i < statements.length; i += tam) await ejecutar(db, statements.slice(i, i + tam));
+}
+
+/** Al marcar una tarea como realizada, la próxima fecha del plan avanza. */
+async function avanzarPlan(db: D1Database, planId: number, fecha: string): Promise<void> {
+  const plan = await db.prepare("SELECT frecuencia_calculo FROM limpieza_plan WHERE id = ?")
+    .bind(planId).first<{ frecuencia_calculo: string }>();
+  if (!plan) return;
+  const intervalo = parseFrecuencia(plan.frecuencia_calculo);
+  await db.prepare(
+    "UPDATE limpieza_plan SET ultima_realizacion = ?, proxima_fecha = ?, updated_at = datetime('now') WHERE id = ?",
+  ).bind(fecha, intervalo ? sumarIntervalo(fecha, intervalo) : null, planId).run();
+}
+
+// Tareas del plan de un centro (lo que se ha cargado desde Excel).
+limpiezaRoutes.get("/plan", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const centroId = entero(c.req.query("centro_id"));
+  if (!centroId) return c.json({ error: "Indica el centro" }, 400);
+  if (!(await puedeVerCentro(db, user, centroId))) return c.json({ error: "No tienes acceso a este centro" }, 403);
+  const res = await db.prepare(
+    `SELECT id, tipo_limpieza, zona, subzona, tipo_zona, elemento, frecuencia_calculo,
+            frecuencia_informativa, tiempo, factor, horas_semana, turno, auditable,
+            fecha_inicio, ultima_realizacion, proxima_fecha
+     FROM limpieza_plan WHERE centro_id = ?
+     ORDER BY turno, zona COLLATE NOCASE, subzona COLLATE NOCASE, elemento COLLATE NOCASE`,
+  ).bind(centroId).all<PlanDb>();
+  return c.json({
+    centro_id: centroId,
+    tareas: res.results,
+    total: res.results.length,
+    puede_gestionar: await puedeGestionarCentro(db, user, centroId),
+  });
+});
+
+// Carga masiva del plan desde el Excel: reemplaza lo que había de cada centro
+// (actualiza las tareas que coinciden y borra las que ya no vienen).
+limpiezaRoutes.post("/plan/importar", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const body = await leerCuerpo(c);
+  const filas = Array.isArray(body.filas) ? body.filas : [];
+  if (!filas.length) return c.json({ error: "El archivo no contiene tareas que importar" }, 400);
+  if (filas.length > 5000) return c.json({ error: "El plan admite hasta 5000 tareas por importación" }, 400);
+
+  const errores: Array<{ fila: number; mensaje: string }> = [];
+  const porCentro = new Map<number, PlanImportada[]>();
+  const permisos = new Map<number, boolean>();
+
+  for (let i = 0; i < filas.length; i++) {
+    const datos = filas[i];
+    if (!datos || typeof datos !== "object" || Array.isArray(datos)) continue;
+    const fila = entero((datos as Row).fila) ?? i + 2;
+    const centroId = entero((datos as Row).centro_id);
+    if (!centroId) { errores.push({ fila, mensaje: "No se indica el centro (columna «cliente»)" }); continue; }
+    if (!permisos.has(centroId)) permisos.set(centroId, await puedeGestionarCentro(db, user, centroId));
+    if (!permisos.get(centroId)) { errores.push({ fila, mensaje: "No puedes cargar el plan de ese centro" }); continue; }
+    const zona = texto((datos as Row).zona, 120);
+    if (!zona) { errores.push({ fila, mensaje: "Falta la zona (columna «centro»)" }); continue; }
+    const frecuenciaCalculo = texto((datos as Row).frecuencia_calculo, 200);
+    if (!frecuenciaCalculo) { errores.push({ fila, mensaje: "Falta la frecuencia de cálculo" }); continue; }
+    const inicio = parseFecha((datos as Row).fecha_inicio);
+    const ultima = parseFecha((datos as Row).ultima_realizacion);
+    const intervalo = parseFrecuencia(frecuenciaCalculo);
+    const origen = ultima ?? inicio;
+    const prevista = parseFecha((datos as Row).proxima_fecha)
+      ?? (intervalo && origen ? sumarIntervalo(origen, intervalo) : null);
+    const turnoCrudo = (datos as Row).turno;
+    const turno: Turno = esTurno(turnoCrudo) ? turnoCrudo : "dia";
+    const tarea: PlanImportada = {
+      fila,
+      centro_id: centroId,
+      tipo_limpieza: texto((datos as Row).tipo_limpieza, 120),
+      zona,
+      subzona: texto((datos as Row).subzona, 120),
+      tipo_zona: texto((datos as Row).tipo_zona, 120),
+      elemento: texto((datos as Row).elemento, 160),
+      frecuencia_calculo: frecuenciaCalculo,
+      frecuencia_informativa: texto((datos as Row).frecuencia_informativa, 200),
+      tiempo: decimal((datos as Row).tiempo),
+      factor: decimal((datos as Row).factor),
+      horas_semana: decimal((datos as Row).horas_semana),
+      turno,
+      auditable: booleano((datos as Row).auditable),
+      fecha_inicio: inicio,
+      ultima_realizacion: ultima,
+      proxima_fecha: prevista,
+    };
+    const lista = porCentro.get(centroId) ?? [];
+    lista.push(tarea);
+    porCentro.set(centroId, lista);
+  }
+
+  let insertadas = 0;
+  let actualizadas = 0;
+  let eliminadas = 0;
+
+  for (const [centroId, tareas] of porCentro) {
+    const existentes = await db.prepare(
+      "SELECT id, zona, subzona, elemento, tipo_limpieza, turno FROM limpieza_plan WHERE centro_id = ?",
+    ).bind(centroId).all<{ id: number; zona: string; subzona: string | null; elemento: string | null; tipo_limpieza: string | null; turno: string }>();
+    const porClave = new Map<string, number>();
+    for (const fila of existentes.results) {
+      porClave.set(clavePlan({ zona: String(fila.zona), subzona: fila.subzona, elemento: fila.elemento, tipo_limpieza: fila.tipo_limpieza, turno: String(fila.turno) }), Number(fila.id));
+    }
+    const conservadas = new Set<number>();
+    const vistas = new Map<string, number>();
+    const statements: D1Statement[] = [];
+
+    for (const t of tareas) {
+      const clave = clavePlan(t);
+      const actual = porClave.get(clave);
+      if (actual) conservadas.add(actual);
+      if (vistas.has(clave)) {
+        errores.push({ fila: t.fila, mensaje: `Tarea repetida: «${t.zona}${t.subzona ? ` / ${t.subzona}` : ""}» ya aparecía en la fila ${vistas.get(clave)}` });
+        continue;
+      }
+      vistas.set(clave, t.fila);
+      if (actual) {
+        actualizadas++;
+        statements.push(db.prepare(
+          `UPDATE limpieza_plan SET tipo_limpieza = ?, tipo_zona = ?, elemento = ?, subzona = ?,
+                  frecuencia_calculo = ?, frecuencia_informativa = ?, tiempo = ?, factor = ?, horas_semana = ?,
+                  turno = ?, auditable = ?, fecha_inicio = ?, ultima_realizacion = ?, proxima_fecha = ?,
+                  updated_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(t.tipo_limpieza, t.tipo_zona, t.elemento, t.subzona, t.frecuencia_calculo, t.frecuencia_informativa,
+          t.tiempo, t.factor, t.horas_semana, t.turno, t.auditable, t.fecha_inicio, t.ultima_realizacion, t.proxima_fecha, actual));
+      } else {
+        insertadas++;
+        statements.push(db.prepare(
+          `INSERT INTO limpieza_plan (centro_id, tipo_limpieza, zona, subzona, tipo_zona, elemento, frecuencia_calculo,
+                                    frecuencia_informativa, tiempo, factor, horas_semana, turno, auditable,
+                                    fecha_inicio, ultima_realizacion, proxima_fecha, creado_por)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(centroId, t.tipo_limpieza, t.zona, t.subzona, t.tipo_zona, t.elemento, t.frecuencia_calculo,
+          t.frecuencia_informativa, t.tiempo, t.factor, t.horas_semana, t.turno, t.auditable,
+          t.fecha_inicio, t.ultima_realizacion, t.proxima_fecha, user.id));
+      }
+    }
+
+    const sobrantes = existentes.results.map((f) => Number(f.id)).filter((id) => !conservadas.has(id));
+    // Se borran las tareas que ya no vienen en el archivo (por tandas: D1 admite
+    // como máximo 100 parámetros por sentencia).
+    for (let i = 0; i < sobrantes.length; i += 90) {
+      const tanda = sobrantes.slice(i, i + 90);
+      const marcas = tanda.map(() => "?").join(", ");
+      statements.push(db.prepare(`UPDATE limpieza_faenas SET plan_id = NULL WHERE plan_id IN (${marcas})`).bind(...tanda));
+      statements.push(db.prepare(`DELETE FROM limpieza_plan WHERE id IN (${marcas})`).bind(...tanda));
+      eliminadas += tanda.length;
+    }
+    await ejecutarLotes(db, statements);
+  }
+
+  await logMovimiento(db, user, "alta", "limpieza_plan", null,
+    `Plan de higiene importado: ${insertadas} tareas nuevas, ${actualizadas} actualizadas, ${eliminadas} quitadas`, null, null);
+  return c.json({ ok: true, insertadas, actualizadas, eliminadas, centros: [...porCentro.keys()], errores });
+});
+
+// Genera el calendario de un mes a partir del plan: crea (o actualiza) las
+// faenas del turno de cada tarea con los días que toca según su frecuencia.
+limpiezaRoutes.post("/plan/generar", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const body = await leerCuerpo(c);
+  const centroId = entero(body.centro_id);
+  const anio = entero(body.anio);
+  const mes = entero(body.mes);
+  if (!centroId || !anio || !mes) return c.json({ error: "Indica centro, año y mes" }, 400);
+  if (anio < 2020 || anio > 2100 || mes < 1 || mes > 12) return c.json({ error: "El año o el mes no son válidos" }, 400);
+  const centro = await db.prepare("SELECT nombre FROM centros WHERE id = ?").bind(centroId).first<{ nombre: string }>();
+  if (!centro) return c.json({ error: "Centro no encontrado" }, 404);
+  if (!(await puedeGestionarCentro(db, user, centroId))) {
+    return c.json({ error: "Solo los responsables del centro pueden generar el calendario" }, 403);
+  }
+  const plan = await db.prepare(
+    `SELECT id, zona, subzona, tipo_limpieza, elemento, frecuencia_calculo, frecuencia_informativa,
+            turno, fecha_inicio, ultima_realizacion, proxima_fecha
+     FROM limpieza_plan WHERE centro_id = ?
+     ORDER BY turno, zona COLLATE NOCASE, subzona COLLATE NOCASE`,
+  ).bind(centroId).all<PlanDb>();
+  if (!plan.results.length) return c.json({ error: "El centro todavía no tiene plan de higiene cargado" }, 400);
+
+  const existentes = await db.prepare(
+    "SELECT id, plan_id FROM limpieza_faenas WHERE centro_id = ? AND anio = ? AND mes = ? AND plan_id IS NOT NULL",
+  ).bind(centroId, anio, mes).all<{ id: number; plan_id: number }>();
+  const faenaPorPlan = new Map<number, number>();
+  for (const fila of existentes.results) faenaPorPlan.set(Number(fila.plan_id), Number(fila.id));
+
+  let creadas = 0;
+  let actualizadas = 0;
+  let dias = 0;
+  const omitidas: Array<{ zona: string; frecuencia_calculo: string }> = [];
+
+  for (const tarea of plan.results) {
+    const intervalo = parseFrecuencia(tarea.frecuencia_calculo);
+    if (!intervalo) {
+      omitidas.push({ zona: tarea.zona, frecuencia_calculo: tarea.frecuencia_calculo });
+      continue;
+    }
+    const programados = fechasDelMes(tarea.proxima_fecha ?? tarea.fecha_inicio, intervalo, anio, mes);
+    if (!programados.length) continue;
+    const etiqueta = tarea.frecuencia_informativa ?? tarea.frecuencia_calculo;
+    const turno: Turno = esTurno(tarea.turno) ? tarea.turno : "dia";
+    let faenaId = faenaPorPlan.get(Number(tarea.id));
+    if (faenaId) {
+      actualizadas++;
+      await db.prepare(
+        "UPDATE limpieza_faenas SET zona = ?, subzona = ?, frecuencia_informativa = ?, updated_at = datetime('now') WHERE id = ?",
+      ).bind(tarea.zona, tarea.subzona, etiqueta, faenaId).run();
+    } else {
+      const res = await db.prepare(
+        `INSERT INTO limpieza_faenas (centro_id, anio, mes, turno, zona, subzona, frecuencia_informativa, creado_por, plan_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(centroId, anio, mes, turno, tarea.zona, tarea.subzona, etiqueta, user.id, Number(tarea.id)).run();
+      faenaId = Number((res.meta as { last_row_id?: number }).last_row_id);
+      if (!faenaId) continue;
+      faenaPorPlan.set(Number(tarea.id), faenaId);
+      creadas++;
+    }
+    dias += programados.length;
+    const id = faenaId;
+    await ejecutarLotes(db, programados.map((dia) => db.prepare(
+      "INSERT OR IGNORE INTO limpieza_dias (faena_id, fecha) VALUES (?, ?)",
+    ).bind(id, fechaISO(anio, mes, dia))), 31);
+  }
+
+  await logMovimiento(db, user, "alta", "limpieza_faenas", null,
+    `Plan de higiene generado en ${String(centro.nombre)}: ${creadas + actualizadas} faenas, ${dias} días (${String(mes).padStart(2, "0")}/${anio})`, null, null);
+  return c.json({ ok: true, faenas_creadas: creadas, faenas_actualizadas: actualizadas, dias, omitidas });
+});
+
 // Marcar o desmarcar una tarea en un día concreto. Puede hacerlo cualquier
 // persona con acceso al centro; deshacer la marca de otro operario queda
 // reservado a los responsables del centro.
@@ -493,6 +796,8 @@ limpiezaRoutes.post("/registros", async (c) => {
   await db.prepare(
     "INSERT INTO limpieza_registros (faena_id, fecha, usuario_id, created_at) VALUES (?, ?, ?, ?)",
   ).bind(faenaId, fecha, user.id, creado).run();
+  // La tarea realizada hace avanzar el plan: próxima = esta fecha + frecuencia.
+  if (faena.plan_id) await avanzarPlan(db, Number(faena.plan_id), fecha);
   return c.json({
     hecho: true,
     usuario_id: user.id,

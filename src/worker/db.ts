@@ -72,6 +72,10 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS limpieza_dias (faena_id INTEGER NOT NULL REFERENCES limpieza_faenas(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (faena_id, fecha))`,
   `CREATE TABLE IF NOT EXISTS limpieza_registros (faena_id INTEGER NOT NULL, fecha TEXT NOT NULL, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (faena_id, fecha), FOREIGN KEY (faena_id, fecha) REFERENCES limpieza_dias(faena_id, fecha) ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS limpieza_festivos (centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (centro_id, fecha))`,
+  // Plan de higiene de cada centro: una fila por tarea cargada desde Excel.
+  // `frecuencia_calculo` manda para programar (proxima_fecha = última + esa
+  // frecuencia) y `frecuencia_informativa` es el texto que se muestra.
+  `CREATE TABLE IF NOT EXISTS limpieza_plan (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, tipo_limpieza TEXT, zona TEXT NOT NULL, subzona TEXT, tipo_zona TEXT, elemento TEXT, frecuencia_calculo TEXT NOT NULL, frecuencia_informativa TEXT, tiempo REAL, factor REAL, horas_semana REAL, turno TEXT NOT NULL DEFAULT 'dia', auditable INTEGER NOT NULL DEFAULT 0, fecha_inicio TEXT, ultima_realizacion TEXT, proxima_fecha TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
 ];
 
 // Migraciones para tablas creadas antes de añadir estas columnas.
@@ -113,6 +117,8 @@ const ALTERS: Array<[string, string]> = [
   ["quimicos", "stock_maximo INTEGER NOT NULL DEFAULT 0"],
   // Notas de cada registro del histórico de maquinaria.
   ["maquinaria_historial", "notas TEXT"],
+  // Cada faena generada desde el plan de higiene apunta a su tarea de origen.
+  ["limpieza_faenas", "plan_id INTEGER REFERENCES limpieza_plan(id) ON DELETE SET NULL"],
 ];
 
 async function dropColumnIfPresent(db: D1Database, table: string, column: string): Promise<void> {
@@ -345,6 +351,11 @@ export async function bootstrap(db: D1Database): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_limpieza_dias_fecha ON limpieza_dias(fecha)",
     "CREATE INDEX IF NOT EXISTS idx_limpieza_registros_usuario ON limpieza_registros(usuario_id)",
     "CREATE INDEX IF NOT EXISTS idx_limpieza_festivos_fecha ON limpieza_festivos(fecha)",
+    // Plan de higiene: búsqueda por centro y clave única por tarea (zona,
+    // subzona, elemento, tipo de limpieza y turno) para poder reimportar.
+    "CREATE INDEX IF NOT EXISTS idx_limpieza_plan_centro ON limpieza_plan(centro_id, turno)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_limpieza_plan_clave ON limpieza_plan(centro_id, zona, ifnull(subzona, ''), ifnull(elemento, ''), ifnull(tipo_limpieza, ''), turno)",
+    "CREATE INDEX IF NOT EXISTS idx_limpieza_faenas_origen ON limpieza_faenas(plan_id)",
   ] as const) await db.prepare(idx).run();
   ready = true;
 }

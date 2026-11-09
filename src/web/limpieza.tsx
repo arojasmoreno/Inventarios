@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Modal, Toast, formatFecha, formatNum } from "./ui";
+import { PlanHigieneModal } from "./limpieza-plan";
 
 type Turno = "dia" | "tarde" | "noche";
 type Modo = "planificar" | "marcar";
@@ -13,6 +14,8 @@ interface Faena {
   zona: string;
   subzona: string | null;
   frecuencia_informativa: string | null;
+  elemento?: string | null;
+  tipo_limpieza?: string | null;
   dias: number[];
   registros: Registro[];
 }
@@ -83,6 +86,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const [modo, setModo] = useState<Modo>(user.rol === "usuario" ? "marcar" : "planificar");
   const [faenaModal, setFaenaModal] = useState<Faena | "nueva" | null>(null);
   const [festivosModal, setFestivosModal] = useState(false);
+  const [planModal, setPlanModal] = useState(false);
   const [pendientes, setPendientes] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
 
@@ -324,6 +328,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
             <button type="button" className={modo === "marcar" ? "active" : ""} aria-pressed={modo === "marcar"} onClick={() => setModo("marcar")}>✅ Marcar tareas</button>
           </div>}
           {puedeGestionar && <button type="button" className="btn secondary" onClick={() => setFestivosModal(true)} disabled={!cal || cargando}>🎉 Festivos</button>}
+          {puedeGestionar && <button type="button" className="btn secondary" onClick={() => setPlanModal(true)} disabled={!cal || cargando}>📊 Plan de higiene</button>}
           {puedeGestionar && <button type="button" className="btn" onClick={() => setFaenaModal("nueva")} disabled={!cal || cargando}>＋ Añadir faena</button>}
         </div>
       </div>
@@ -376,7 +381,10 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
                   <td className="cal-sticky cal-col-centro cal-soft" title={cal.centro.nombre}>{cal.centro.nombre}</td>
                   <td className="cal-sticky cal-col-zona">
                     <div className="cal-zona-cell">
-                      <strong>{faena.zona}</strong>
+                      <div className="cal-zona-text">
+                        <strong>{faena.zona}</strong>
+                        {faena.elemento && <small className="cal-elemento" title={faena.elemento}>{faena.elemento}</small>}
+                      </div>
                       {puedeGestionar && <button
                         type="button"
                         className="cal-edit"
@@ -439,6 +447,20 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
       festivos={cal?.festivos ?? []}
       onClose={() => setFaenaModal(null)}
       onSaved={faenaGuardada}
+    />}
+
+    {planModal && centroActual && <PlanHigieneModal
+      centro={centroActual}
+      centros={centros}
+      anio={anio}
+      mes={mes}
+      mesTexto={capitalizar(nombreMes(anio, mes))}
+      onClose={() => setPlanModal(false)}
+      onGenerado={(mensaje) => {
+        setPlanModal(false);
+        setVersion((v) => v + 1);
+        setToast({ message: mensaje, kind: "ok" });
+      }}
     />}
 
     {festivosModal && centroActual && <FestivosModal
