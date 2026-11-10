@@ -55,9 +55,18 @@ const SCHEMA: string[] = [
   // Su código lo relaciona con `material_limpieza` (unidades en almacén) y
   // alimenta la pestaña «Pedido material».
   `CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  // Líneas del pedido de material: código, producto, cantidad, precio y origen.
-  // Al aplicar el pedido, las cantidades pendientes se suman en `material_limpieza`.
+  // Líneas del pedido de material antiguo (se mantiene por compatibilidad; el
+  // pedido vivo es `pedidos` + `pedido_lineas`).
   `CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Proveedores a los que se manda cada pedido.
+  `CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Pedido de consumibles de un centro: nace en borrador, se manda al proveedor
+  // (enviado), se recepciona con el número de albarán y el recuento real
+  // (recibido) y, por último, suma al stock (aplicado).
+  `CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT NOT NULL UNIQUE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL, estado TEXT NOT NULL DEFAULT 'borrador', fecha TEXT NOT NULL DEFAULT (date('now')), fecha_envio TEXT, fecha_recepcion TEXT, albaran TEXT, notas TEXT, reclamacion TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Una línea por producto pedido: lo pedido, lo contado al recibir (NULL si
+  // todavía no se ha contado) y si hay que reclamar la diferencia.
+  `CREATE TABLE IF NOT EXISTS pedido_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, cantidad_recibida INTEGER, precio REAL, origen TEXT NOT NULL DEFAULT 'empresa', reclamar INTEGER NOT NULL DEFAULT 0, motivo TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Recuentos de inventario de químicos: una fila por recuento validado y una
   // por cada lote del listado (litros del sistema frente a los litros reales
   // contados). Es la «hoja de inventario» que deja por escrito qué lotes se
@@ -119,6 +128,12 @@ const ALTERS: Array<[string, string]> = [
   ["maquinaria_historial", "notas TEXT"],
   // Cada faena generada desde el plan de higiene apunta a su tarea de origen.
   ["limpieza_faenas", "plan_id INTEGER REFERENCES limpieza_plan(id) ON DELETE SET NULL"],
+  // Proveedores: la tabla ya existía (código + nombre) y ahora guarda los datos
+  // de contacto y si está activo para poder pedirle.
+  ["proveedores", "contacto TEXT"], ["proveedores", "email TEXT"],
+  ["proveedores", "telefono TEXT"], ["proveedores", "notas TEXT"],
+  ["proveedores", "activo INTEGER NOT NULL DEFAULT 1"],
+  ["pedidos", "reclamacion TEXT"],
 ];
 
 async function dropColumnIfPresent(db: D1Database, table: string, column: string): Promise<void> {
@@ -144,6 +159,23 @@ async function migrate(db: D1Database): Promise<void> {
     const col = ddl.split(" ")[0];
     const info = await db.prepare(`PRAGMA table_info(${table})`).all();
     if (!info.results.some((r) => r.name === col)) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${ddl}`).run();
+  }
+  // Proveedores: la tabla antigua obligaba a tener un `codigo` único que ya no
+  // se usa (el proveedor se identifica por su nombre). SQLite no deja quitar un
+  // NOT NULL, así que se reconstruye conservando los datos ya cargados.
+  if (await tableExists(db, "proveedores")) {
+    const info = await db.prepare("PRAGMA table_info(proveedores)").all();
+    const cols = info.results.map((r) => String(r.name));
+    const codigoObligatorio = info.results.some((r) => r.name === "codigo" && Number(r.notnull) === 1);
+    if (codigoObligatorio) {
+      const destino = ["id", "nombre", "contacto", "email", "telefono", "notas", "activo", "created_at", "updated_at"];
+      const comunes = destino.filter((c) => cols.includes(c));
+      await db.prepare("DROP TABLE IF EXISTS proveedores_new").run();
+      await db.prepare("CREATE TABLE proveedores_new (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)").run();
+      await db.prepare(`INSERT INTO proveedores_new (${comunes.join(", ")}) SELECT ${comunes.join(", ")} FROM proveedores`).run();
+      await db.prepare("DROP TABLE proveedores").run();
+      await db.prepare("ALTER TABLE proveedores_new RENAME TO proveedores").run();
+    }
   }
   // En los químicos la fecha de caducidad pasa a ser opcional y se añade la
   // fecha de producción (solo informativa). SQLite no permite quitarle NOT NULL
@@ -344,6 +376,13 @@ export async function bootstrap(db: D1Database): Promise<void> {
     // Pedido de material: aplicar el pedido solo toca las líneas pendientes y
     // busca en material_limpieza por su código.
     "CREATE INDEX IF NOT EXISTS idx_pedidos_aplicado ON pedidos_material(aplicado)",
+    // Pedidos por centro/proveedor y sus líneas (el listado filtra por centro
+    // y estado, y el detalle carga las líneas del pedido).
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_nombre ON proveedores(nombre)",
+    "CREATE INDEX IF NOT EXISTS idx_pedidos_centro ON pedidos(centro_id, estado)",
+    "CREATE INDEX IF NOT EXISTS idx_pedidos_proveedor ON pedidos(proveedor_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_pedido ON pedido_lineas(pedido_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_codigo ON pedido_lineas(codigo)",
     "CREATE INDEX IF NOT EXISTS idx_mat_codigo ON material_limpieza(codigo)",
     // Plan de higiene: consulta del calendario por centro/mes/turno y marcado
     // de tareas por día.

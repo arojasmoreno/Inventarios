@@ -5,7 +5,7 @@ import type { Variables } from "./types";
 import { bootstrap } from "./db";
 import { authRoutes } from "./auth";
 import { ValidationError } from "./crud";
-import { quimicos, material, maquinaria, centros, usuarios, epis, ropa, movimientos, zonas, subzonas, soportes, consumiblesTipos, tipos, tiposEquipo, situaciones, productosDisponibles, pedidos } from "./resources";
+import { quimicos, material, maquinaria, centros, usuarios, epis, ropa, movimientos, zonas, subzonas, soportes, consumiblesTipos, tipos, tiposEquipo, situaciones, productosDisponibles, proveedores } from "./resources";
 import { maquinariaHistorial } from "./maquinaria-historial";
 import { tallas } from "./tallas";
 import { estaciones } from "./estaciones";
@@ -19,6 +19,7 @@ import { buscadorRoutes } from "./buscador";
 import { documentos, documentosTipos } from "./documentos";
 import { alertasRoutes } from "./alertas";
 import { limpiezaRoutes } from "./limpieza";
+import { pedidosRoutes } from "./pedidos";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -91,9 +92,10 @@ app.route("/api/tallas", tallas);
 app.route("/api/estaciones", estaciones);
 app.route("/api/soportes", soportes);
 app.route("/api/consumibles-tipos", consumiblesTipos);
-// Productos disponibles (catálogo de pedidos) y pedido de material.
+// Productos disponibles (catálogo de pedidos), proveedores y pedidos de consumibles.
 app.route("/api/productos-disponibles", productosDisponibles);
-app.route("/api/pedidos-material", pedidos);
+app.route("/api/proveedores", proveedores);
+app.route("/api/pedidos", pedidosRoutes);
 app.route("/api/ropa-entregas", entregasRoutes);
 app.route("/api/empresa", empresaRoutes);
 app.route("/api/informes", reportesRoutes);

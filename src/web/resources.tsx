@@ -323,6 +323,27 @@ export const TIPOS_EQUIPO: ResourceConfig = {
     { key: "created_at", label: "Alta", render: r => formatFecha(String(r.created_at ?? "")) },
   ],
 };
+export const PROVEEDORES: ResourceConfig = {
+  title: "Proveedores",
+  subtitle: "A quién se manda cada pedido de consumibles: nombre, persona de contacto y datos de contacto",
+  endpoint: "/api/proveedores", csvName: "proveedores", searchKeys: ["nombre", "contacto", "email", "telefono"],
+  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [
+    { name: "nombre", label: "Nombre del proveedor", type: "text", required: true, placeholder: "Ej. Limpiezas García S.L." },
+    { name: "contacto", label: "Persona de contacto", type: "text", placeholder: "Ej. Marta Ruiz" },
+    { name: "email", label: "Correo electrónico", type: "text", placeholder: "pedidos@proveedor.com" },
+    { name: "telefono", label: "Teléfono", type: "text", placeholder: "Ej. 932 00 00 00" },
+    { name: "notas", label: "Notas", type: "textarea" },
+    { name: "activo", label: "Activo", type: "boolean", help: "Solo los proveedores activos aparecen al crear un pedido." },
+  ],
+  columns: [
+    { key: "nombre", label: "Proveedor" },
+    { key: "contacto", label: "Contacto", csv: r => String(r.contacto ?? "—"), render: r => String(r.contacto ?? "—") },
+    { key: "email", label: "Correo", csv: r => String(r.email ?? ""), render: r => String(r.email ?? "—") },
+    { key: "telefono", label: "Teléfono", csv: r => String(r.telefono ?? ""), render: r => String(r.telefono ?? "—") },
+    { key: "activo", label: "Estado", csv: r => (Number(r.activo ?? 1) === 1 ? "Activo" : "Inactivo"), render: r => Number(r.activo ?? 1) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Inactivo</span> },
+  ],
+};
 export const SOPORTES: ResourceConfig = {
   title: "Soportes", subtitle: "Dónde se instalan las estaciones de consumo", endpoint: "/api/soportes", csvName: "soportes", searchKeys: ["nombre"],
   perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
