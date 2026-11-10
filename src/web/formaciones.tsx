@@ -283,8 +283,11 @@ function AsignacionModal({ usuario, formacionId, asignacion, catalogo, centros, 
     setBusy(true);
     setError(null);
     try {
-      const mismoTipo = asignacion && Number(asignacion.formacion_id) === Number(formacionSel);
-      if (mismoTipo) {
+      const mismaFormacion = asignacion && Number(asignacion.formacion_id) === Number(formacionSel);
+      // Una fecha posterior es una renovación: se guarda como registro nuevo
+      // para no perder la anterior. Una fecha igual o anterior corrige la ficha.
+      const esCorreccion = mismaFormacion && fecha <= String(asignacion.fecha).slice(0, 10);
+      if (esCorreccion) {
         await api.put(`/api/formaciones/asignaciones/${String(asignacion.id)}`, { fecha, notas: notas.trim() || null });
       } else {
         await api.post("/api/formaciones/asignaciones", {
