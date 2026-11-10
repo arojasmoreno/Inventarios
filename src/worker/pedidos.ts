@@ -269,10 +269,11 @@ pedidosRoutes.post("/", async (c) => {
   if (error) return c.json({ error }, 400);
   const repetido = codigoRepetido(lineas);
   if (repetido) return c.json({ error: `El código «${repetido}» aparece dos veces en el pedido` }, 400);
-  // Cada línea debe ser de un producto del proveedor elegido.
-  const catalogo = await db.prepare("SELECT codigo FROM productos_disponibles WHERE proveedor_id = ?")
-    .bind(proveedorId).all<{ codigo: string }>();
-  const permitidos = new Set(catalogo.results.map((p) => String(p.codigo).trim().toUpperCase()));
+  // Cada línea debe ser de un producto del proveedor elegido y toma su nombre
+  // del catálogo (no del texto que envíe el navegador).
+  const catalogo = await db.prepare("SELECT codigo, producto FROM productos_disponibles WHERE proveedor_id = ?")
+    .bind(proveedorId).all<{ codigo: string; producto: string }>();
+  const permitidos = new Map(catalogo.results.map((p) => [String(p.codigo).trim().toUpperCase(), String(p.producto)]));
   const ajeno = lineas.find((l) => !permitidos.has(l.codigo.trim().toUpperCase()));
   if (ajeno) return c.json({ error: `El producto «${ajeno.producto}» no pertenece al proveedor seleccionado` }, 400);
 
@@ -287,7 +288,7 @@ pedidosRoutes.post("/", async (c) => {
   await ejecutar(db, lineas.map((l) => db.prepare(
     `INSERT INTO pedido_lineas (pedido_id, codigo, producto, cantidad, precio, origen)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).bind(id, l.codigo, l.producto, l.cantidad, l.precio, l.origen)));
+  ).bind(id, l.codigo, permitidos.get(l.codigo.trim().toUpperCase()) ?? l.producto, l.cantidad, l.precio, l.origen)));
 
   await logMovimiento(db, user, "alta", "pedidos", id,
     `Pedido ${numero} creado para ${String(centro.nombre)} · ${lineas.length} líneas`, null, null);
@@ -341,8 +342,8 @@ pedidosRoutes.post("/:id/lineas", async (c) => {
   if (error) return c.json({ error }, 400);
   const linea = lineas[0];
   const producto = await db.prepare(
-    "SELECT id FROM productos_disponibles WHERE proveedor_id = ? AND TRIM(UPPER(codigo)) = TRIM(UPPER(?))",
-  ).bind(Number(pedido.proveedor_id), linea.codigo).first();
+    "SELECT id, producto FROM productos_disponibles WHERE proveedor_id = ? AND TRIM(UPPER(codigo)) = TRIM(UPPER(?))",
+  ).bind(Number(pedido.proveedor_id), linea.codigo).first<{ id: number; producto: string }>();
   if (!producto) return c.json({ error: "El producto no pertenece al proveedor del pedido" }, 400);
   const repetida = await db.prepare(
     "SELECT 1 AS x FROM pedido_lineas WHERE pedido_id = ? AND TRIM(UPPER(codigo)) = TRIM(UPPER(?))",
@@ -350,7 +351,7 @@ pedidosRoutes.post("/:id/lineas", async (c) => {
   if (repetida) return c.json({ error: `El código «${linea.codigo}» ya está en el pedido` }, 400);
   const res = await db.prepare(
     "INSERT INTO pedido_lineas (pedido_id, codigo, producto, cantidad, precio, origen) VALUES (?, ?, ?, ?, ?, ?)",
-  ).bind(id, linea.codigo, linea.producto, linea.cantidad, linea.precio, linea.origen).run();
+  ).bind(id, linea.codigo, producto.producto, linea.cantidad, linea.precio, linea.origen).run();
   return c.json({ id: Number((res.meta as { last_row_id?: number }).last_row_id), ok: true }, 201);
 });
 

@@ -178,6 +178,7 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
 
     {detalleId !== null && <PedidoDetalleModal
       id={detalleId}
+      productos={opciones?.productos ?? []}
       onClose={() => setDetalleId(null)}
       onAviso={setAviso}
       onCambio={() => void cargar()}
@@ -208,8 +209,6 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
   const [notas, setNotas] = useState("");
   const [q, setQ] = useState("");
   const [cantidades, setCantidades] = useState<Record<string, string>>({});
-  const [manuales, setManuales] = useState<Array<{ codigo: string; producto: string; cantidad: number; precio: number | null }>>([]);
-  const [manual, setManual] = useState({ codigo: "", producto: "", cantidad: "", precio: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -231,25 +230,10 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
         elegidas.push({ codigo: p.codigo, producto: p.producto, cantidad, precio: p.precio ?? null });
       }
     }
-    return [...elegidas, ...manuales];
-  }, [cantidades, productosProveedor, manuales]);
+    return elegidas;
+  }, [cantidades, productosProveedor]);
 
   const totalUds = lineas.reduce((n, l) => n + Number(l.cantidad ?? 0), 0);
-
-  const anadirManual = () => {
-    const codigo = manual.codigo.trim().toUpperCase();
-    const cantidad = Number(manual.cantidad);
-    if (!codigo || !manual.producto.trim()) { setError("La línea manual necesita código y producto"); return; }
-    if (!Number.isInteger(cantidad) || cantidad < 1) { setError("La cantidad de la línea manual debe ser mayor que 0"); return; }
-    const enProveedor = productosProveedor.some((p) => String(p.codigo ?? "").trim().toUpperCase() === codigo);
-    if (!enProveedor) { setError("Ese producto no pertenece al proveedor seleccionado"); return; }
-    const repetido = manuales.some((m) => m.codigo.toUpperCase() === codigo);
-    if (repetido) { setError(`El código «${codigo}» ya está en el pedido`); return; }
-    const precio = manual.precio.trim() === "" ? null : Number(manual.precio.replace(",", "."));
-    setManuales((prev) => [...prev, { codigo, producto: manual.producto.trim(), cantidad, precio: precio !== null && Number.isFinite(precio) ? precio : null }]);
-    setManual({ codigo: "", producto: "", cantidad: "", precio: "" });
-    setError(null);
-  };
 
   const guardar = async () => {
     if (!centroId) { setError("Elige el centro"); return; }
@@ -288,8 +272,6 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
         <select id="pe-proveedor" className="input" value={proveedorId} onChange={(e) => {
           setProveedorId(e.target.value);
           setCantidades({});
-          setManuales([]);
-          setManual({ codigo: "", producto: "", cantidad: "", precio: "" });
           setQ("");
           setError(null);
         }}>
@@ -332,24 +314,6 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
         </table>
       </div>}
 
-    <div className="pedido-manual">
-      <div className="field"><label htmlFor="pe-mcod">Código</label>
-        <input id="pe-mcod" className="input" placeholder="Código" value={manual.codigo} onChange={(e) => setManual({ ...manual, codigo: e.target.value })} /></div>
-      <div className="field"><label htmlFor="pe-mprod">Producto fuera de catálogo</label>
-        <input id="pe-mprod" className="input" placeholder="Producto" value={manual.producto} onChange={(e) => setManual({ ...manual, producto: e.target.value })} /></div>
-      <div className="field" style={{ maxWidth: 110 }}><label htmlFor="pe-mcant">Cantidad</label>
-        <input id="pe-mcant" className="input" type="number" min={1} value={manual.cantidad} onChange={(e) => setManual({ ...manual, cantidad: e.target.value })} /></div>
-      <div className="field" style={{ maxWidth: 120 }}><label htmlFor="pe-mprec">Precio (€)</label>
-        <input id="pe-mprec" className="input" type="number" step="any" min={0} value={manual.precio} onChange={(e) => setManual({ ...manual, precio: e.target.value })} /></div>
-      <button type="button" className="btn secondary" onClick={anadirManual} disabled={!manual.codigo.trim() || !manual.producto.trim()}>＋ Añadir</button>
-    </div>
-    {manuales.length > 0 && <ul className="pedido-manuales">
-      {manuales.map((m) => <li key={m.codigo}>
-        <strong>{m.codigo}</strong> · {m.producto} · {formatNum(m.cantidad)} uds
-        <button type="button" className="icon-btn" aria-label={`Quitar ${m.producto}`} onClick={() => setManuales((prev) => prev.filter((x) => x.codigo !== m.codigo))}>✕</button>
-      </li>)}
-    </ul>}
-
     <p className="muted" style={{ margin: "12px 0 0", fontSize: 12.5 }}>
       {lineas.length} productos · {formatNum(totalUds)} unidades seleccionadas
     </p>
@@ -366,8 +330,9 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
 // ────────────────────────────── Detalle ─────────────────────────────────────
 interface Detalle { pedido: Row; lineas: Row[]; puede_gestionar: boolean }
 
-function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
+function PedidoDetalleModal({ id, productos, onClose, onAviso, onCambio }: {
   id: number;
+  productos: Row[];
   onClose: () => void;
   onAviso: (a: Aviso) => void;
   onCambio: () => void;
@@ -381,7 +346,7 @@ function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
   const [reclamar, setReclamar] = useState<Set<number>>(new Set());
   const [motivo, setMotivo] = useState("");
   const [editadas, setEditadas] = useState<Record<string, string>>({});
-  const [nueva, setNueva] = useState({ codigo: "", producto: "", cantidad: "", precio: "" });
+  const [nueva, setNueva] = useState({ codigo: "", cantidad: "", precio: "" });
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -412,6 +377,12 @@ function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
   const lineas = detalle?.lineas ?? [];
   const estado = String(pedido?.estado ?? "borrador") as Estado;
   const gestionable = detalle?.puede_gestionar ?? false;
+  // Productos que aún se pueden añadir: solo los del proveedor del pedido.
+  const productosPedido = useMemo(() => {
+    const proveedorId = String(pedido?.proveedor_id ?? "");
+    return productos.filter((p) => String(p.proveedor_id ?? "") === proveedorId
+      && !lineas.some((l) => String(l.codigo ?? "").trim().toUpperCase() === String(p.codigo ?? "").trim().toUpperCase()));
+  }, [productos, pedido?.proveedor_id, lineas]);
 
   const ejecutar = async (accion: () => Promise<unknown>, mensaje: string) => {
     setBusy(true);
@@ -482,15 +453,16 @@ function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
   };
 
   const anadirLinea = () => {
-    if (!nueva.codigo.trim() || !nueva.producto.trim()) { onAviso({ message: "La línea necesita código y producto", kind: "error" }); return; }
+    const producto = productosPedido.find((p) => String(p.codigo ?? "") === nueva.codigo);
+    if (!producto) { onAviso({ message: "Elige un producto del catálogo de este proveedor", kind: "error" }); return; }
     const cantidad = Number(nueva.cantidad);
     if (!Number.isInteger(cantidad) || cantidad < 1) { onAviso({ message: "La cantidad debe ser mayor que 0", kind: "error" }); return; }
     void ejecutar(() => api.post(`/api/pedidos/${id}/lineas`, {
-      codigo: nueva.codigo.trim(), producto: nueva.producto.trim(), cantidad,
+      codigo: producto.codigo, producto: producto.producto, cantidad,
       precio: nueva.precio.trim() === "" ? null : Number(nueva.precio.replace(",", ".")),
       origen: "empresa",
     }), "Línea añadida");
-    setNueva({ codigo: "", producto: "", cantidad: "", precio: "" });
+    setNueva({ codigo: "", cantidad: "", precio: "" });
   };
 
   const borrarPedido = () => {
@@ -611,11 +583,19 @@ function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
             <button type="button" className="btn small" onClick={() => void guardarLineas()} disabled={busy}>Guardar cantidades</button>
           </p>}
           <div className="pedido-manual">
-            <div className="field"><label htmlFor="pe-ncod">Código</label><input id="pe-ncod" className="input" value={nueva.codigo} onChange={(e) => setNueva({ ...nueva, codigo: e.target.value })} /></div>
-            <div className="field"><label htmlFor="pe-nprod">Producto</label><input id="pe-nprod" className="input" value={nueva.producto} onChange={(e) => setNueva({ ...nueva, producto: e.target.value })} /></div>
+            <div className="field" style={{ minWidth: 240 }}>
+              <label htmlFor="pe-ncod">Producto del proveedor</label>
+              <select id="pe-ncod" className="input" value={nueva.codigo} disabled={!productosPedido.length} onChange={(e) => {
+                const p = productosPedido.find((x) => String(x.codigo ?? "") === e.target.value);
+                setNueva({ codigo: e.target.value, cantidad: nueva.cantidad, precio: p?.precio == null ? "" : String(p.precio) });
+              }}>
+                <option value="">— Elige un producto —</option>
+                {productosPedido.map((p) => <option key={String(p.id)} value={String(p.codigo ?? "")}>{String(p.codigo ?? "")} · {String(p.producto ?? "")}</option>)}
+              </select>
+            </div>
             <div className="field"><label htmlFor="pe-ncant">Cantidad</label><input id="pe-ncant" className="input" type="number" min={1} value={nueva.cantidad} onChange={(e) => setNueva({ ...nueva, cantidad: e.target.value })} /></div>
             <div className="field"><label htmlFor="pe-nprec">Precio (€)</label><input id="pe-nprec" className="input" type="number" step="any" min={0} value={nueva.precio} onChange={(e) => setNueva({ ...nueva, precio: e.target.value })} /></div>
-            <button type="button" className="btn secondary" onClick={anadirLinea} disabled={busy}>＋ Añadir línea</button>
+            <button type="button" className="btn secondary" onClick={anadirLinea} disabled={busy || !nueva.codigo}>＋ Añadir línea</button>
           </div>
         </>}
 

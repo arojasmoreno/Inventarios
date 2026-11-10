@@ -206,7 +206,7 @@ test("el pedido rechaza productos de otro proveedor y aplica el stock", async ()
 
   const creado = await post("/api/pedidos", {
     centro_id: 1, proveedor_id: prov1,
-    lineas: [{ codigo: "P-1", producto: "Producto Uno", cantidad: 5, precio: 2.5 }],
+    lineas: [{ codigo: "P-1", producto: "Nombre manipulado", cantidad: 5, precio: 2.5 }],
   });
   expect(creado.status).toBe(201);
   const pedidoId = Number(creado.body.id);
@@ -219,6 +219,7 @@ test("el pedido rechaza productos de otro proveedor y aplica el stock", async ()
   expect(String(cabecera.proveedor_nombre)).toBe("Proveedor Uno");
   const lineas = detalle.body.lineas as Array<Record<string, unknown>>;
   expect(lineas.length).toBe(1);
+  expect(String(lineas[0].producto)).toBe("Producto Uno");
 
   expect((await post(`/api/pedidos/${String(pedidoId)}/enviar`, {})).status).toBe(200);
   const recibido = await post(`/api/pedidos/${String(pedidoId)}/recibir`, {
