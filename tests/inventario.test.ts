@@ -141,3 +141,111 @@ test("las tres operaciones quedan registradas en la auditoría", async () => {
   expect(porAccion.salida).toBe(2);
   expect(porAccion.recuento).toBe(1);
 });
+
+// ── Proveedores: cada producto se pide a uno solo y el pedido se filtra ──────
+const del = (path: string) => call(path, { method: "DELETE", headers: { Cookie: `inv_session=${TOKEN}` } });
+
+let prov1 = 0, prov2 = 0;
+
+test("el esquema guarda el código de proveedor y el proveedor del producto", async () => {
+  const proveedores = await d1.prepare("PRAGMA table_info(proveedores)").all<{ name: string }>();
+  const productos = await d1.prepare("PRAGMA table_info(productos_disponibles)").all<{ name: string }>();
+  expect(proveedores.results.map((c) => c.name)).toContain("codigo");
+  expect(productos.results.map((c) => c.name)).toContain("proveedor_id");
+  const tabla = await d1.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pedidos'").first();
+  expect(tabla).toBeTruthy();
+});
+
+test("los proveedores tienen código único y los productos exigen proveedor", async () => {
+  const p1 = await post("/api/proveedores", { codigo: "PROV-1", nombre: "Proveedor Uno", contacto: "Ana", email: "ana@prov1.test" });
+  expect(p1.status).toBe(201);
+  prov1 = Number((p1.body.item as Record<string, unknown>).id);
+  expect(prov1).toBeGreaterThan(0);
+
+  const p2 = await post("/api/proveedores", { codigo: "PROV-2", nombre: "Proveedor Dos" });
+  expect(p2.status).toBe(201);
+  prov2 = Number((p2.body.item as Record<string, unknown>).id);
+
+  const repetido = await post("/api/proveedores", { codigo: "PROV-1", nombre: "Duplicado" });
+  expect(repetido.status).toBe(400);
+
+  const sinProveedor = await post("/api/productos-disponibles", { codigo: "P-1", producto: "Producto Uno" });
+  expect(sinProveedor.status).toBe(400);
+  expect(String(sinProveedor.body.error)).toContain("Proveedor");
+
+  const prod1 = await post("/api/productos-disponibles", { proveedor_id: prov1, codigo: "P-1", producto: "Producto Uno", precio: 2.5 });
+  expect(prod1.status).toBe(201);
+  expect(Number((prod1.body.item as Record<string, unknown>).proveedor_id)).toBe(prov1);
+  expect(String((prod1.body.item as Record<string, unknown>).proveedor_codigo)).toBe("PROV-1");
+
+  const prod2 = await post("/api/productos-disponibles", { proveedor_id: prov2, codigo: "P-2", producto: "Producto Dos", precio: 4 });
+  expect(prod2.status).toBe(201);
+});
+
+test("el catálogo se filtra por proveedor", async () => {
+  const soloUno = await get("/api/productos-disponibles?proveedor_id=" + String(prov1));
+  expect(soloUno.status).toBe(200);
+  const items = soloUno.body.items as Array<Record<string, unknown>>;
+  expect(items.length).toBe(1);
+  expect(String(items[0].codigo)).toBe("P-1");
+  expect(String(items[0].proveedor_codigo)).toBe("PROV-1");
+});
+
+test("el pedido rechaza productos de otro proveedor y aplica el stock", async () => {
+  const opciones = await get("/api/pedidos/opciones");
+  expect(opciones.status).toBe(200);
+  const productos = opciones.body.productos as Array<Record<string, unknown>>;
+  expect(productos.find((p) => p.codigo === "P-1")?.proveedor_id).toBe(prov1);
+
+  const incorrecto = await post("/api/pedidos", {
+    centro_id: 1, proveedor_id: prov2,
+    lineas: [{ codigo: "P-1", producto: "Producto Uno", cantidad: 5 }],
+  });
+  expect(incorrecto.status).toBe(400);
+  expect(String(incorrecto.body.error)).toContain("no pertenece");
+
+  const creado = await post("/api/pedidos", {
+    centro_id: 1, proveedor_id: prov1,
+    lineas: [{ codigo: "P-1", producto: "Producto Uno", cantidad: 5, precio: 2.5 }],
+  });
+  expect(creado.status).toBe(201);
+  const pedidoId = Number(creado.body.id);
+  expect(pedidoId).toBeGreaterThan(0);
+
+  const detalle = await get(`/api/pedidos/${String(pedidoId)}`);
+  expect(detalle.status).toBe(200);
+  const cabecera = detalle.body.pedido as Record<string, unknown>;
+  expect(String(cabecera.proveedor_codigo)).toBe("PROV-1");
+  expect(String(cabecera.proveedor_nombre)).toBe("Proveedor Uno");
+  const lineas = detalle.body.lineas as Array<Record<string, unknown>>;
+  expect(lineas.length).toBe(1);
+
+  expect((await post(`/api/pedidos/${String(pedidoId)}/enviar`, {})).status).toBe(200);
+  const recibido = await post(`/api/pedidos/${String(pedidoId)}/recibir`, {
+    albaran: "ALB-TEST-1",
+    lineas: [{ id: Number(lineas[0].id), cantidad_recibida: 5 }],
+  });
+  expect(recibido.status).toBe(200);
+  expect((await post(`/api/pedidos/${String(pedidoId)}/aplicar`, {})).status).toBe(200);
+
+  const material = await d1.prepare("SELECT cantidad FROM material_limpieza WHERE codigo = 'P-1'").first<{ cantidad: number }>();
+  expect(Number(material?.cantidad)).toBe(5);
+});
+
+test("la importación asigna el proveedor seleccionado", async () => {
+  const importado = await post("/api/productos-disponibles/import", {
+    rows: [{ proveedor_id: prov1, codigo: "P-3", producto: "Producto Tres", precio: 1.25 }],
+  });
+  expect(importado.status).toBe(200);
+  expect(Number(importado.body.creados)).toBe(1);
+  const items = await get("/api/productos-disponibles?proveedor_id=" + String(prov1));
+  const fila = (items.body.items as Array<Record<string, unknown>>).find((p) => p.codigo === "P-3");
+  expect(fila).toBeTruthy();
+  expect(Number(fila?.proveedor_id)).toBe(prov1);
+});
+
+test("un proveedor con productos o pedidos no se puede borrar", async () => {
+  const borrado = await del(`/api/proveedores/${String(prov1)}`);
+  expect(borrado.status).toBe(400);
+  expect(String(borrado.body.error)).toContain("productos");
+});

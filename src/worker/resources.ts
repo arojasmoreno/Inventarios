@@ -484,23 +484,33 @@ export const tiposEquipo = createCrud(tiposEquipoSpec);
 export const soportes = createCrud(soportesSpec);
 export const consumiblesTipos = createCrud(consumiblesTiposSpec);
 // ---- Productos disponibles (catálogo de lo que se puede pedir) ----
-// La relación con «Material de limpieza» es el CÓDIGO: cada producto muestra
-// las unidades que ya hay de ese código en esa tabla (`unidades_almacen`) y,
-// al aplicar un pedido, las cantidades se suman ahí por ese mismo código.
+// Cada producto pertenece a un proveedor. La relación con «Material de
+// limpieza» es el CÓDIGO: cada producto muestra las unidades que ya hay de ese
+// código en esa tabla (`unidades_almacen`).
 export const productosDisponiblesSpec: CrudSpec = {
-  table: "productos_disponibles", orderBy: "id",
+  table: "productos_disponibles", orderBy: "producto", refProveedor: true,
   extraSelect: [
     `(SELECT COALESCE(SUM(ml.cantidad), 0) FROM material_limpieza ml
       WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(t.codigo))) AS unidades_almacen`,
     `EXISTS (SELECT 1 FROM material_limpieza ml2
       WHERE ml2.codigo IS NOT NULL AND TRIM(UPPER(ml2.codigo)) = TRIM(UPPER(t.codigo))) AS en_almacen`,
   ],
+  extraSearchCols: ["p.codigo", "p.nombre"],
   read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
+    { name: "proveedor_id", label: "Proveedor", type: "integer", required: true, min: 1 },
     { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
     { name: "producto", label: "Producto", type: "text", required: true, maxLength: 200 },
     { name: "precio", label: "Precio (€)", type: "number", required: false, min: 0, placeholder: "Opcional" },
   ],
+  beforeWrite: async (db, data, _mode, existing) => {
+    const proveedorId = data.proveedor_id ?? existing?.proveedor_id;
+    if (proveedorId !== undefined && proveedorId !== null) {
+      const p = await db.prepare("SELECT id FROM proveedores WHERE id = ?").bind(Number(proveedorId)).first();
+      if (!p) throw new ValidationError("El proveedor seleccionado no existe");
+    }
+    return data;
+  },
 };
 export const productosDisponibles = createCrud(productosDisponiblesSpec);
 // ---- Catálogo de formaciones, revisiones y carnets ----
@@ -525,16 +535,37 @@ export const formacionesSpec: CrudSpec = {
 };
 export const formaciones = createCrud(formacionesSpec);
 // ---- Proveedores de los pedidos ----
+// El código identifica al proveedor y se muestra en el catálogo y en el pedido.
+// No se puede borrar mientras tenga productos o pedidos asociados.
 export const proveedoresSpec: CrudSpec = {
   table: "proveedores", orderBy: "nombre",
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  extraSelect: [
+    "(SELECT COUNT(*) FROM productos_disponibles pd WHERE pd.proveedor_id = t.id) AS productos",
+    "(SELECT COUNT(*) FROM pedidos p WHERE p.proveedor_id = t.id AND p.estado <> 'aplicado') AS pedidos_pendientes",
+  ],
+  read: "centros", create: "admin", update: "admin", delete: "admin",
   fields: [
+    { name: "codigo", label: "Código de proveedor", type: "text", required: true, unique: true, maxLength: 40, placeholder: "Ej. PROV-001" },
     { name: "nombre", label: "Nombre", type: "text", required: true, unique: true, maxLength: 160 },
     { name: "contacto", label: "Persona de contacto", type: "text", required: false, maxLength: 160 },
     { name: "email", label: "Correo electrónico", type: "text", required: false, maxLength: 160 },
     { name: "telefono", label: "Teléfono", type: "text", required: false, maxLength: 40 },
+    { name: "direccion", label: "Dirección", type: "text", required: false, maxLength: 200 },
     { name: "notas", label: "Notas", type: "textarea", required: false },
     { name: "activo", label: "Activo", type: "boolean", required: false },
   ],
+  beforeWrite: async (_db, data, mode) => {
+    if (mode === "insert" && (data.activo === undefined || data.activo === null)) data.activo = 1;
+    return data;
+  },
+  beforeDelete: async (db, _user, row) => {
+    const p = await db.prepare("SELECT COUNT(*) AS n FROM productos_disponibles WHERE proveedor_id = ?").bind(Number(row.id)).first();
+    if (p && Number(p.n) > 0) return `No se puede eliminar: ${p.n} productos pertenecen a este proveedor`;
+    const o = await db.prepare("SELECT COUNT(*) AS n FROM pedidos WHERE proveedor_id = ?").bind(Number(row.id)).first();
+    if (o && Number(o.n) > 0) return `No se puede eliminar: ${o.n} pedidos usan este proveedor`;
+    const m = await db.prepare("SELECT COUNT(*) AS n FROM pedidos_material WHERE proveedor_id = ?").bind(Number(row.id)).first();
+    if (m && Number(m.n) > 0) return `No se puede eliminar: ${m.n} líneas de pedido usan este proveedor`;
+    return null;
+  },
 };
 export const proveedores = createCrud(proveedoresSpec);

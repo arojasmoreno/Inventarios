@@ -355,27 +355,6 @@ export const FORMACIONES: ResourceConfig = {
     { key: "notas", label: "Notas", render: r => String(r.notas ?? "—"), csv: r => String(r.notas ?? "") },
   ],
 };
-export const PROVEEDORES: ResourceConfig = {
-  title: "Proveedores",
-  subtitle: "A quién se manda cada pedido de consumibles: nombre, persona de contacto y datos de contacto",
-  endpoint: "/api/proveedores", csvName: "proveedores", searchKeys: ["nombre", "contacto", "email", "telefono"],
-  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
-  fields: [
-    { name: "nombre", label: "Nombre del proveedor", type: "text", required: true, placeholder: "Ej. Limpiezas García S.L." },
-    { name: "contacto", label: "Persona de contacto", type: "text", placeholder: "Ej. Marta Ruiz" },
-    { name: "email", label: "Correo electrónico", type: "text", placeholder: "pedidos@proveedor.com" },
-    { name: "telefono", label: "Teléfono", type: "text", placeholder: "Ej. 932 00 00 00" },
-    { name: "notas", label: "Notas", type: "textarea" },
-    { name: "activo", label: "Activo", type: "boolean", help: "Solo los proveedores activos aparecen al crear un pedido." },
-  ],
-  columns: [
-    { key: "nombre", label: "Proveedor" },
-    { key: "contacto", label: "Contacto", csv: r => String(r.contacto ?? "—"), render: r => String(r.contacto ?? "—") },
-    { key: "email", label: "Correo", csv: r => String(r.email ?? ""), render: r => String(r.email ?? "—") },
-    { key: "telefono", label: "Teléfono", csv: r => String(r.telefono ?? ""), render: r => String(r.telefono ?? "—") },
-    { key: "activo", label: "Estado", csv: r => (Number(r.activo ?? 1) === 1 ? "Activo" : "Inactivo"), render: r => Number(r.activo ?? 1) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Inactivo</span> },
-  ],
-};
 export const SOPORTES: ResourceConfig = {
   title: "Soportes", subtitle: "Dónde se instalan las estaciones de consumo", endpoint: "/api/soportes", csvName: "soportes", searchKeys: ["nombre"],
   perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
@@ -392,6 +371,30 @@ export const TIPOS_CONSUMIBLES: ResourceConfig = {
   columns: [
     { key: "nombre", label: "Tipo de consumible" },
     { key: "articulo_tipo", label: "Artículos que consume", render: r => <span className="badge info">{String(r.articulo_tipo ?? "—")}</span> },
+  ],
+};
+export const PROVEEDORES: ResourceConfig = {
+  title: "Proveedores", subtitle: "Cada producto del catálogo se pide a un único proveedor", endpoint: "/api/proveedores", csvName: "proveedores", searchKeys: ["codigo", "nombre", "contacto", "email", "telefono", "direccion"],
+  perms: { read: "centros", create: "admin", update: "admin", delete: "admin" },
+  fields: [
+    { name: "codigo", label: "Código de proveedor", type: "text", required: true, placeholder: "Ej. PROV-001", help: "Referencia corta que se verá en el catálogo y en los pedidos." },
+    { name: "nombre", label: "Proveedor", type: "text", required: true, placeholder: "Ej. Suministros García" },
+    { name: "contacto", label: "Persona de contacto", type: "text" },
+    { name: "email", label: "Email", type: "text" },
+    { name: "telefono", label: "Teléfono", type: "text" },
+    { name: "direccion", label: "Dirección", type: "text" },
+    { name: "notas", label: "Notas", type: "textarea" },
+    { name: "activo", label: "Activo", type: "boolean", help: "Solo los proveedores activos aparecen al crear un pedido." },
+  ],
+  columns: [
+    { key: "codigo", label: "Código", render: r => <strong>{String(r.codigo ?? "—")}</strong> },
+    { key: "nombre", label: "Proveedor" },
+    { key: "contacto", label: "Contacto", render: r => String(r.contacto ?? "—") },
+    { key: "email", label: "Email", render: r => String(r.email ?? "—") },
+    { key: "telefono", label: "Teléfono", render: r => String(r.telefono ?? "—") },
+    { key: "activo", label: "Estado", render: r => Number(r.activo ?? 1) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Inactivo</span>, csv: r => (Number(r.activo ?? 1) === 1 ? "Activo" : "Inactivo") },
+    { key: "productos", label: "Productos", align: "right", render: r => <span className={`badge ${Number(r.productos) ? "info" : "muted"}`}>{formatNum(r.productos)}</span>, csv: r => formatNum(r.productos) },
+    { key: "pedidos_pendientes", label: "Pedido pendiente", align: "right", render: r => Number(r.pedidos_pendientes) ? <span className="badge warn">{formatNum(r.pedidos_pendientes)}</span> : <span className="badge muted">0</span>, csv: r => formatNum(r.pedidos_pendientes) },
   ],
 };
 export const MOVIMIENTOS: ResourceConfig = {

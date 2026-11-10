@@ -523,3 +523,17 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .op-tabs button.active{background:#fff;color:var(--primary);border-color:var(--border);box-shadow:0 1px 2px rgba(15,23,42,.08)}
 .op-tab-body{padding:16px 18px}
 .op-tab-body table{margin-top:4px}
+
+/* Proveedores: catálogo de productos de un proveedor y hoja de pedido. */
+.provider-summary{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}
+.provider-summary-main{display:flex;align-items:center;gap:12px;min-width:220px}
+.provider-avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#dbeafe;font-size:21px;flex-shrink:0}
+.provider-code{display:block;color:var(--primary);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:1px}
+.provider-summary-main strong{display:block;font-size:16px}
+.provider-summary-main p{margin:2px 0 0;color:var(--muted);font-size:12.5px}
+.provider-summary-stats{display:flex;gap:22px;flex-wrap:wrap}
+.provider-summary-stats span{display:flex;flex-direction:column;gap:1px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.provider-summary-stats strong{color:var(--text);font-size:20px;font-variant-numeric:tabular-nums}
+.provider-mini{display:inline-block;background:#eef2f7;color:#475569;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700;margin-right:4px}
+.provider-picker-label{color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+@media(max-width:700px){.provider-summary-stats{gap:14px}.provider-summary-stats strong{font-size:17px}}

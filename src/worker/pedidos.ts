@@ -154,13 +154,14 @@ pedidosRoutes.get("/opciones", async (c) => {
   const db = c.env.DB;
   const centros = await centrosVisibles(db, user);
   const proveedores = await db.prepare(
-    "SELECT id, nombre, contacto, email, telefono FROM proveedores WHERE activo = 1 ORDER BY nombre COLLATE NOCASE",
+    "SELECT id, codigo, nombre, contacto, email, telefono FROM proveedores WHERE activo = 1 ORDER BY nombre COLLATE NOCASE",
   ).all<Row>();
   const productos = await db.prepare(
-    `SELECT p.id, p.codigo, p.producto, p.precio,
+    `SELECT p.id, p.proveedor_id, p.codigo, p.producto, p.precio, pr.codigo AS proveedor_codigo,
             (SELECT COALESCE(SUM(ml.cantidad), 0) FROM material_limpieza ml
               WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS unidades_almacen
-     FROM productos_disponibles p ORDER BY p.producto COLLATE NOCASE`,
+     FROM productos_disponibles p LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
+     ORDER BY p.producto COLLATE NOCASE`,
   ).all<Row>();
   return c.json({
     centros,
@@ -194,7 +195,7 @@ pedidosRoutes.get("/", async (c) => {
   const res = await db.prepare(
     `SELECT p.id, p.numero, p.centro_id, p.proveedor_id, p.estado, p.fecha, p.fecha_envio,
             p.fecha_recepcion, p.albaran, p.notas, p.reclamacion,
-            c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre,
+            c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre, pr.codigo AS proveedor_codigo,
             (SELECT COUNT(*) FROM pedido_lineas l WHERE l.pedido_id = p.id) AS lineas,
             (SELECT COALESCE(SUM(l.cantidad), 0) FROM pedido_lineas l WHERE l.pedido_id = p.id) AS unidades,
             (SELECT COALESCE(SUM(l.cantidad * COALESCE(l.precio, 0)), 0) FROM pedido_lineas l WHERE l.pedido_id = p.id) AS importe,
@@ -225,7 +226,7 @@ pedidosRoutes.get("/:id", async (c) => {
   }
   const [cabecera, lineas] = await Promise.all([
     db.prepare(
-      `SELECT p.*, c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre, u.nombre AS creado_por_nombre
+      `SELECT p.*, c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre, pr.codigo AS proveedor_codigo, u.nombre AS creado_por_nombre
        FROM pedidos p JOIN centros c ON c.id = p.centro_id
        LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
        LEFT JOIN usuarios u ON u.id = p.creado_por
@@ -268,6 +269,12 @@ pedidosRoutes.post("/", async (c) => {
   if (error) return c.json({ error }, 400);
   const repetido = codigoRepetido(lineas);
   if (repetido) return c.json({ error: `El código «${repetido}» aparece dos veces en el pedido` }, 400);
+  // Cada línea debe ser de un producto del proveedor elegido.
+  const catalogo = await db.prepare("SELECT codigo FROM productos_disponibles WHERE proveedor_id = ?")
+    .bind(proveedorId).all<{ codigo: string }>();
+  const permitidos = new Set(catalogo.results.map((p) => String(p.codigo).trim().toUpperCase()));
+  const ajeno = lineas.find((l) => !permitidos.has(l.codigo.trim().toUpperCase()));
+  if (ajeno) return c.json({ error: `El producto «${ajeno.producto}» no pertenece al proveedor seleccionado` }, 400);
 
   const numero = await siguienteNumero(db);
   const res = await db.prepare(
@@ -301,6 +308,16 @@ pedidosRoutes.put("/:id", async (c) => {
   const body = await leerCuerpo(c);
   const proveedorId = body.proveedor_id === undefined ? pedido.proveedor_id : entero(body.proveedor_id);
   if (!proveedorId) return c.json({ error: "El pedido debe ir a un proveedor" }, 400);
+  const proveedor = await db.prepare("SELECT id FROM proveedores WHERE id = ?").bind(proveedorId).first();
+  if (!proveedor) return c.json({ error: "Proveedor no encontrado" }, 404);
+  if (Number(proveedorId) !== Number(pedido.proveedor_id)) {
+    const lineas = await db.prepare("SELECT codigo FROM pedido_lineas WHERE pedido_id = ?").bind(id).all<{ codigo: string }>();
+    const catalogo = await db.prepare("SELECT codigo FROM productos_disponibles WHERE proveedor_id = ?")
+      .bind(proveedorId).all<{ codigo: string }>();
+    const permitidos = new Set(catalogo.results.map((p) => String(p.codigo).trim().toUpperCase()));
+    const ajeno = lineas.results.find((l) => !permitidos.has(String(l.codigo).trim().toUpperCase()));
+    if (ajeno) return c.json({ error: "El pedido tiene productos que no pertenecen al nuevo proveedor" }, 400);
+  }
   const notas = body.notas === undefined ? pedido.notas : texto(body.notas, 500);
   await db.prepare(
     "UPDATE pedidos SET proveedor_id = ?, notas = ?, updated_at = datetime('now') WHERE id = ?",
@@ -323,6 +340,10 @@ pedidosRoutes.post("/:id/lineas", async (c) => {
   const { lineas, error } = leerLineas([await leerCuerpo(c)]);
   if (error) return c.json({ error }, 400);
   const linea = lineas[0];
+  const producto = await db.prepare(
+    "SELECT id FROM productos_disponibles WHERE proveedor_id = ? AND TRIM(UPPER(codigo)) = TRIM(UPPER(?))",
+  ).bind(Number(pedido.proveedor_id), linea.codigo).first();
+  if (!producto) return c.json({ error: "El producto no pertenece al proveedor del pedido" }, 400);
   const repetida = await db.prepare(
     "SELECT 1 AS x FROM pedido_lineas WHERE pedido_id = ? AND TRIM(UPPER(codigo)) = TRIM(UPPER(?))",
   ).bind(id, linea.codigo).first();

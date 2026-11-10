@@ -50,7 +50,7 @@ function descargarPedido(pedido: Row, lineas: Row[]): void {
 
 interface Opciones {
   centros: Array<{ id: number; nombre: string }>;
-  proveedores: Array<{ id: number; nombre: string }>;
+  proveedores: Array<{ id: number; codigo: string; nombre: string }>;
   productos: Row[];
   puede_gestionar: boolean;
 }
@@ -152,7 +152,7 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
               <td><strong>{String(p.numero ?? "—")}</strong>{reclamaciones > 0 && <div><span className="badge danger">⚠️ {reclamaciones} a reclamar</span></div>}</td>
               <td>{formatFecha(p.fecha)}</td>
               <td>{String(p.centro_nombre ?? "—")}</td>
-              <td>{String(p.proveedor_nombre ?? "—")}</td>
+              <td>{String(p.proveedor_codigo ?? "")}{p.proveedor_codigo ? " · " : ""}{String(p.proveedor_nombre ?? "—")}</td>
               <td className="right">{formatNum(p.lineas)}</td>
               <td className="right">{formatNum(p.unidades)}</td>
               <td className="right">{formatNum(p.importe, 2)}</td>
@@ -213,23 +213,26 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Solo los productos del proveedor elegido: un pedido va a un proveedor.
+  const productosProveedor = useMemo(() => opciones.productos.filter((p) => String(p.proveedor_id ?? "") === proveedorId), [opciones.productos, proveedorId]);
+
   const filtrados = useMemo(() => {
     const n = q.trim().toLowerCase();
-    return opciones.productos
+    return productosProveedor
       .filter((p) => !n || [p.codigo, p.producto].some((k) => String(k ?? "").toLowerCase().includes(n)))
       .slice(0, 60);
-  }, [opciones.productos, q]);
+  }, [productosProveedor, q]);
 
   const lineas = useMemo(() => {
     const elegidas: Row[] = [];
-    for (const p of opciones.productos) {
+    for (const p of productosProveedor) {
       const cantidad = Number(cantidades[String(p.id)] ?? 0);
       if (Number.isInteger(cantidad) && cantidad > 0) {
         elegidas.push({ codigo: p.codigo, producto: p.producto, cantidad, precio: p.precio ?? null });
       }
     }
     return [...elegidas, ...manuales];
-  }, [cantidades, opciones.productos, manuales]);
+  }, [cantidades, productosProveedor, manuales]);
 
   const totalUds = lineas.reduce((n, l) => n + Number(l.cantidad ?? 0), 0);
 
@@ -238,8 +241,9 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
     const cantidad = Number(manual.cantidad);
     if (!codigo || !manual.producto.trim()) { setError("La línea manual necesita código y producto"); return; }
     if (!Number.isInteger(cantidad) || cantidad < 1) { setError("La cantidad de la línea manual debe ser mayor que 0"); return; }
-    const repetido = opciones.productos.some((p) => String(p.codigo ?? "").trim().toUpperCase() === codigo)
-      || manuales.some((m) => m.codigo.toUpperCase() === codigo);
+    const enProveedor = productosProveedor.some((p) => String(p.codigo ?? "").trim().toUpperCase() === codigo);
+    if (!enProveedor) { setError("Ese producto no pertenece al proveedor seleccionado"); return; }
+    const repetido = manuales.some((m) => m.codigo.toUpperCase() === codigo);
     if (repetido) { setError(`El código «${codigo}» ya está en el pedido`); return; }
     const precio = manual.precio.trim() === "" ? null : Number(manual.precio.replace(",", "."));
     setManuales((prev) => [...prev, { codigo, producto: manual.producto.trim(), cantidad, precio: precio !== null && Number.isFinite(precio) ? precio : null }]);
@@ -281,8 +285,15 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
       </div>
       <div className="field">
         <label htmlFor="pe-proveedor">Proveedor <span className="req">*</span></label>
-        <select id="pe-proveedor" className="input" value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
-          {opciones.proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+        <select id="pe-proveedor" className="input" value={proveedorId} onChange={(e) => {
+          setProveedorId(e.target.value);
+          setCantidades({});
+          setManuales([]);
+          setManual({ codigo: "", producto: "", cantidad: "", precio: "" });
+          setQ("");
+          setError(null);
+        }}>
+          {opciones.proveedores.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
         </select>
       </div>
       <div className="field full">
@@ -295,8 +306,8 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
       <h3>Productos a pedir</h3>
       <input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar producto…" value={q} onChange={(e) => setQ(e.target.value)} />
     </div>
-    {!opciones.productos.length
-      ? <div className="banner warn">El catálogo está vacío: da de alta los productos en «Productos disponibles» para poder pedirlos.</div>
+    {!productosProveedor.length
+      ? <div className="banner warn">Este proveedor no tiene productos: crea los suyos en «Productos disponibles» para poder pedirlos.</div>
       : <div className="table-scroll" style={{ maxHeight: 320, border: "1px solid var(--border)", borderRadius: 10 }}>
         <table className="tabla-frec">
           <thead><tr><th>Código</th><th>Producto</th><th className="right">Precio (€)</th><th className="right">En almacén</th><th style={{ width: 110 }}>Cantidad</th></tr></thead>

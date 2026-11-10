@@ -62,7 +62,7 @@ export function ConsumiblesPage({ user }: { user: { rol: string; nombre: string;
     {activa === "quimicos" && <ResourcePage key="quimicos" config={QUIMICOS} user={user} />}
     {activa === "inventario" && <InventarioQuimicosPage key="inventario" user={user} />}
     {activa === "material" && <ResourcePage key="material" config={MATERIAL} user={user} />}
-    {activa === "disponibles" && <ProductosDisponiblesPage key="disponibles" user={user} />}
+    {activa === "disponibles" && <ProductosDisponiblesPage key="disponibles" user={user} onGoProveedores={() => setTab("proveedores")} />}
     {activa === "pedidos" && <PedidosPage key="pedidos" user={user} />}
     {activa === "proveedores" && <ResourcePage key="proveedores" config={PROVEEDORES} user={user} />}
     {activa === "estaciones" && <EstacionesPage key="estaciones" user={user} />}

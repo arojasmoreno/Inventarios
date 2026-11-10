@@ -10,7 +10,7 @@ export type FieldType = "text" | "textarea" | "number" | "integer" | "date" | "b
 export interface FieldSpec { name: string; label: string; type: FieldType; required?: boolean; enumValues?: string[]; min?: number; unique?: boolean; writeOnly?: boolean; maxLength?: number; placeholder?: string; }
 export type PermLevel = "all" | "admin" | "centros";
 export interface CrudSpec {
-  table: string; orderBy: string; fields: FieldSpec[]; refCentro?: boolean; refUsuario?: boolean; computed?: string;
+  table: string; orderBy: string; fields: FieldSpec[]; refCentro?: boolean; refUsuario?: boolean; refProveedor?: boolean; computed?: string;
   extraJoins?: string[]; extraSelect?: string[]; extraSearchCols?: string[];
   read: PermLevel; create: PermLevel; update: PermLevel; delete: PermLevel;
   // La tabla de auditoría no genera registros de auditoría (evita bucles).
@@ -132,19 +132,22 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
   const selectCols = ["t.id", ...spec.fields.filter(f => !f.writeOnly).map(f => `t.${f.name}`), "t.created_at", "t.updated_at"];
   if (spec.refCentro) selectCols.push("c.nombre AS centro_nombre");
   if (spec.refUsuario) selectCols.push("u.nombre AS usuario_nombre", "u.username AS usuario_username");
+  if (spec.refProveedor) selectCols.push("p.codigo AS proveedor_codigo", "p.nombre AS proveedor_nombre");
   if (spec.fields.some(f => f.name === "foto")) selectCols.push("t.foto IS NOT NULL AS tiene_foto");
   if (spec.computed) selectCols.push(spec.computed);
   if (spec.extraSelect) selectCols.push(...spec.extraSelect);
   const joins: string[] = [];
   if (spec.refCentro) joins.push(" LEFT JOIN centros c ON c.id = t.centro_id");
   if (spec.refUsuario) joins.push(" LEFT JOIN usuarios u ON u.id = t.usuario_id");
+  if (spec.refProveedor) joins.push(" LEFT JOIN proveedores p ON p.id = t.proveedor_id");
   if (spec.extraJoins) joins.push(...spec.extraJoins);
   const baseSql = `SELECT ${selectCols.join(", ")} FROM ${spec.table} t${joins.join("")}`;
   const searchCols = [...spec.fields.filter(f => f.type === "text" || f.type === "textarea").map(f => `t.${f.name}`), ...(spec.extraSearchCols ?? [])];
   app.get("/", async c => {
     const user = c.get("user"); if (!allowed(user, spec.read)) return c.json({ error: "Requiere permisos de administrador" }, 403);
-    const where: string[] = [], params: unknown[] = [], centroId = c.req.query("centro_id");
+    const where: string[] = [], params: unknown[] = [], centroId = c.req.query("centro_id"), proveedorId = c.req.query("proveedor_id");
     if (centroId && centroId !== "all") { const id = Number(centroId); if (!Number.isInteger(id) || id < 1) return c.json({ error: "centro_id no válido" }, 400); where.push("t.centro_id = ?"); params.push(id); }
+    if (spec.refProveedor && proveedorId && proveedorId !== "all") { const id = Number(proveedorId); if (!Number.isInteger(id) || id < 1) return c.json({ error: "proveedor_id no válido" }, 400); where.push("t.proveedor_id = ?"); params.push(id); }
     const q = (c.req.query("q") ?? "").trim(); if (q && searchCols.length) { where.push(`(${searchCols.map(col => `${col} LIKE ?`).join(" OR ")})`); for (let i=0;i<searchCols.length;i++) params.push(`%${q}%`); }
     const sql = `${baseSql}${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY t.${spec.orderBy} DESC`;
     return c.json({ items: (await c.env.DB.prepare(sql).bind(...params).all()).results });

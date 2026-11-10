@@ -51,13 +51,13 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS documento_tipos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS documentos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo_id INTEGER NOT NULL REFERENCES documento_tipos(id), url TEXT NOT NULL, descripcion TEXT, fabricante TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS documento_centros (documento_id INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (documento_id, centro_id))`,
-  // Catálogo de productos que se pueden pedir (código, producto y precio).
-  // Su código lo relaciona con `material_limpieza` (unidades en almacén) y
-  // alimenta la pestaña «Pedido material».
-  `CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Catálogo de productos que se pueden pedir (proveedor, código, producto y
+  // precio). Su código lo relaciona con `material_limpieza` (unidades en
+  // almacén) y alimenta la pestaña «Productos disponibles».
+  `CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Líneas del pedido de material antiguo (se mantiene por compatibilidad; el
   // pedido vivo es `pedidos` + `pedido_lineas`).
-  `CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Catálogo de formaciones, revisiones y carnets: cada uno con su validez en
   // meses (0 = no caduca). Las asignaciones por operario calculan su caducidad
   // a partir de este plazo.
@@ -65,8 +65,9 @@ const SCHEMA: string[] = [
   // Formación/carnet/revisión de un operario: fecha de realización y caducidad
   // calculada. Se guarda el centro donde se registró y las notas.
   `CREATE TABLE IF NOT EXISTS operario_formaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, formacion_id INTEGER NOT NULL REFERENCES formaciones(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, fecha TEXT NOT NULL, caducidad TEXT, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  // Proveedores a los que se manda cada pedido.
-  `CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Proveedores a los que se manda cada pedido. El código es la referencia
+  // corta que se usa en el catálogo y en la hoja de pedido.
+  `CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, direccion TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Pedido de consumibles de un centro: nace en borrador, se manda al proveedor
   // (enviado), se recepciona con el número de albarán y el recuento real
   // (recibido) y, por último, suma al stock (aplicado).
@@ -140,6 +141,10 @@ const ALTERS: Array<[string, string]> = [
   ["proveedores", "contacto TEXT"], ["proveedores", "email TEXT"],
   ["proveedores", "telefono TEXT"], ["proveedores", "notas TEXT"],
   ["proveedores", "activo INTEGER NOT NULL DEFAULT 1"],
+  ["proveedores", "codigo TEXT"], ["proveedores", "direccion TEXT"],
+  // Cada producto del catálogo se pide a un único proveedor.
+  ["productos_disponibles", "proveedor_id INTEGER REFERENCES proveedores(id)"],
+  ["pedidos_material", "proveedor_id INTEGER REFERENCES proveedores(id)"],
   ["pedidos", "reclamacion TEXT"],
   // Datos personales del operario que faltaban en su ficha.
   ["usuarios", "telefono TEXT"], ["usuarios", "puesto TEXT"],
@@ -168,23 +173,6 @@ async function migrate(db: D1Database): Promise<void> {
     const col = ddl.split(" ")[0];
     const info = await db.prepare(`PRAGMA table_info(${table})`).all();
     if (!info.results.some((r) => r.name === col)) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${ddl}`).run();
-  }
-  // Proveedores: la tabla antigua obligaba a tener un `codigo` único que ya no
-  // se usa (el proveedor se identifica por su nombre). SQLite no deja quitar un
-  // NOT NULL, así que se reconstruye conservando los datos ya cargados.
-  if (await tableExists(db, "proveedores")) {
-    const info = await db.prepare("PRAGMA table_info(proveedores)").all();
-    const cols = info.results.map((r) => String(r.name));
-    const codigoObligatorio = info.results.some((r) => r.name === "codigo" && Number(r.notnull) === 1);
-    if (codigoObligatorio) {
-      const destino = ["id", "nombre", "contacto", "email", "telefono", "notas", "activo", "created_at", "updated_at"];
-      const comunes = destino.filter((c) => cols.includes(c));
-      await db.prepare("DROP TABLE IF EXISTS proveedores_new").run();
-      await db.prepare("CREATE TABLE proveedores_new (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)").run();
-      await db.prepare(`INSERT INTO proveedores_new (${comunes.join(", ")}) SELECT ${comunes.join(", ")} FROM proveedores`).run();
-      await db.prepare("DROP TABLE proveedores").run();
-      await db.prepare("ALTER TABLE proveedores_new RENAME TO proveedores").run();
-    }
   }
   // En los químicos la fecha de caducidad pasa a ser opcional y se añade la
   // fecha de producción (solo informativa). SQLite no permite quitarle NOT NULL
@@ -298,6 +286,35 @@ export async function bootstrap(db: D1Database): Promise<void> {
   await migrate(db);
   const count = await db.prepare("SELECT COUNT(*) AS n FROM usuarios").first();
   if (!count || Number(count.n) === 0) await seed(db);
+  // Proveedores anteriores sin código: se les asigna uno estable a partir de su
+  // id (PROV-001…) para que el catálogo y los pedidos puedan referenciarlo.
+  const sinCodigo = await db.prepare(
+    "SELECT id FROM proveedores WHERE codigo IS NULL OR TRIM(codigo) = '' ORDER BY id",
+  ).all<{ id: number }>();
+  for (const p of sinCodigo.results) {
+    const base = `PROV-${String(p.id).padStart(3, "0")}`;
+    let codigo = base, n = 2;
+    while (await db.prepare("SELECT 1 AS x FROM proveedores WHERE TRIM(UPPER(codigo)) = TRIM(UPPER(?)) AND id != ?").bind(codigo, Number(p.id)).first()) {
+      codigo = `${base}-${n++}`;
+    }
+    await db.prepare("UPDATE proveedores SET codigo = ? WHERE id = ?").bind(codigo, Number(p.id)).run();
+  }
+  // Productos y líneas antiguas sin proveedor: se asignan a un proveedor
+  // general para que ningún producto quede huérfano. Si no hay ninguno, se crea.
+  const sinProveedor = await db.prepare(
+    "SELECT (SELECT COUNT(*) FROM productos_disponibles WHERE proveedor_id IS NULL) + (SELECT COUNT(*) FROM pedidos_material WHERE proveedor_id IS NULL) AS n",
+  ).first();
+  if (sinProveedor && Number(sinProveedor.n) > 0) {
+    let prov = await db.prepare("SELECT id FROM proveedores WHERE codigo = 'GEN'").first();
+    if (!prov) {
+      await db.prepare("INSERT INTO proveedores (codigo, nombre, notas) VALUES ('GEN', 'Proveedor general', 'Asignado automáticamente a los productos y pedidos anteriores a la gestión de proveedores')").run();
+      prov = await db.prepare("SELECT id FROM proveedores WHERE codigo = 'GEN'").first();
+    }
+    if (prov) {
+      await db.prepare("UPDATE productos_disponibles SET proveedor_id = ? WHERE proveedor_id IS NULL").bind(Number(prov.id)).run();
+      await db.prepare("UPDATE pedidos_material SET proveedor_id = ? WHERE proveedor_id IS NULL").bind(Number(prov.id)).run();
+    }
+  }
   // Normaliza el control de lotes (se ejecuta tras el seed y en cada arranque,
   // solo toca las filas que no cumplan las reglas):
   //  · los lotes sin fecha de entrada (altas antiguas o datos de ejemplo) toman
@@ -388,6 +405,9 @@ export async function bootstrap(db: D1Database): Promise<void> {
     // Pedidos por centro/proveedor y sus líneas (el listado filtra por centro
     // y estado, y el detalle carga las líneas del pedido).
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_nombre ON proveedores(nombre)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_codigo ON proveedores(codigo)",
+    "CREATE INDEX IF NOT EXISTS idx_productos_proveedor ON productos_disponibles(proveedor_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pedidos_material_proveedor ON pedidos_material(proveedor_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedidos_centro ON pedidos(centro_id, estado)",
     "CREATE INDEX IF NOT EXISTS idx_pedidos_proveedor ON pedidos(proveedor_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_pedido ON pedido_lineas(pedido_id)",

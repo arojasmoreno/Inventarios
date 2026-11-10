@@ -20,6 +20,10 @@
 --     y `estado` (activo / agotado / descartado) permiten sumar el inventario por
 --     producto, consumir por FEFO y retirar lotes. Los recuentos de inventario
 --     se guardan en `inventarios` + `inventarios_lineas`.
+--   * Cada producto de `productos_disponibles` pertenece a un `proveedores`
+--     (código único) y cada línea de `pedidos_material` se pide a ese proveedor.
+--     El worker añade `proveedor_id` a las tablas existentes y asigna los
+--     productos/pedidos antiguos a un proveedor «GEN» (Proveedor general).
 --
 -- Aplicar con:
 --   npx wrangler d1 execute inventarios --local  --file=./schema.sql
@@ -88,14 +92,29 @@ CREATE TABLE IF NOT EXISTS documentos (id INTEGER PRIMARY KEY AUTOINCREMENT, nom
 
 CREATE TABLE IF NOT EXISTS documento_centros (documento_id INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (documento_id, centro_id));
 
--- Catálogo de productos que se pueden pedir (código, producto y precio). El
--- código lo relaciona con material_limpieza (unidades en almacén) y con las
--- líneas del pedido de material.
-CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+-- Proveedores: cada producto del catálogo se pide a un único proveedor. El
+-- código es la referencia corta que se usa en el catálogo y en los pedidos.
+CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, direccion TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
--- Líneas del pedido de material: código, producto, cantidad, precio y origen.
--- `aplicado` marca las líneas cuyas cantidades ya se sumaron en material_limpieza.
-CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+-- Catálogo de productos que se pueden pedir (proveedor, código, producto y
+-- precio). El código lo relaciona con material_limpieza (unidades en almacén)
+-- y con las líneas del pedido de material.
+CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+-- Líneas del pedido de material: proveedor, código, producto, cantidad, precio
+-- y origen. `aplicado` marca las líneas cuyas cantidades ya se sumaron en
+-- material_limpieza.
+CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+-- Pedido de consumibles de un centro: borrador → enviado → recibido → aplicado.
+CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT NOT NULL UNIQUE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL, estado TEXT NOT NULL DEFAULT 'borrador', fecha TEXT NOT NULL DEFAULT (date('now')), fecha_envio TEXT, fecha_recepcion TEXT, albaran TEXT, notas TEXT, reclamacion TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS pedido_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, cantidad_recibida INTEGER, precio REAL, origen TEXT NOT NULL DEFAULT 'empresa', reclamar INTEGER NOT NULL DEFAULT 0, motivo TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+-- Catálogo de formaciones, revisiones y carnets, y su historial por operario.
+CREATE TABLE IF NOT EXISTS formaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT 'formacion', meses_validez INTEGER NOT NULL DEFAULT 0, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS operario_formaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, formacion_id INTEGER NOT NULL REFERENCES formaciones(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, fecha TEXT NOT NULL, caducidad TEXT, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
 -- Recuentos de inventario de químicos: una fila por recuento validado y una por
 -- cada lote de la hoja (litros del sistema frente a los litros reales contados).
@@ -115,6 +134,11 @@ CREATE TABLE IF NOT EXISTS limpieza_registros (faena_id INTEGER NOT NULL, fecha 
 
 CREATE TABLE IF NOT EXISTS limpieza_festivos (centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, fecha TEXT NOT NULL, PRIMARY KEY (centro_id, fecha));
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_codigo ON proveedores(codigo);
+CREATE INDEX IF NOT EXISTS idx_productos_proveedor ON productos_disponibles(proveedor_id);
+CREATE INDEX IF NOT EXISTS idx_pedidos_centro ON pedidos(centro_id, estado);
+CREATE INDEX IF NOT EXISTS idx_pedidos_proveedor ON pedidos(proveedor_id);
+CREATE INDEX IF NOT EXISTS idx_pedido_lineas_pedido ON pedido_lineas(pedido_id);
 CREATE INDEX IF NOT EXISTS idx_limpieza_faenas_plan ON limpieza_faenas(centro_id, anio, mes, turno);
 CREATE INDEX IF NOT EXISTS idx_limpieza_dias_fecha ON limpieza_dias(fecha);
 CREATE INDEX IF NOT EXISTS idx_limpieza_registros_usuario ON limpieza_registros(usuario_id);
