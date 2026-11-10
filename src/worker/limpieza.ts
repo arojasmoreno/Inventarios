@@ -742,6 +742,248 @@ limpiezaRoutes.post("/plan/generar", async (c) => {
   return c.json({ ok: true, faenas_creadas: creadas, faenas_actualizadas: actualizadas, dias, omitidas });
 });
 
+// ------------------------------------------------------------------ Tablas del mes
+// Lo que se imprime y se cuelga en el centro: las tareas del mes agrupadas por
+// turno y por frecuencia (1, 2, 7, 14 y 31 días). Aparte van los «extras», las
+// tareas del plan cuya frecuencia supera los 32 días: no salen todos los meses,
+// así que se listan en el mes en que toca hacerlas.
+
+const FRECUENCIAS_TABLA = [1, 2, 7, 14, 31] as const;
+
+/** Frecuencia expresada en días; los meses se aproximan a 31 días. */
+function frecuenciaEnDias(texto: string | null | undefined): number | null {
+  const intervalo = parseFrecuencia(texto);
+  if (!intervalo) return null;
+  return intervalo.unidad === "dias" ? intervalo.valor : intervalo.valor * 31;
+}
+
+/** Bloque de la tabla al que pertenece una tarea: 1, 2, 7, 14, 31 o «extras».
+ *  Las frecuencias intermedias se llevan al bloque más cercano. */
+function bloqueFrecuencia(texto: string | null | undefined): number | "extras" | null {
+  const dias = frecuenciaEnDias(texto);
+  if (dias === null) return null;
+  if (dias > 32) return "extras";
+  let mejor: number = FRECUENCIAS_TABLA[0];
+  for (const candidato of FRECUENCIAS_TABLA) {
+    if (Math.abs(candidato - dias) < Math.abs(mejor - dias)) mejor = candidato;
+  }
+  return mejor;
+}
+
+function etiquetaBloque(dias: number | null): string {
+  if (dias === null) return "Sin frecuencia definida";
+  if (dias === 1) return "Diaria · cada 1 día";
+  if (dias === 2) return "Cada 2 días";
+  if (dias === 7) return "Semanal · cada 7 días";
+  if (dias === 14) return "Quincenal · cada 14 días";
+  return "Mensual · cada 31 días";
+}
+
+interface TareaTabla {
+  faena_id: number;
+  zona: string;
+  subzona: string | null;
+  elemento: string | null;
+  tipo_limpieza: string | null;
+  frecuencia_informativa: string | null;
+  frecuencia_calculo: string | null;
+  dias: number[];
+  registros: Array<{ dia: number; usuario_id: number; usuario: string; creado: string }>;
+}
+
+interface ExtraTabla {
+  plan_id: number;
+  zona: string;
+  subzona: string | null;
+  elemento: string | null;
+  frecuencia_calculo: string;
+  frecuencia_informativa: string | null;
+  ultima_realizacion: string | null;
+  proxima_fecha: string | null;
+  faena_id: number | null;
+  dia: number | null;
+  toca_este_mes: boolean;
+  registro: { usuario_id: number; usuario: string; creado: string } | null;
+}
+
+// Tablas del mes de un centro: todos los turnos de golpe, agrupados por
+// frecuencia, más los extras de más de 32 días.
+limpiezaRoutes.get("/tablas", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const centroId = entero(c.req.query("centro_id"));
+  const anio = entero(c.req.query("anio"));
+  const mes = entero(c.req.query("mes"));
+  if (!centroId || !anio || !mes) return c.json({ error: "Indica centro, año y mes" }, 400);
+  if (anio < 2020 || anio > 2100 || mes < 1 || mes > 12) {
+    return c.json({ error: "El año o el mes no son válidos" }, 400);
+  }
+  const centro = await db.prepare("SELECT id, nombre FROM centros WHERE id = ?")
+    .bind(centroId).first<{ id: number; nombre: string }>();
+  if (!centro) return c.json({ error: "Centro no encontrado" }, 404);
+  if (!(await puedeVerCentro(db, user, centroId))) {
+    return c.json({ error: "No tienes acceso a este centro" }, 403);
+  }
+
+  const diasMes = diasEnMes(anio, mes);
+  const desde = fechaISO(anio, mes, 1);
+  const hasta = fechaISO(anio, mes, diasMes);
+  const prefijoMes = `${desde.slice(0, 7)}`;
+
+  const [filas, festivos, plan] = await Promise.all([
+    db.prepare(
+      `SELECT f.id, f.turno, f.zona, f.subzona, f.frecuencia_informativa,
+              p.elemento, p.tipo_limpieza, p.frecuencia_calculo,
+              d.fecha, r.usuario_id, u.nombre AS usuario, r.created_at AS creado
+       FROM limpieza_faenas f
+       LEFT JOIN limpieza_plan p ON p.id = f.plan_id
+       LEFT JOIN limpieza_dias d ON d.faena_id = f.id AND d.fecha BETWEEN ? AND ?
+       LEFT JOIN limpieza_registros r ON r.faena_id = d.faena_id AND r.fecha = d.fecha
+       LEFT JOIN usuarios u ON u.id = r.usuario_id
+       WHERE f.centro_id = ? AND f.anio = ? AND f.mes = ?
+       ORDER BY f.zona COLLATE NOCASE, f.subzona COLLATE NOCASE, f.id, d.fecha`,
+    ).bind(desde, hasta, centroId, anio, mes).all<{
+      id: number; turno: string; zona: string; subzona: string | null; frecuencia_informativa: string | null;
+      elemento: string | null; tipo_limpieza: string | null; frecuencia_calculo: string | null;
+      fecha: string | null; usuario_id: number | null; usuario: string | null; creado: string | null;
+    }>(),
+    db.prepare("SELECT fecha FROM limpieza_festivos WHERE centro_id = ? AND fecha BETWEEN ? AND ? ORDER BY fecha")
+      .bind(centroId, desde, hasta).all<{ fecha: string }>(),
+    db.prepare(
+      `SELECT p.id, p.turno, p.zona, p.subzona, p.elemento, p.frecuencia_calculo, p.frecuencia_informativa,
+              p.ultima_realizacion, p.proxima_fecha,
+              f.id AS faena_id, d.fecha, r.usuario_id, u.nombre AS usuario, r.created_at AS creado
+       FROM limpieza_plan p
+       LEFT JOIN limpieza_faenas f ON f.plan_id = p.id AND f.centro_id = p.centro_id AND f.anio = ? AND f.mes = ?
+       LEFT JOIN limpieza_dias d ON d.faena_id = f.id
+       LEFT JOIN limpieza_registros r ON r.faena_id = f.id AND r.fecha = d.fecha
+       LEFT JOIN usuarios u ON u.id = r.usuario_id
+       WHERE p.centro_id = ?
+       ORDER BY p.zona COLLATE NOCASE, p.subzona COLLATE NOCASE, p.id`,
+    ).bind(anio, mes, centroId).all<{
+      id: number; turno: string; zona: string; subzona: string | null; elemento: string | null;
+      frecuencia_calculo: string; frecuencia_informativa: string | null;
+      ultima_realizacion: string | null; proxima_fecha: string | null;
+      faena_id: number | null; fecha: string | null; usuario_id: number | null;
+      usuario: string | null; creado: string | null;
+    }>(),
+  ]);
+
+  const porTurno = new Map<Turno, Map<string, TareaTabla>>();
+
+  for (const fila of filas.results) {
+    const turno: Turno = esTurno(fila.turno) ? fila.turno : "dia";
+    const id = Number(fila.id);
+    let turnos = porTurno.get(turno);
+    if (!turnos) { turnos = new Map(); porTurno.set(turno, turnos); }
+    let tarea = turnos.get(String(id));
+    if (!tarea) {
+      tarea = {
+        faena_id: id,
+        zona: String(fila.zona),
+        subzona: fila.subzona ? String(fila.subzona) : null,
+        elemento: fila.elemento ? String(fila.elemento) : null,
+        tipo_limpieza: fila.tipo_limpieza ? String(fila.tipo_limpieza) : null,
+        frecuencia_informativa: fila.frecuencia_informativa ? String(fila.frecuencia_informativa) : null,
+        frecuencia_calculo: fila.frecuencia_calculo ? String(fila.frecuencia_calculo) : null,
+        dias: [],
+        registros: [],
+      };
+      turnos.set(String(id), tarea);
+    }
+    if (!fila.fecha) continue;
+    const dia = Number(String(fila.fecha).slice(8, 10));
+    if (tarea.dias.includes(dia)) continue;
+    tarea.dias.push(dia);
+    if (fila.usuario_id !== null && fila.usuario_id !== undefined) {
+      tarea.registros.push({ dia, usuario_id: Number(fila.usuario_id), usuario: String(fila.usuario ?? ""), creado: String(fila.creado ?? "") });
+    }
+  }
+
+  // Extras: tareas del plan con frecuencia mayor de 32 días. Se muestran todas
+  // las del turno, con la fecha en que tocan y la marca del mes si ya se hizo.
+  const extrasPorTurno = new Map<Turno, ExtraTabla[]>();
+  for (const fila of plan.results) {
+    if (bloqueFrecuencia(fila.frecuencia_calculo) !== "extras") continue;
+    const turno: Turno = esTurno(fila.turno) ? fila.turno : "dia";
+    const lista = extrasPorTurno.get(turno) ?? [];
+    const previa = lista.find((e) => e.plan_id === Number(fila.id));
+    if (previa) {
+      if (previa.dia === null && fila.fecha) previa.dia = Number(String(fila.fecha).slice(8, 10));
+      continue;
+    }
+    const proxima = fila.proxima_fecha ? String(fila.proxima_fecha) : null;
+    lista.push({
+      plan_id: Number(fila.id),
+      zona: String(fila.zona),
+      subzona: fila.subzona ? String(fila.subzona) : null,
+      elemento: fila.elemento ? String(fila.elemento) : null,
+      frecuencia_calculo: String(fila.frecuencia_calculo),
+      frecuencia_informativa: fila.frecuencia_informativa ? String(fila.frecuencia_informativa) : null,
+      ultima_realizacion: fila.ultima_realizacion ? String(fila.ultima_realizacion) : null,
+      proxima_fecha: proxima,
+      faena_id: fila.faena_id === null || fila.faena_id === undefined ? null : Number(fila.faena_id),
+      dia: fila.fecha ? Number(String(fila.fecha).slice(8, 10)) : null,
+      toca_este_mes: Boolean(proxima && proxima.startsWith(prefijoMes)) || Boolean(fila.fecha),
+      registro: fila.usuario_id === null || fila.usuario_id === undefined
+        ? null
+        : { usuario_id: Number(fila.usuario_id), usuario: String(fila.usuario ?? ""), creado: String(fila.creado ?? "") },
+    });
+    extrasPorTurno.set(turno, lista);
+  }
+
+  let totalTareas = 0;
+  let totalProgramadas = 0;
+  let totalHechas = 0;
+  const turnos = TURNOS.map((turno) => {
+    const tareas = [...(porTurno.get(turno)?.values() ?? [])].map((t) => ({
+      ...t,
+      dias: t.dias.sort((a, b) => a - b),
+    }));
+    const bloques = new Map<string, TareaTabla[]>();
+    for (const tarea of tareas) {
+      const bloque = bloqueFrecuencia(tarea.frecuencia_calculo ?? tarea.frecuencia_informativa);
+      // Los extras (más de 32 días) van en su propia tabla, no en las de frecuencia.
+      if (bloque === "extras") continue;
+      const clave = bloque === null ? "sin" : String(bloque);
+      const lista = bloques.get(clave) ?? [];
+      lista.push(tarea);
+      bloques.set(clave, lista);
+    }
+    const orden = [...FRECUENCIAS_TABLA.map(String), "sin"];
+    const agrupados = orden
+      .filter((clave) => bloques.has(clave))
+      .map((clave) => {
+        const dias = clave === "sin" ? null : Number(clave);
+        return { dias, etiqueta: etiquetaBloque(dias), tareas: bloques.get(clave) ?? [] };
+      });
+    const extras = extrasPorTurno.get(turno) ?? [];
+    for (const tarea of tareas) {
+      totalTareas++;
+      totalProgramadas += tarea.dias.length;
+      totalHechas += tarea.registros.length;
+    }
+    return { turno, etiqueta: ETIQUETA_TURNO[turno], bloques: agrupados, extras };
+  });
+
+  return c.json({
+    centro: { id: Number(centro.id), nombre: String(centro.nombre) },
+    anio,
+    mes,
+    dias_mes: diasMes,
+    fecha_hoy: hoyMadrid(),
+    festivos: festivos.results.map((f) => String(f.fecha)),
+    turnos,
+    puede_gestionar: await puedeGestionarCentro(db, user, centroId),
+    resumen: {
+      tareas: totalTareas,
+      programadas: totalProgramadas,
+      hechas: totalHechas,
+      extras: turnos.reduce((n, t) => n + t.extras.filter((e) => e.toca_este_mes).length, 0),
+    },
+  });
+});
+
 // Marcar o desmarcar una tarea en un día concreto. Puede hacerlo cualquier
 // persona con acceso al centro; deshacer la marca de otro operario queda
 // reservado a los responsables del centro.

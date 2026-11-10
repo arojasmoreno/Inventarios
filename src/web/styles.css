@@ -375,3 +375,63 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .plan-table th,.plan-table td{padding:7px 10px}
 .cal-zona-text{min-width:0;flex:1}
 .cal-elemento{display:block;color:var(--muted);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Tablas del mes: tareas por turno y frecuencia + hoja imprimible. */
+.cal-tabs{display:flex;gap:6px;background:#eef2f7;border-radius:10px;padding:4px;margin-bottom:10px;width:fit-content}
+.cal-tabs button{font-family:inherit;font-size:13px;font-weight:600;color:var(--muted);background:none;border:0;border-radius:7px;padding:6px 12px;cursor:pointer}
+.cal-tabs button:hover{color:var(--text)}
+.cal-tabs button.active{background:#fff;color:var(--primary);box-shadow:0 1px 3px rgba(15,23,42,.12)}
+.tablas-card{padding:0}
+.tablas-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;padding:16px 18px;border-bottom:1px solid var(--border)}
+.tablas-head h3{font-size:16px}
+.tablas-head p{margin:4px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5;max-width:70ch}
+.tablas-resumen{display:flex;flex-wrap:wrap;gap:18px;padding:12px 18px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--muted)}
+.tablas-resumen strong{color:var(--text);font-size:14px;margin-right:4px}
+.tablas-turno{padding:16px 18px;border-bottom:1px solid var(--border)}
+.tablas-turno:last-child{border-bottom:0}
+.tablas-turno-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.tablas-turno-head h3{font-size:15px}
+.tablas-turno-head span{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.tabla-bloque{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden}
+.tabla-bloque-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border)}
+.tabla-bloque-head h4{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:#334155}
+.tabla-bloque-head span{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.tabla-bloque.extras .tabla-bloque-head{background:#fffbeb;border-bottom-color:#fde68a}
+.tabla-bloque.extras .tabla-bloque-head h4{color:#92400e}
+.tabla-bloque-scroll{overflow-x:auto}
+.tabla-frec{font-size:12.5px}
+.tabla-frec th,.tabla-frec td{padding:7px 10px;vertical-align:middle}
+.tabla-frec th{background:#fff;font-size:11px}
+.tabla-th-tarea{min-width:200px}
+.tabla-tarea strong{display:block;font-size:13px}
+.tabla-elemento{display:block;color:var(--muted);font-size:11px;margin-top:1px;white-space:normal}
+.dias-chips{display:flex;flex-wrap:wrap;gap:4px;max-width:560px}
+.dia-chip{font-family:inherit;font-size:11.5px;font-variant-numeric:tabular-nums;min-width:26px;height:26px;border-radius:7px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer;padding:0 4px}
+.dia-chip:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+.dia-chip.weekend{background:#f8fafc}
+.dia-chip.holiday{border-color:#fde68a;background:#fffbeb}
+.dia-chip.done{background:#16a34a;border-color:#16a34a;color:#fff;font-weight:700}
+.dia-chip.future{opacity:.55}
+.dia-chip:disabled{cursor:default}
+.tablas-vacio{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0;padding:10px 12px;color:var(--muted);font-size:12.5px}
+.tablas-print{display:none}
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  .topbar{display:none!important}
+  body{background:#fff}
+  .tablas-print{display:block}
+  .print-turno{margin-bottom:10mm;break-inside:auto}
+  .print-turno h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid #334155;padding-bottom:3px;margin:0 0 4px}
+  .print-bloque{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:#475569;margin:3mm 0 2px}
+  .print-table{width:100%;border-collapse:collapse;margin-bottom:4mm}
+  .print-table th,.print-table td{border:1px solid #cbd5e1;padding:2px 4px;font-size:9px;white-space:nowrap}
+  .print-table th{background:#eef2f7;font-size:8.5px;text-transform:uppercase;position:static}
+  .print-task{white-space:normal;min-width:38mm;font-size:9px}
+  .print-frec{white-space:normal;max-width:24mm}
+  .print-dia{width:5.4mm;text-align:center;padding:2px 0!important}
+  .print-dia.weekend{background:#f1f5f9}
+  .print-dia.holiday{background:#fef3c7}
+  .print-total{text-align:center;width:10mm}
+  .print-vacio{color:#64748b;text-align:center}
+  .print-extras th,.print-extras td{font-size:8.5px}
+}

@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Modal, Toast, formatFecha, formatNum } from "./ui";
 import { PlanHigieneModal } from "./limpieza-plan";
+import { TablasMes } from "./limpieza-tablas";
 
 type Turno = "dia" | "tarde" | "noche";
 type Modo = "planificar" | "marcar";
+type Vista = "calendario" | "tablas";
 
 interface Usuario { id: number; nombre: string; rol: string; }
 interface Centro { id: number; nombre: string; }
@@ -79,6 +81,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const [anio, setAnio] = useState(hoy.anio);
   const [mes, setMes] = useState(hoy.mes);
   const [turno, setTurno] = useState<Turno>("dia");
+  const [vista, setVista] = useState<Vista>("calendario");
   const [cal, setCal] = useState<Calendario | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +250,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const etiquetaTurno = ETIQUETA_TURNO[turno];
 
   return <>
-    <section className="cal-hero">
+    <section className={"cal-hero" + (vista === "tablas" ? " no-print" : "")}>
       <div className="cal-hero-main">
         <div className="cal-eyebrow">🧹 Plan de higiene</div>
         <div className="cal-title-row">
@@ -273,7 +276,12 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
           <button type="button" className="cal-hoy" onClick={irAHoy}>Hoy</button>
         </div>
 
-        <div className="cal-turns" role="group" aria-label="Turno del calendario">
+        <div className="cal-tabs" role="tablist" aria-label="Vista de limpieza">
+          <button type="button" role="tab" aria-selected={vista === "calendario"} className={vista === "calendario" ? "active" : ""} onClick={() => setVista("calendario")}>📅 Calendario</button>
+          <button type="button" role="tab" aria-selected={vista === "tablas"} className={vista === "tablas" ? "active" : ""} onClick={() => setVista("tablas")}>🗂️ Tablas del mes</button>
+        </div>
+
+        {vista === "calendario" && <div className="cal-turns" role="group" aria-label="Turno del calendario">
           {TURNOS.map((t) => <button
             key={t.id}
             type="button"
@@ -283,10 +291,10 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
           >
             <span aria-hidden="true">{t.icon}</span>{t.label}
           </button>)}
-        </div>
+        </div>}
       </div>
 
-      <div className="cal-progress-card">
+      {vista === "calendario" && <div className="cal-progress-card">
         <div className="cal-progress-top">
           <span>Progreso del mes</span>
           <strong>{resumen.progreso}%</strong>
@@ -302,9 +310,10 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
           <span><i className="cal-key done" />Realizada</span>
           <span><i className="cal-key holiday" />Festivo</span>
         </div>
-      </div>
+      </div>}
     </section>
 
+    {vista === "calendario" && <>
     <div className="kpis cal-kpis">
       <div className="kpi"><div className="label">Faenas</div><div className="value">{formatNum(resumen.faenas)}</div><div className="kpi-sub">en el turno de {etiquetaTurno.toLowerCase()}</div></div>
       <div className="kpi"><div className="label">Días programados</div><div className="value">{formatNum(resumen.programadas)}</div><div className="kpi-sub">en {capitalizar(nombreMes(anio, mes))}</div></div>
@@ -435,6 +444,19 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
         <span className="cal-foot-note">Los festivos se comparten entre los tres turnos del centro.</span>
       </div>
     </div>
+
+    </>}
+
+    {vista === "tablas" && centroActual && <TablasMes
+      centro={centroActual}
+      anio={anio}
+      mes={mes}
+      mesTexto={capitalizar(nombreMes(anio, mes))}
+      version={version}
+      userId={user.id}
+      onAviso={(mensaje, kind) => setToast({ message: mensaje, kind: kind ?? "ok" })}
+      onAbrirPlan={() => setPlanModal(true)}
+    />}
 
     {faenaModal && centroActual && <FaenaModal
       centro={centroActual}

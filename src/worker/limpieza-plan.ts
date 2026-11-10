@@ -68,6 +68,13 @@ export function parseFecha(valor: unknown): string | null {
 export function parseFrecuencia(texto: string | null | undefined): Intervalo | null {
   const t = normalizar(texto ?? "");
   if (!t) return null;
+  // El plan de planta trae la frecuencia como número de días sin unidad
+  // («1», «7», «31», «365»). Sin esto no se programaba ninguna faena.
+  const soloDias = /^(\d+)(?:[.,]\d+)?$/.exec(t);
+  if (soloDias) {
+    const n = Number(soloDias[1]);
+    return n >= 1 ? { unidad: "dias", valor: n } : null;
+  }
   const dias = /(\d+)\s*dias?\b/.exec(t);
   if (dias) return { unidad: "dias", valor: Math.max(1, Number(dias[1])) };
   const semanas = /(\d+)\s*semanas?\b/.exec(t);
