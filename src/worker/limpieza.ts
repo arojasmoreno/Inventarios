@@ -523,6 +523,30 @@ async function avanzarPlan(db: D1Database, planId: number, fecha: string): Promi
   ).bind(fecha, intervalo ? sumarIntervalo(fecha, intervalo) : null, planId).run();
 }
 
+/** Al desmarcar una tarea del plan, la próxima fecha vuelve a calcularse: se
+ *  toma la última realización que quede marcada o, si no queda ninguna, el día
+ *  que se acaba de desmarcar (vuelve a estar pendiente). */
+async function recalcularProxima(db: D1Database, planId: number, fechaRetirada: string): Promise<void> {
+  const plan = await db.prepare("SELECT frecuencia_calculo FROM limpieza_plan WHERE id = ?")
+    .bind(planId).first<{ frecuencia_calculo: string }>();
+  if (!plan) return;
+  const restante = await db.prepare(
+    `SELECT MAX(r.fecha) AS fecha FROM limpieza_registros r
+     JOIN limpieza_faenas f ON f.id = r.faena_id WHERE f.plan_id = ?`,
+  ).bind(planId).first<{ fecha: string | null }>();
+  const ultima = restante?.fecha ? String(restante.fecha) : null;
+  const intervalo = parseFrecuencia(plan.frecuencia_calculo);
+  if (!ultima) {
+    await db.prepare(
+      "UPDATE limpieza_plan SET proxima_fecha = ?, updated_at = datetime('now') WHERE id = ?",
+    ).bind(fechaRetirada, planId).run();
+    return;
+  }
+  await db.prepare(
+    "UPDATE limpieza_plan SET ultima_realizacion = ?, proxima_fecha = ?, updated_at = datetime('now') WHERE id = ?",
+  ).bind(ultima, intervalo ? sumarIntervalo(ultima, intervalo) : null, planId).run();
+}
+
 // Tareas del plan de un centro (lo que se ha cargado desde Excel).
 limpiezaRoutes.get("/plan", async (c) => {
   const user = c.get("user");
@@ -1021,6 +1045,7 @@ limpiezaRoutes.post("/registros", async (c) => {
       return c.json({ error: "Solo quien marcó la tarea o un responsable puede desmarcarla" }, 403);
     }
     await db.prepare("DELETE FROM limpieza_registros WHERE faena_id = ? AND fecha = ?").bind(faenaId, fecha).run();
+    if (faena.plan_id) await recalcularProxima(db, Number(faena.plan_id), fecha);
     return c.json({ hecho: false });
   }
 
