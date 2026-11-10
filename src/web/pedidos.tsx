@@ -551,7 +551,7 @@ function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
                 </td>
                 {estado !== "borrador" && <>
                   <td className="right">
-                    {estado === "enviado"
+                    {estado === "enviado" || estado === "recibido"
                       ? <input
                         className="input pedido-qty"
                         type="number"
@@ -608,33 +608,33 @@ function PedidoDetalleModal({ id, onClose, onAviso, onCambio }: {
           </div>
         </>}
 
-        {estado !== "borrador" && gestionable && estado !== "aplicado" && <>
+        {gestionable && (estado === "enviado" || estado === "recibido") && <>
           <div className="pedido-recepcion">
             <div className="field">
               <label htmlFor="pe-albaran">Número de albarán <span className="req">*</span></label>
               <input id="pe-albaran" className="input" value={albaran} onChange={(e) => setAlbaran(e.target.value)} placeholder="Ej. ALB-2026-0451" maxLength={60} />
             </div>
-            {estado === "enviado" && <button type="button" className="btn" onClick={recibir} disabled={busy}>
-              {busy ? "Guardando…" : "Guardar recepción y recuento"}
-            </button>}
+            <button type="button" className="btn secondary" onClick={recibir} disabled={busy}>
+              {busy ? "Guardando…" : estado === "enviado" ? "Guardar recepción y recuento" : "Corregir recepción"}
+            </button>
             {estado === "recibido" && <button type="button" className="btn" onClick={aplicar} disabled={busy}>
               {busy ? "Aplicando…" : "➕ Sumar al stock"}
             </button>}
           </div>
-          {estado === "enviado" && <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
             Escribe lo que realmente ha llegado en la columna «Recibido». Marca «reclamar» en las líneas con diferencia y, si hace falta, deja el motivo.
-          </p>}
+          </p>
           {diferencias.length > 0 && <div className="banner warn">
             {diferencias.length} línea(s) con diferencia entre lo pedido y lo contado.
           </div>}
-          <div className="pedido-manual">
-            <div className="field" style={{ flex: 1 }}>
-              <label htmlFor="pe-motivo">Reclamación al proveedor</label>
-              <input id="pe-motivo" className="input" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. Faltan 2 garrafas del código M-004" maxLength={500} />
-            </div>
-            <button type="button" className="btn secondary" onClick={guardarReclamacion} disabled={busy}>Guardar reclamación</button>
-          </div>
         </>}
+        {gestionable && estado !== "borrador" && <div className="pedido-manual">
+          <div className="field" style={{ flex: 1 }}>
+            <label htmlFor="pe-motivo">Reclamación al proveedor</label>
+            <input id="pe-motivo" className="input" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. Faltan 2 garrafas del código M-004" maxLength={500} />
+          </div>
+          <button type="button" className="btn secondary" onClick={guardarReclamacion} disabled={busy}>Guardar reclamación</button>
+        </div>}
 
         <div className="modal-footer">
           {estado === "borrador" && gestionable && <button type="button" className="btn danger" onClick={borrarPedido} disabled={busy}>🗑️ Eliminar pedido</button>}
