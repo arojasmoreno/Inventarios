@@ -90,8 +90,26 @@ panelRoutes.get("/", async (c) => {
     ).all<Row>(),
     db.prepare("SELECT COUNT(*) AS n FROM quimicos WHERE fecha_caducidad <= date('now', '+30 day')").first<Row>(),
   ]);
+  // Formaciones, carnets y revisiones del personal que caducan en 30 días o ya
+  // han vencido (solo la titulación más reciente de cada operario).
+  const formacionesProximas = await db.prepare(
+    `SELECT of.id, u.nombre AS usuario, f.nombre AS formacion, f.tipo, of.caducidad,
+            c.nombre AS centro_nombre,
+            CAST(julianday(of.caducidad) - julianday('now') AS INTEGER) AS dias
+     FROM operario_formaciones of
+     JOIN usuarios u ON u.id = of.usuario_id
+     JOIN formaciones f ON f.id = of.formacion_id
+     LEFT JOIN centros c ON c.id = of.centro_id
+     WHERE of.caducidad IS NOT NULL AND of.caducidad <= date('now', '+30 day') AND u.activo = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM operario_formaciones o2
+         WHERE o2.usuario_id = of.usuario_id AND o2.formacion_id = of.formacion_id AND o2.fecha > of.fecha)
+     ORDER BY of.caducidad LIMIT 20`,
+  ).all<Row>();
   return c.json({
     generado: new Date().toISOString(),
+    formaciones_proximas: formacionesProximas.results,
+    formaciones_caducan30: formacionesProximas.results.length,
     consumo: {
       hoy: { unidades: Number(hoy?.unidades ?? 0), movimientos: Number(hoy?.movimientos ?? 0) },
       semana: { unidades: Number(semana?.unidades ?? 0), movimientos: Number(semana?.movimientos ?? 0) },

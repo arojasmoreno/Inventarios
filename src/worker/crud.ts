@@ -34,6 +34,7 @@ const TABLA_NOMBRE: Record<string, string> = {
   soportes: "Soporte", consumibles_tipos: "Tipo de consumible",
   productos_disponibles: "Producto disponible", pedidos_material: "Línea de pedido",
   proveedores: "Proveedor", pedidos: "Pedido", pedido_lineas: "Línea de pedido",
+  formaciones: "Formación", operario_formaciones: "Formación de operario",
 };
 function nombreDe(spec: CrudSpec, row: Record<string, unknown>): string {
   const n = row.nombre ?? row.username ?? row.codigo ?? row.prenda ?? row.email;

@@ -323,6 +323,38 @@ export const TIPOS_EQUIPO: ResourceConfig = {
     { key: "created_at", label: "Alta", render: r => formatFecha(String(r.created_at ?? "")) },
   ],
 };
+const TIPOS_FORMACION: Record<string, { icon: string; label: string }> = {
+  formacion: { icon: "🎓", label: "Formación" },
+  revision: { icon: "🩺", label: "Revisión" },
+  carnet: { icon: "🪪", label: "Carnet" },
+};
+export const FORMACIONES: ResourceConfig = {
+  title: "Catálogo de formaciones",
+  subtitle: "Formaciones, revisiones y carnets con su plazo de validez: cada operario hereda ese plazo al registrar la suya",
+  endpoint: "/api/catalogo-formaciones", csvName: "formaciones", searchKeys: ["nombre", "tipo", "notas"],
+  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  fields: [
+    { name: "nombre", label: "Nombre", type: "text", required: true, placeholder: "Ej. Carretilla elevadora" },
+    { name: "tipo", label: "Tipo", type: "enum", required: true, enumValues: ["formacion", "revision", "carnet"] },
+    { name: "meses_validez", label: "Validez (meses)", type: "integer", placeholder: "0", help: "Meses que dura desde la fecha de realización. 0 = no caduca." },
+    { name: "notas", label: "Notas", type: "textarea" },
+    { name: "activo", label: "Activo", type: "boolean" },
+  ],
+  columns: [
+    { key: "nombre", label: "Formación, revisión o carnet" },
+    {
+      key: "tipo", label: "Tipo",
+      render: r => { const t = TIPOS_FORMACION[String(r.tipo ?? "")] ?? TIPOS_FORMACION.formacion; return <span className="badge info">{t.icon} {t.label}</span>; },
+      csv: r => (TIPOS_FORMACION[String(r.tipo ?? "")] ?? TIPOS_FORMACION.formacion).label,
+    },
+    {
+      key: "meses_validez", label: "Validez",
+      render: r => Number(r.meses_validez ?? 0) > 0 ? `${formatNum(r.meses_validez)} meses` : <span className="badge muted">Sin caducidad</span>,
+      csv: r => Number(r.meses_validez ?? 0) > 0 ? `${Number(r.meses_validez)} meses` : "Sin caducidad",
+    },
+    { key: "notas", label: "Notas", render: r => String(r.notas ?? "—"), csv: r => String(r.notas ?? "") },
+  ],
+};
 export const PROVEEDORES: ResourceConfig = {
   title: "Proveedores",
   subtitle: "A quién se manda cada pedido de consumibles: nombre, persona de contacto y datos de contacto",

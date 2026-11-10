@@ -20,6 +20,8 @@ interface PanelData {
   quimicos_caducan30: number;
   maquinas_no_operativas: Row[];
   revisiones_epis: Row[];
+  formaciones_proximas: Row[];
+  formaciones_caducan30: number;
 }
 
 interface EnvioResumen { ok: boolean; enviado: boolean; enviados?: number; destinatarios?: number; message?: string; }
@@ -63,7 +65,7 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
   const maxDia = Math.max(1, ...data.por_dia.map((d) => Number(d.unidades)));
   const maxZona = Math.max(1, ...data.por_zona.map((z) => Number(z.unidades)));
   const alertas = data.stock_bajo.length + data.quimicos_vencidos + data.sin_consumo.length
-    + data.revisiones_epis.length + data.maquinas_no_operativas.length;
+    + data.revisiones_epis.length + data.maquinas_no_operativas.length + data.formaciones_proximas.length;
 
   return <>
     <div className="kpis">
@@ -77,7 +79,7 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
         <div className="label">Sin consumo (30 d)</div><div className="value">{formatNum(data.sin_consumo.length)}</div>
         <div className={"kpi-sub" + (data.sin_consumo.length ? " up" : "")}>estaciones activas paradas</div></a>
       <div className={"kpi" + (alertas > 0 ? " alert" : "")}><div className="label">Alertas</div><div className="value">{formatNum(alertas)}</div>
-        <div className="kpi-sub">stock {formatNum(data.stock_bajo.length)} · revisiones {formatNum(data.revisiones_epis.length)} · máquinas {formatNum(data.maquinas_no_operativas.length)}</div></div>
+        <div className="kpi-sub">stock {formatNum(data.stock_bajo.length)} · revisiones {formatNum(data.revisiones_epis.length)} · formaciones {formatNum(data.formaciones_proximas.length)} · máquinas {formatNum(data.maquinas_no_operativas.length)}</div></div>
     </div>
 
     <div className="card card-pad">
@@ -147,7 +149,22 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
             : <p style={{ color: "var(--muted)", margin: 0 }}>Sin revisiones próximas.</p>}
         </div>
       </div>
-      {(data.quimicos_vencidos > 0 || data.quimicos_caducan30 > 0) && <p style={{ marginBottom: 0 }}>
+      <div className="section-head" style={{ marginTop: 14, marginBottom: 6 }}>
+        <h3 style={{ fontSize: 14 }}>🎓 Formaciones, carnets y revisiones (30 días) ({formatNum(data.formaciones_proximas.length)})</h3>
+        <a className="btn secondary small" href="#/formaciones">Ver formaciones</a>
+      </div>
+      {data.formaciones_proximas.length
+        ? <div className="table-scroll"><table>
+          <thead><tr><th>Operario</th><th>Formación</th><th>Centro</th><th>Caduca</th></tr></thead>
+          <tbody>{data.formaciones_proximas.map((f) => { const dias = Number(f.dias); return <tr key={String(f.id)}>
+            <td>{String(f.usuario ?? "—")}</td>
+            <td>{String(f.formacion ?? "—")}</td>
+            <td>{String(f.centro_nombre ?? "—")}</td>
+            <td>{dias < 0 ? <span className="badge danger">Vencida · {formatFecha(String(f.caducidad))}</span>
+              : <span className={dias <= 30 ? "badge warn" : "badge ok"}>{formatFecha(String(f.caducidad))} · {formatNum(dias)} d</span>}</td>
+          </tr>; })}</tbody></table></div>
+        : <p style={{ color: "var(--muted)", margin: 0 }}>Sin formaciones a punto de caducar.</p>}
+      {(data.quimicos_vencidos > 0 || data.quimicos_caducan30 > 0) && <p style={{ marginBottom: 0, marginTop: 12 }}>
         <a href="#/quimicos">🧪 {formatNum(data.quimicos_vencidos)} químicos vencidos · {formatNum(data.quimicos_caducan30)} caducan en 30 días</a></p>}
     </div>
 

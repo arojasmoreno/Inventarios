@@ -10,9 +10,9 @@ type Row = Record<string, unknown>;
 // próximas/vencidas y máquinas que no están operativas. Se usan en el panel,
 // en el resumen diario por correo (cron) y en el envío manual.
 export async function calcularAlertas(db: D1Database): Promise<{
-  stock_bajo: Row[]; caducidades: Row[]; revisiones: Row[]; maquinas: Row[];
+  stock_bajo: Row[]; caducidades: Row[]; revisiones: Row[]; formaciones: Row[]; maquinas: Row[];
 }> {
-  const [stock, caducidades, revisiones, maquinas] = await Promise.all([
+  const [stock, caducidades, revisiones, formaciones, maquinas] = await Promise.all([
     db.prepare(
       `SELECT * FROM (
         SELECT MAX(nombre) AS nombre, SUM(litros_por_garrafa * num_garrafas) AS stock,
@@ -38,18 +38,36 @@ export async function calcularAlertas(db: D1Database): Promise<{
        WHERE e.fecha_revision IS NOT NULL AND e.fecha_revision <= date('now', '+30 day')
        ORDER BY e.fecha_revision LIMIT 50`,
     ).all<Row>(),
+    // Formaciones, carnets y revisiones del personal que caducan en 30 días o
+    // ya están vencidos. Solo cuenta la titulación más reciente de cada
+    // operario y formación (una renovación anula la anterior).
+    db.prepare(
+      `SELECT u.nombre AS usuario, f.nombre AS formacion, f.tipo, of.caducidad,
+              of.centro_id, c.nombre AS centro_nombre,
+              CAST(julianday(of.caducidad) - julianday('now') AS INTEGER) AS dias
+       FROM operario_formaciones of
+       JOIN usuarios u ON u.id = of.usuario_id
+       JOIN formaciones f ON f.id = of.formacion_id
+       LEFT JOIN centros c ON c.id = of.centro_id
+       WHERE of.caducidad IS NOT NULL AND of.caducidad <= date('now', '+30 day')
+         AND u.activo = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM operario_formaciones o2
+           WHERE o2.usuario_id = of.usuario_id AND o2.formacion_id = of.formacion_id AND o2.fecha > of.fecha)
+       ORDER BY of.caducidad LIMIT 100`,
+    ).all<Row>(),
     db.prepare(
       `SELECT m.id, m.nombre, m.tipo, m.estado, m.numero_serie, m.centro_id, c.nombre AS centro_nombre
        FROM maquinaria m LEFT JOIN centros c ON c.id = m.centro_id
        WHERE m.estado NOT IN ('Operativo', 'Operativa', 'Baja') ORDER BY m.estado, m.nombre LIMIT 50`,
     ).all<Row>(),
   ]);
-  return { stock_bajo: stock.results, caducidades: caducidades.results, revisiones: revisiones.results, maquinas: maquinas.results };
+  return { stock_bajo: stock.results, caducidades: caducidades.results, revisiones: revisiones.results, formaciones: formaciones.results, maquinas: maquinas.results };
 }
 
 async function enviarResumenDiario(env: Env): Promise<{ destinatarios: number; enviados: number; conteos: Record<string, number> }> {
   const a = await calcularAlertas(env.DB);
-  const conteos = { stock: a.stock_bajo.length, caducidades: a.caducidades.length, revisiones: a.revisiones.length, maquinas: a.maquinas.length };
+  const conteos = { stock: a.stock_bajo.length, caducidades: a.caducidades.length, revisiones: a.revisiones.length, formaciones: a.formaciones.length, maquinas: a.maquinas.length };
   const destinatarios = await env.DB.prepare(
     "SELECT email, nombre FROM usuarios WHERE rol = 'admin' AND activo = 1 AND email IS NOT NULL AND email != ''",
   ).all<Row>();
@@ -71,6 +89,11 @@ async function enviarResumenDiario(env: Env): Promise<{ destinatarios: number; e
   if (conteos.revisiones) {
     secciones.push(`<h3>Revisiones de EPI próximas/vencidas (${conteos.revisiones})</h3><ul>${a.revisiones.map(r => `<li><strong>${String(r.nombre)}</strong> — ${String(r.fecha_revision)}${Number(r.dias) < 0 ? " (VENCIDA)" : ` (${String(r.dias)} d)`}</li>`).join("")}</ul>`);
     lineas.push(`Revisiones EPI: ${a.revisiones.map(r => String(r.nombre)).join(", ")}`);
+  }
+  if (conteos.formaciones) {
+    const etiqueta: Record<string, string> = { formacion: "Formación", revision: "Revisión", carnet: "Carnet" };
+    secciones.push(`<h3>Formaciones, carnets y revisiones que caducan en 30 días (${conteos.formaciones})</h3><ul>${a.formaciones.map(f => `<li><strong>${String(f.usuario)}</strong> — ${etiqueta[String(f.tipo)] ?? "Formación"}: ${String(f.formacion)} · caduca ${String(f.caducidad)}${Number(f.dias) < 0 ? " (VENCIDA)" : ` (${String(f.dias)} d)`}${f.centro_nombre ? ` · ${String(f.centro_nombre)}` : ""}</li>`).join("")}</ul>`);
+    lineas.push(`Formaciones/carnets: ${a.formaciones.map(f => `${String(f.usuario)} (${String(f.formacion)})`).join(", ")}`);
   }
   const fecha = new Date().toISOString().slice(0, 10);
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8" /><style>body{font-family:"Segoe UI",system-ui,sans-serif;color:#0f172a}h1{font-size:20px}h3{font-size:15px;margin:18px 0 6px}li{margin:3px 0}.footer{margin-top:20px;font-size:12px;color:#64748b}</style></head><body>
@@ -101,7 +124,7 @@ alertasRoutes.get("/", async (c) => {
   const a = await calcularAlertas(c.env.DB);
   return c.json({
     ...a,
-    conteos: { stock: a.stock_bajo.length, caducidades: a.caducidades.length, revisiones: a.revisiones.length, maquinas: a.maquinas.length },
+    conteos: { stock: a.stock_bajo.length, caducidades: a.caducidades.length, revisiones: a.revisiones.length, formaciones: a.formaciones.length, maquinas: a.maquinas.length },
   });
 });
 

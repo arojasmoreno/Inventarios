@@ -454,3 +454,35 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .pedido-recepcion{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin-top:14px;padding:12px;border:1px dashed var(--border);border-radius:10px;background:#f8fafc}
 .pedido-recepcion .field{flex:1;min-width:220px}
 .pedido-acciones{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* Formaciones: matriz operario × formación con la caducidad de cada una. */
+.form-matrix-wrap{max-height:70vh}
+.form-matrix{font-size:12.5px}
+.form-matrix th,.form-matrix td{padding:6px 8px;vertical-align:middle}
+.form-matrix th{background:#fff;font-size:11px;text-transform:none;letter-spacing:0;text-align:center;border-bottom:2px solid var(--border)}
+.form-matrix th.form-sticky,.form-matrix td.form-sticky{position:sticky;left:0;background:var(--card);z-index:1;min-width:170px;text-align:left;border-right:1px solid var(--border)}
+.form-matrix th.form-sticky{background:#f8fafc;z-index:2}
+.form-matrix tbody tr:hover td{background:#f8fafc}
+.form-matrix tbody tr:hover td.form-sticky{background:#f8fafc}
+.form-matrix td.form-sticky strong{display:block;font-size:13px}
+.form-matrix td.form-sticky small{color:var(--muted);font-size:11px}
+.form-th-tipo{display:block;font-size:14px;line-height:1.2}
+.form-th-nombre{display:block;max-width:120px;margin:0 auto;white-space:normal;line-height:1.25;color:var(--text);font-weight:600}
+.form-th-meses{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+.form-cell{text-align:center}
+.form-chip{font-family:inherit;font-size:11.5px;font-weight:600;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--muted);padding:5px 8px;cursor:pointer;white-space:nowrap}
+.form-chip:hover{border-color:var(--primary);color:var(--primary)}
+.form-chip.ok{background:#dcfce7;border-color:#bbf7d0;color:#166534}
+.form-chip.proxima{background:#fef3c7;border-color:#fde68a;color:#92400e}
+.form-chip.vencida{background:#fee2e2;border-color:#fecaca;color:#991b1b}
+.form-chip.sin{background:#f1f5f9;border-color:#e2e8f0;color:#475569}
+.form-chip.vacio{font-size:15px;color:#94a3b8;background:transparent;border-style:dashed}
+.form-legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12px;color:var(--muted)}
+.form-legend span{display:inline-flex;align-items:center;gap:5px}
+.form-key{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(15,23,42,.15)}
+.form-key.ok{background:#dcfce7}
+.form-key.proxima{background:#fef3c7}
+.form-key.vencida{background:#fee2e2}
+.form-key.sin{background:#f1f5f9}
+.form-preview{margin:14px 0 0;padding:10px 12px;border-radius:9px;background:#eff6ff;color:#1e40af;font-size:12.5px;border:1px solid #bfdbfe}
+.form-preview.sin{background:#f8fafc;color:var(--muted);border-color:var(--border)}

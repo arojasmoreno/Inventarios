@@ -58,6 +58,13 @@ const SCHEMA: string[] = [
   // Líneas del pedido de material antiguo (se mantiene por compatibilidad; el
   // pedido vivo es `pedidos` + `pedido_lineas`).
   `CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Catálogo de formaciones, revisiones y carnets: cada uno con su validez en
+  // meses (0 = no caduca). Las asignaciones por operario calculan su caducidad
+  // a partir de este plazo.
+  `CREATE TABLE IF NOT EXISTS formaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT 'formacion', meses_validez INTEGER NOT NULL DEFAULT 0, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Formación/carnet/revisión de un operario: fecha de realización y caducidad
+  // calculada. Se guarda el centro donde se registró y las notas.
+  `CREATE TABLE IF NOT EXISTS operario_formaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, formacion_id INTEGER NOT NULL REFERENCES formaciones(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, fecha TEXT NOT NULL, caducidad TEXT, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Proveedores a los que se manda cada pedido.
   `CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Pedido de consumibles de un centro: nace en borrador, se manda al proveedor
@@ -383,6 +390,14 @@ export async function bootstrap(db: D1Database): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_pedidos_proveedor ON pedidos(proveedor_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_pedido ON pedido_lineas(pedido_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_codigo ON pedido_lineas(codigo)",
+    // Formaciones: catálogo por tipo y caducidades por operario (la matriz de
+    // un centro y los avisos de los próximos 30 días).
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_formaciones_nombre ON formaciones(nombre)",
+    "CREATE INDEX IF NOT EXISTS idx_formaciones_tipo ON formaciones(tipo, activo)",
+    "CREATE INDEX IF NOT EXISTS idx_operario_formaciones_usuario ON operario_formaciones(usuario_id, formacion_id)",
+    "CREATE INDEX IF NOT EXISTS idx_operario_formaciones_caducidad ON operario_formaciones(caducidad)",
+    "CREATE INDEX IF NOT EXISTS idx_operario_formaciones_centro ON operario_formaciones(centro_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_operario_formaciones_clave ON operario_formaciones(usuario_id, formacion_id, fecha)",
     "CREATE INDEX IF NOT EXISTS idx_mat_codigo ON material_limpieza(codigo)",
     // Plan de higiene: consulta del calendario por centro/mes/turno y marcado
     // de tareas por día.

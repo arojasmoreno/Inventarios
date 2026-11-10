@@ -3,6 +3,7 @@ import { api } from "./api";
 import { Field, Toast, camposConError } from "./ui";
 import { QUIMICOS, ResourcePage, type ResourceConfig } from "./resources";
 import { ConsumiblesPage } from "./consumibles";
+import { FormacionesPage } from "./formaciones";
 import { GestionCentrosPage } from "./gestion-centros";
 import { GestionInformesPage } from "./gestion-informes";
 import { MaquinariaPage } from "./maquinaria";
@@ -62,6 +63,12 @@ const NAV: NavGroup[] = [
     section: "Maquinaria",
     items: [
       { hash: "#/maquinaria", label: "Control de maquinaria", icon: "🧭" },
+    ],
+  },
+  {
+    section: "Personal",
+    items: [
+      { hash: "#/formaciones", label: "Formaciones y carnets", icon: "🎓" },
     ],
   },
   {
@@ -382,7 +389,8 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
       : esTiposMaquinaria ? nav("#/maquinaria")
       : esConsumibles ? nav("#/consumibles")
       : esGestionCentros ? nav("#/gestion-centros")
-      : esGestionInformes ? nav("#/gestion-informes") : flat[0]);
+      : esGestionInformes ? nav("#/gestion-informes")
+      : route === "#/formaciones-catalogo" ? nav("#/formaciones") : flat[0]);
   // Ruta fuera del menú del rol: se redirige a la primera sección permitida.
   if (!permitida) return <div className="loading">Abriendo tu sección…</div>;
   let page: ReactNode;
@@ -394,6 +402,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;
   else if (esGestionInformes) page = <GestionInformesPage key={route} user={user} />;
   else if (route.startsWith("#/maquinaria") || route === "#/tipos") page = <MaquinariaPage key={route} user={user} />;
+  else if (route === "#/formaciones" || route === "#/formaciones-catalogo") page = <FormacionesPage key={route} user={user} />;
   else if (route === "#/documentacion") page = <DocumentosPage user={user} />;
   else if (route === "#/equipacion" || route === "#/ropa" || route === "#/epis" || route === "#/tallas" || route === "#/tipos-equipo" || route.startsWith("#/entregas")) page = <EquipacionPage user={user} />;
   else if (active.resource) page = <ResourcePage key={route} config={active.resource} user={user} />;

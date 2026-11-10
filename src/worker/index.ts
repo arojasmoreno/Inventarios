@@ -5,7 +5,7 @@ import type { Variables } from "./types";
 import { bootstrap } from "./db";
 import { authRoutes } from "./auth";
 import { ValidationError } from "./crud";
-import { quimicos, material, maquinaria, centros, usuarios, epis, ropa, movimientos, zonas, subzonas, soportes, consumiblesTipos, tipos, tiposEquipo, situaciones, productosDisponibles, proveedores } from "./resources";
+import { quimicos, material, maquinaria, centros, usuarios, epis, ropa, movimientos, zonas, subzonas, soportes, consumiblesTipos, tipos, tiposEquipo, situaciones, productosDisponibles, proveedores, formaciones } from "./resources";
 import { maquinariaHistorial } from "./maquinaria-historial";
 import { tallas } from "./tallas";
 import { estaciones } from "./estaciones";
@@ -17,9 +17,10 @@ import { reportesRoutes } from "./reportes";
 import { panelRoutes } from "./panel";
 import { buscadorRoutes } from "./buscador";
 import { documentos, documentosTipos } from "./documentos";
-import { alertasRoutes } from "./alertas";
+import { alertasRoutes, enviarResumenDiario } from "./alertas";
 import { limpiezaRoutes } from "./limpieza";
 import { pedidosRoutes } from "./pedidos";
+import { formacionesRoutes } from "./formaciones";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -96,6 +97,9 @@ app.route("/api/consumibles-tipos", consumiblesTipos);
 app.route("/api/productos-disponibles", productosDisponibles);
 app.route("/api/proveedores", proveedores);
 app.route("/api/pedidos", pedidosRoutes);
+// Catálogo de formaciones/carnets/revisiones y su matriz por centro.
+app.route("/api/catalogo-formaciones", formaciones);
+app.route("/api/formaciones", formacionesRoutes);
 app.route("/api/ropa-entregas", entregasRoutes);
 app.route("/api/empresa", empresaRoutes);
 app.route("/api/informes", reportesRoutes);
@@ -114,6 +118,13 @@ app.onError((err, c) => {
   console.error("Error no controlado:", err);
   return c.json({ error: "Error interno del servidor" }, 500);
 });
-// El Worker solo atiende peticiones: el resumen de alertas ya no se envía
-// automáticamente, un administrador lo envía desde el botón del dashboard.
-export default { fetch: app.fetch };
+// El resumen de alertas (stock, caducidades, revisiones de EPI, formaciones y
+// máquinas) se manda solo cuando un administrador lo pide desde el panel y, en
+// producción, una vez por semana por el cron de `wrangler.jsonc` (avisos de
+// caducidad con un mes de antelación).
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(promesa: Promise<unknown>): void }): Promise<void> {
+    ctx.waitUntil(enviarResumenDiario(env));
+  },
+};

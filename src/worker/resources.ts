@@ -495,6 +495,27 @@ export const productosDisponiblesSpec: CrudSpec = {
   ],
 };
 export const productosDisponibles = createCrud(productosDisponiblesSpec);
+// ---- Catálogo de formaciones, revisiones y carnets ----
+// Cada entrada fija cuántos meses dura: la caducidad de cada operario se calcula
+// con ese plazo (0 meses = no caduca).
+export const formacionesSpec: CrudSpec = {
+  table: "formaciones", orderBy: "nombre",
+  read: "all", create: "admin", update: "admin", delete: "admin",
+  fields: [
+    { name: "nombre", label: "Nombre", type: "text", required: true, unique: true, maxLength: 160, placeholder: "Ej. Carretilla elevadora" },
+    { name: "tipo", label: "Tipo", type: "enum", required: true, enumValues: ["formacion", "revision", "carnet"] },
+    { name: "meses_validez", label: "Validez (meses)", type: "integer", required: false, min: 0, placeholder: "0 = no caduca" },
+    { name: "notas", label: "Notas", type: "textarea" },
+    { name: "activo", label: "Activo", type: "boolean", required: false },
+  ],
+  beforeWrite: async (_db, data) => {
+    // Un catálogo sin validez explícita se considera sin caducidad.
+    if (data.meses_validez === null || data.meses_validez === undefined) data.meses_validez = 0;
+    if (typeof data.tipo !== "string") data.tipo = "formacion";
+    return data;
+  },
+};
+export const formaciones = createCrud(formacionesSpec);
 // ---- Proveedores de los pedidos ----
 export const proveedoresSpec: CrudSpec = {
   table: "proveedores", orderBy: "nombre",
