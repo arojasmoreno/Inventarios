@@ -245,6 +245,35 @@ test("la importación asigna el proveedor seleccionado", async () => {
   expect(Number(fila?.proveedor_id)).toBe(prov1);
 });
 
+test("la importación masiva crea proveedores y asigna cada producto a su código", async () => {
+  const proveedoresImportados = await post("/api/proveedores/import", {
+    rows: [{ codigo: "BULK-P1", nombre: "Proveedor Masivo Uno" }, { codigo: "BULK-P2", nombre: "Proveedor Masivo Dos" }],
+  });
+  expect(proveedoresImportados.status).toBe(200);
+  expect(Number(proveedoresImportados.body.creados)).toBe(2);
+
+  const lista = await get("/api/proveedores");
+  const porCodigo = new Map((lista.body.items as Array<Record<string, unknown>>).map((p) => [String(p.codigo), Number(p.id)]));
+  const p1 = Number(porCodigo.get("BULK-P1")), p2 = Number(porCodigo.get("BULK-P2"));
+  expect(p1).toBeGreaterThan(0);
+  expect(p2).toBeGreaterThan(0);
+
+  const productosImportados = await post("/api/productos-disponibles/import", {
+    rows: [
+      { proveedor_id: p1, codigo: "BULK-A", producto: "Producto Masivo A", precio: 1.5 },
+      { proveedor_id: p2, codigo: "BULK-B", producto: "Producto Masivo B", precio: 2.5 },
+    ],
+  });
+  expect(productosImportados.status).toBe(200);
+  expect(Number(productosImportados.body.creados)).toBe(2);
+
+  const soloUno = await get("/api/productos-disponibles?proveedor_id=" + String(p1));
+  const items = soloUno.body.items as Array<Record<string, unknown>>;
+  expect(items.length).toBe(1);
+  expect(String(items[0].codigo)).toBe("BULK-A");
+  expect(Number(items[0].proveedor_id)).toBe(p1);
+});
+
 test("un proveedor con productos o pedidos no se puede borrar", async () => {
   const borrado = await del(`/api/proveedores/${String(prov1)}`);
   expect(borrado.status).toBe(400);

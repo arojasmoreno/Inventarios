@@ -1,3 +1,4 @@
+// Insuma — gestión del inventario de planta.
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
