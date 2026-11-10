@@ -21,6 +21,7 @@ import { alertasRoutes, enviarResumenDiario } from "./alertas";
 import { limpiezaRoutes } from "./limpieza";
 import { pedidosRoutes } from "./pedidos";
 import { formacionesRoutes } from "./formaciones";
+import { operariosRoutes } from "./operarios";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -100,6 +101,7 @@ app.route("/api/pedidos", pedidosRoutes);
 // Catálogo de formaciones/carnets/revisiones y su matriz por centro.
 app.route("/api/catalogo-formaciones", formaciones);
 app.route("/api/formaciones", formacionesRoutes);
+app.route("/api/operarios", operariosRoutes);
 app.route("/api/ropa-entregas", entregasRoutes);
 app.route("/api/empresa", empresaRoutes);
 app.route("/api/informes", reportesRoutes);

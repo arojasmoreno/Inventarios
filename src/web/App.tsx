@@ -4,6 +4,7 @@ import { Field, Toast, camposConError } from "./ui";
 import { QUIMICOS, ResourcePage, type ResourceConfig } from "./resources";
 import { ConsumiblesPage } from "./consumibles";
 import { FormacionesPage } from "./formaciones";
+import { OperariosPage } from "./operarios";
 import { GestionCentrosPage } from "./gestion-centros";
 import { GestionInformesPage } from "./gestion-informes";
 import { MaquinariaPage } from "./maquinaria";
@@ -68,6 +69,7 @@ const NAV: NavGroup[] = [
   {
     section: "Personal",
     items: [
+      { hash: "#/operarios", label: "Operarios", icon: "🪪" },
       { hash: "#/formaciones", label: "Formaciones y carnets", icon: "🎓" },
     ],
   },
@@ -108,6 +110,12 @@ const NAV: NavGroup[] = [
 // informes y manuales. No ve el panel de control, los consumibles completos, la
 // equipación ni la gestión de centros.
 const NAV_USUARIO: NavGroup[] = [
+  {
+    section: "Personal",
+    items: [
+      { hash: "#/operarios", label: "Mi ficha", icon: "🪪" },
+    ],
+  },
   {
     section: "Consumibles",
     items: [
@@ -381,6 +389,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   const nav = (hash: string) => gruposBase.flatMap((g) => g.items).find((n) => n.hash === hash) ?? gruposBase[0].items[0];
   const permitida = user.rol !== "usuario" || esConsumibles || esGestionInformes
     || route === "#/limpieza" || route.startsWith("#/maquinaria") || route === "#/tipos"
+    || route.startsWith("#/operarios")
     || route === "#/documentacion" || route === "#/ayuda" || route === "#/cuenta";
   useEffect(() => { if (!permitida) window.location.hash = "#/estaciones"; }, [permitida, route]);
   const flat = gruposBase.flatMap((g) => g.items);
@@ -402,6 +411,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;
   else if (esGestionInformes) page = <GestionInformesPage key={route} user={user} />;
   else if (route.startsWith("#/maquinaria") || route === "#/tipos") page = <MaquinariaPage key={route} user={user} />;
+  else if (route.startsWith("#/operarios")) page = <OperariosPage user={user} />;
   else if (route === "#/formaciones" || route === "#/formaciones-catalogo") page = <FormacionesPage key={route} user={user} />;
   else if (route === "#/documentacion") page = <DocumentosPage user={user} />;
   else if (route === "#/equipacion" || route === "#/ropa" || route === "#/epis" || route === "#/tallas" || route === "#/tipos-equipo" || route.startsWith("#/entregas")) page = <EquipacionPage user={user} />;

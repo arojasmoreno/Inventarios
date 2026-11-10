@@ -225,6 +225,8 @@ export const usuariosSpec: CrudSpec = {
     { name: "username", label: "Usuario (login)", type: "text", required: true, unique: true, maxLength: 60 },
     { name: "nombre", label: "Nombre completo", type: "text", required: true, maxLength: 120 },
     { name: "email", label: "Email", type: "text", required: false, maxLength: 200 },
+    { name: "telefono", label: "Teléfono", type: "text", required: false, maxLength: 40 },
+    { name: "puesto", label: "Puesto", type: "text", required: false, maxLength: 120, placeholder: "Ej. Limpiador/a · Turno de tarde" },
     { name: "password", label: "Contraseña", type: "password", required: false, writeOnly: true, placeholder: "Déjalo en blanco para no cambiarla" },
     { name: "rol", label: "Rol", type: "enum", required: true, enumValues: ROLES },
     { name: "activo", label: "Activo", type: "boolean", required: true },
@@ -449,25 +451,31 @@ usuarios.put("/:id/centros", requireAuth, async (c) => {
   return c.json({ ok: true, centros: ids });
 });
 // RGPD: exportación de los datos personales de un usuario (perfil, centros,
-// tallas y entregas). Solo administradores.
+// tallas, entregas y formaciones). Solo administradores.
 usuarios.get("/:id/datos", requireAuth, async (c) => {
   if (c.get("user").rol !== "admin") return c.json({ error: "Requiere permisos de administrador" }, 403);
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id) || id < 1) return c.json({ error: "Usuario no válido" }, 400);
   const db = c.env.DB;
   const usuario = await db.prepare(
-    "SELECT id, username, nombre, email, rol, activo, created_at FROM usuarios WHERE id = ?",
+    "SELECT id, username, nombre, email, telefono, puesto, rol, activo, created_at FROM usuarios WHERE id = ?",
   ).bind(id).first();
   if (!usuario) return c.json({ error: "Usuario no encontrado" }, 404);
-  const [centros, tallas, entregas] = await Promise.all([
+  const [centros, tallas, entregas, formaciones] = await Promise.all([
     db.prepare("SELECT c.id, c.nombre FROM usuario_centros uc JOIN centros c ON c.id = uc.centro_id WHERE uc.usuario_id = ? ORDER BY c.nombre").bind(id).all(),
     db.prepare("SELECT prenda, talla, fecha, notas, created_at FROM tallas_operarios WHERE usuario_id = ? ORDER BY fecha DESC, id DESC").bind(id).all(),
     db.prepare("SELECT fecha, prenda, articulo_tipo, cantidad, talla, color, centro_id, created_at FROM ropa_entregas WHERE usuario_id = ? ORDER BY fecha DESC, id DESC").bind(id).all(),
+    db.prepare(
+      `SELECT f.nombre, f.tipo, of.fecha, of.caducidad, of.notas
+       FROM operario_formaciones of JOIN formaciones f ON f.id = of.formacion_id
+       WHERE of.usuario_id = ? ORDER BY of.fecha DESC`,
+    ).bind(id).all(),
   ]);
   return c.json({
     exportado: new Date().toISOString(),
-    aviso: "Exportación de datos personales (RGPD) generada desde Inventarios.",
+    aviso: "Exportación de datos personales (RGPD) generada desde Insuma.",
     usuario, centros: centros.results, tallas: tallas.results, entregas: entregas.results,
+    formaciones: formaciones.results,
   });
 });
 export const tipos = createCrud(tiposSpec);

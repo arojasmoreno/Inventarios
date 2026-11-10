@@ -141,6 +141,8 @@ const ALTERS: Array<[string, string]> = [
   ["proveedores", "telefono TEXT"], ["proveedores", "notas TEXT"],
   ["proveedores", "activo INTEGER NOT NULL DEFAULT 1"],
   ["pedidos", "reclamacion TEXT"],
+  // Datos personales del operario que faltaban en su ficha.
+  ["usuarios", "telefono TEXT"], ["usuarios", "puesto TEXT"],
 ];
 
 async function dropColumnIfPresent(db: D1Database, table: string, column: string): Promise<void> {
