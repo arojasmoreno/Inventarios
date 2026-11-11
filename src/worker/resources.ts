@@ -101,9 +101,17 @@ export const materialSpec: CrudSpec = {
   table: "material_limpieza", orderBy: "id", refCentro: true,
   // El tipo de consumible del producto (clasificación para filtrarlo en
   // «Puntos de consumo»): se muestra junto a su nombre.
-  extraJoins: [" LEFT JOIN consumibles_tipos tcon ON tcon.id = t.tipo_consumible_id"],
-  extraSelect: ["tcon.nombre AS tipo_consumible_nombre"],
-  extraSearchCols: ["tcon.nombre"],
+  // Además del tipo de consumible, el material se enlaza con su proveedor a
+  // través del catálogo `productos_disponibles` por el CÓDIGO (el mismo criterio
+  // con el que los pedidos suman cantidades): así cada artículo muestra a quién
+  // se le compra, y «—» cuando todavía no está en el catálogo.
+  extraJoins: [
+    " LEFT JOIN consumibles_tipos tcon ON tcon.id = t.tipo_consumible_id",
+    " LEFT JOIN productos_disponibles pd ON pd.codigo IS NOT NULL AND t.codigo IS NOT NULL AND TRIM(UPPER(pd.codigo)) = TRIM(UPPER(t.codigo))",
+    " LEFT JOIN proveedores pv ON pv.id = pd.proveedor_id",
+  ],
+  extraSelect: ["tcon.nombre AS tipo_consumible_nombre", "pv.codigo AS proveedor_codigo", "pv.nombre AS proveedor_nombre"],
+  extraSearchCols: ["tcon.nombre", "pv.codigo", "pv.nombre"],
   read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: false, unique: true, maxLength: 40 },

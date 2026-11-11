@@ -12,6 +12,8 @@ const ORIGEN_OPTS = [
 const origenTexto = (v: unknown): string => { const s = String(v ?? ""); return s === "empresa" ? "Empresa" : s === "fabrica" ? "Fábrica" : "—"; };
 const precioTexto = (v: unknown): string => (v == null || v === "" ? "—" : formatNum(v, 2));
 const importe = (cantidad: unknown, precio: unknown): number => Number(cantidad ?? 0) * Number(precio ?? 0);
+// Valor especial del selector de proveedor para ver los productos sin proveedor.
+const SIN_PROVEEDOR = "sin";
 const proveedorTexto = (row: Row): string => [row.proveedor_codigo, row.proveedor_nombre].filter(Boolean).join(" · ") || "—";
 const etiquetaProveedor = (p: Row | undefined): string => [p?.codigo, p?.nombre].filter(Boolean).join(" · ") || "—";
 const contactoProveedor = (p: Row | undefined): string =>
@@ -124,6 +126,9 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
   const [saving, setSaving] = useState(false);
   const [aviso, setAviso] = useState<Aviso | null>(null);
   const [importando, setImportando] = useState(false);
+  // Proveedor de destino para los productos antiguos que aún no tienen uno.
+  const [asignarA, setAsignarA] = useState("");
+  const [filaDestino, setFilaDestino] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async (preferido?: string) => {
@@ -137,6 +142,8 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       setProveedores(prov.items);
       setProveedorId(prev => {
         const wanted = preferido ?? prev;
+        // «sin» es la vista de productos huérfanos: solo vale si quedan algunos.
+        if (wanted === SIN_PROVEEDOR) return prod.items.some(r => r.proveedor_id == null) ? SIN_PROVEEDOR : String(prov.items[0]?.id ?? "");
         return wanted && prov.items.some(p => String(p.id) === wanted) ? wanted : String(prov.items[0]?.id ?? "");
       });
       return prov.items;
@@ -148,7 +155,12 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
   useEffect(() => { void load(); }, [load]);
 
   const provActual = useMemo(() => proveedores.find(p => String(p.id) === proveedorId), [proveedores, proveedorId]);
-  const delProveedor = useMemo(() => items.filter(r => String(r.proveedor_id ?? "") === proveedorId), [items, proveedorId]);
+  // Productos del catálogo que se quedaron sin proveedor (altas anteriores a la
+  // gestión de proveedores): sin esta vista no aparecían en ningún listado.
+  const huerfanos = useMemo(() => items.filter(r => r.proveedor_id == null), [items]);
+  const delProveedor = useMemo(() => proveedorId === SIN_PROVEEDOR
+    ? items.filter(r => r.proveedor_id == null)
+    : items.filter(r => String(r.proveedor_id ?? "") === proveedorId), [items, proveedorId]);
   const filtrados = useMemo(() => {
     const n = q.trim().toLowerCase();
     return delProveedor
@@ -207,6 +219,44 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       const msg = e instanceof Error ? e.message : "No se pudo guardar el producto";
       setFormError(msg); setFieldErrors(camposConError(msg, etiquetas));
     } finally { setSaving(false); }
+  };
+
+  // Asigna un proveedor a los productos que no lo tenían. Se hace con la
+  // importación (upsert por código) para resolverlo en una sola petición.
+  const asignarHuerfanos = async () => {
+    const prov = proveedores.find(p => String(p.id) === asignarA);
+    if (!prov || !huerfanos.length) return;
+    setSaving(true);
+    try {
+      const filas = huerfanos.map(x => ({ proveedor_id: Number(prov.id), codigo: x.codigo, producto: x.producto, precio: x.precio ?? null }));
+      let n = 0;
+      const errores: string[] = [];
+      // La importación admite 500 filas por petición: se manda por lotes.
+      for (let i = 0; i < filas.length; i += 500) {
+        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>("/api/productos-disponibles/import", { rows: filas.slice(i, i + 500) });
+        n += Number(r.creados ?? 0) + Number(r.actualizados ?? 0);
+        for (const e of r.errores ?? []) if (errores.length < 8) errores.push(e);
+      }
+      setAviso({
+        message: `${formatNum(n)} producto${n === 1 ? "" : "s"} asignado${n === 1 ? "" : "s"} a ${etiquetaProveedor(prov)}${errores.length ? ` · ${errores[0]}` : ""}`,
+        kind: errores.length ? "error" : "ok",
+      });
+      await load(String(prov.id));
+    } catch (e) { setAviso({ message: e instanceof Error ? e.message : "No se pudieron asignar los productos", kind: "error" }); }
+    finally { setSaving(false); }
+  };
+
+  // Asigna proveedor a un único producto sin proveedor (se guarda con su código
+  // y producto actuales, así que no toca ningún otro dato).
+  const asignarUno = async (row: Row) => {
+    const destino = filaDestino[String(row.id)] ?? "";
+    const prov = proveedores.find(p => String(p.id) === destino);
+    if (!prov) { setAviso({ message: "Elige un proveedor para el producto", kind: "error" }); return; }
+    try {
+      await api.put(`/api/productos-disponibles/${String(row.id)}`, { proveedor_id: Number(prov.id), codigo: row.codigo, producto: row.producto, precio: row.precio ?? null });
+      setAviso({ message: `«${String(row.producto)}» asignado a ${etiquetaProveedor(prov)}`, kind: "ok" });
+      await load(String(prov.id));
+    } catch (e) { setAviso({ message: e instanceof Error ? e.message : "No se pudo asignar el proveedor", kind: "error" }); }
   };
 
   const eliminar = async (row: Row) => {
@@ -340,9 +390,9 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
   return <>
     <div className="toolbar no-print" style={{ gap: 8 }}>
       <select className="input" style={{ maxWidth: 300 }} value={proveedorId} onChange={e => setProveedorId(e.target.value)} aria-label="Proveedor del catálogo">
-        {proveedores.length
-          ? proveedores.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.codigo ?? "")} · {String(p.nombre ?? "")}</option>)
-          : <option value="">Sin proveedores</option>}
+        {proveedores.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.codigo ?? "")} · {String(p.nombre ?? "")}</option>)}
+        {huerfanos.length > 0 && <option value={SIN_PROVEEDOR}>{`⚠️ Sin proveedor (${formatNum(huerfanos.length)})`}</option>}
+        {!proveedores.length && !huerfanos.length && <option value="">Sin proveedores</option>}
       </select>
       <input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar por código o producto…" value={q} onChange={e => setQ(e.target.value)} />
       <div className="spacer" />
@@ -360,6 +410,20 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
         ? "Puedes crear el primero a mano o importar un Excel con proveedores y productos de una sola vez."
         : "Pide a un administrador que cree los proveedores y el catálogo."}</span>
       {admin && onGoProveedores && <button className="btn small secondary" onClick={onGoProveedores}>＋ Crear proveedor</button>}
+    </div>}
+
+    {proveedorId === SIN_PROVEEDOR && <div className="banner warn no-print" style={{ display: "block" }}>
+      <p style={{ margin: "0 0 8px" }}>
+        <strong>{formatNum(huerfanos.length)} productos del catálogo no tienen proveedor</strong>: son altas anteriores a la gestión de proveedores y por eso no aparecían en ningún listado. Asígnalos para que cuenten en los pedidos.
+      </p>
+      {admin && proveedores.length > 0 && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <select className="input" style={{ maxWidth: 300 }} value={asignarA} onChange={e => setAsignarA(e.target.value)} aria-label="Proveedor de destino">
+          <option value="">Asignar todos a…</option>
+          {proveedores.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.codigo ?? "")} · {String(p.nombre ?? "")}</option>)}
+        </select>
+        <button className="btn" disabled={!asignarA || saving} onClick={() => void asignarHuerfanos()}>Asignar todos ({formatNum(huerfanos.length)})</button>
+      </div>}
+      {!proveedores.length && <span>Primero crea un proveedor en la pestaña «Proveedores».</span>}
     </div>}
 
     {provActual && <div className="card card-pad provider-summary">
@@ -382,8 +446,9 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       {!filtrados.length
         ? <div className="empty">
           <span className="icon">📭</span>
-          <strong>{proveedores.length ? "No hay productos de este proveedor" : "Todavía no hay proveedores"}</strong>
+          <strong>{proveedorId === SIN_PROVEEDOR ? "Todos los productos tienen proveedor" : proveedores.length ? "No hay productos de este proveedor" : "Todavía no hay proveedores"}</strong>
           <p>{q ? "Prueba con otra búsqueda."
+            : proveedorId === SIN_PROVEEDOR ? "No queda ningún producto del catálogo sin proveedor asignado."
             : !proveedores.length ? (admin ? "Usa «Importar Excel» para cargar proveedores, productos y precios desde una hoja." : "Todavía no se ha dado de alta ningún proveedor.")
             : admin ? "Pulsa «Nuevo producto» o importa un Excel con el catálogo de este proveedor."
             : "Todavía no se han dado de alta productos para este proveedor."}</p>
@@ -399,12 +464,23 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
               ? <span className="badge ok">{formatNum(r.unidades_almacen)} uds</span>
               : <span className="badge muted" title="Todavía no hay stock de este código en Material de limpieza">Sin registro</span>}</td>
             {admin && <td className="right"><div className="row-actions">
+              {proveedorId === SIN_PROVEEDOR && <>
+                <select className="input" style={{ maxWidth: 190 }} value={filaDestino[String(r.id)] ?? ""} aria-label={`Proveedor para ${String(r.producto)}`}
+                  onChange={e => setFilaDestino(prev => ({ ...prev, [String(r.id)]: e.target.value }))}>
+                  <option value="">Asignar a…</option>
+                  {proveedores.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.codigo ?? "")} · {String(p.nombre ?? "")}</option>)}
+                </select>
+                <button className="btn small" disabled={!filaDestino[String(r.id)]} onClick={() => void asignarUno(r)}>✓ Asignar</button>
+              </>}
               <button className="btn secondary small" onClick={() => openEdit(r)}>✏️ Editar</button>
               <button className="btn danger small" onClick={() => void eliminar(r)}>🗑️ Borrar</button>
             </div></td>}
           </tr>)}</tbody>
         </table></div>}
     </div>
+    {proveedorId === SIN_PROVEEDOR && <p className="no-print" style={{ color: "var(--muted)", margin: 0 }}>
+      {filtrados.length} productos del catálogo sin proveedor · Al asignarlos pasan al listado del proveedor elegido y se pueden pedir con el resto de su catálogo.
+    </p>}
     {provActual && <p className="no-print" style={{ color: "var(--muted)", margin: 0 }}>
       {filtrados.length} de {delProveedor.length} productos de <strong>{etiquetaProveedor(provActual)}</strong> · El <strong>código</strong> es la relación con «Material de limpieza»: las cantidades de un pedido se suman en esa tabla por su código.
     </p>}

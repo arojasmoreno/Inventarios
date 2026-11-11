@@ -148,6 +148,12 @@ export const MATERIAL: ResourceConfig = {
     { key: "color", label: "Color", render: r => <><ColorSwatch color={String(r.color ?? "")} />{String(r.color ?? "—")}</> },
     { key: "tipo_consumible_nombre", label: "Tipo de consumible", render: r => String(r.tipo_consumible_nombre ?? "—"), csv: r => String(r.tipo_consumible_nombre ?? "") },
     { key: "cantidad", label: "Unidades", align: "right", render: r => stockCell(r, "cantidad") },
+    // Proveedor del artículo: sale del catálogo de productos por el código.
+    // Si la API todavía no devuelve el campo (Worker sin actualizar) se muestra
+    // «—» en vez de un «Sin proveedor» engañoso.
+    { key: "proveedor_nombre", label: "Proveedor", render: r => String(r.proveedor_nombre ?? "")
+      ? String(r.proveedor_nombre)
+      : "proveedor_nombre" in r ? <span className="badge muted" title="Este código no está en «Productos disponibles»">Sin proveedor</span> : "—", csv: r => String(r.proveedor_nombre ?? "") },
     precioCol, origenCol, centerCol,
     { key: "notas", label: "Notas", render: r => String(r.notas ?? "—") },
     fotoCol("/api/material-limpieza"),

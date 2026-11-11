@@ -233,6 +233,44 @@ test("el pedido rechaza productos de otro proveedor y aplica el stock", async ()
   expect(Number(material?.cantidad)).toBe(5);
 });
 
+test("el material de limpieza muestra el proveedor de su código en el catálogo", async () => {
+  const r = await get("/api/material-limpieza");
+  const items = r.body.items as Array<Record<string, unknown>>;
+  const conProveedor = items.find((i) => i.codigo === "P-1");
+  expect(conProveedor).toBeTruthy();
+  expect(String(conProveedor?.proveedor_codigo)).toBe("PROV-1");
+  expect(String(conProveedor?.proveedor_nombre)).toBe("Proveedor Uno");
+
+  // Sin código en el catálogo no hay proveedor: la tabla lo indica con vacío.
+  const suelto = await post("/api/material-limpieza", { codigo: "SIN-CAT", nombre: "Material suelto", color: "Azul", cantidad: 2, centro_id: 1 });
+  expect(suelto.status).toBe(201);
+  const tras = await get("/api/material-limpieza");
+  const fila = (tras.body.items as Array<Record<string, unknown>>).find((i) => i.codigo === "SIN-CAT");
+  expect(fila).toBeTruthy();
+  expect(fila?.proveedor_nombre ?? null).toBeNull();
+});
+
+test("un producto del catálogo sin proveedor aparece en el listado y se le puede asignar uno", async () => {
+  await d1.prepare("INSERT INTO productos_disponibles (codigo, producto) VALUES ('HUERFANO-1', 'Producto huérfano')").run();
+  const lista = await get("/api/productos-disponibles");
+  const items = lista.body.items as Array<Record<string, unknown>>;
+  const huerfano = items.find((p) => p.codigo === "HUERFANO-1");
+  expect(huerfano).toBeTruthy();
+  expect(huerfano?.proveedor_id ?? null).toBeNull();
+  expect(huerfano?.proveedor_nombre ?? null).toBeNull();
+
+  const asignado = await post("/api/productos-disponibles/import", {
+    rows: [{ proveedor_id: prov1, codigo: "HUERFANO-1", producto: "Producto huérfano", precio: null }],
+  });
+  expect(asignado.status).toBe(200);
+  expect(Number(asignado.body.actualizados)).toBe(1);
+
+  const tras = await get("/api/productos-disponibles?proveedor_id=" + String(prov1));
+  const fila = (tras.body.items as Array<Record<string, unknown>>).find((p) => p.codigo === "HUERFANO-1");
+  expect(Number(fila?.proveedor_id)).toBe(prov1);
+  expect(String(fila?.proveedor_nombre)).toBe("Proveedor Uno");
+});
+
 test("la importación asigna el proveedor seleccionado", async () => {
   const importado = await post("/api/productos-disponibles/import", {
     rows: [{ proveedor_id: prov1, codigo: "P-3", producto: "Producto Tres", precio: 1.25 }],
