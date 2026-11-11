@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { ColorSwatch, downloadCsv, formatFecha, formatNum } from "./ui";
+import { ColorSwatch, diasHasta, downloadCsv, formatFecha, formatNum } from "./ui";
+import { useFiltroPersistido, usePeriodoPersistido } from "./filtros";
 
 type Row = Record<string, unknown>;
 interface Informe {
   generado: string;
+  desde: string | null;
+  hasta: string | null;
+  periodo: { etiqueta: string; movimientos: number; consumo: number; por_dia: Row[] };
   centro: { id: number; nombre: string } | null;
   centros: { id: number; nombre: string }[];
   resumen: {
@@ -39,13 +43,20 @@ function stockAlerta(row: Row, key: string) {
 export function Informes({ user }: { user: { rol: string } }) {
   // Los usuarios consultan el informe, pero no pueden descargarlo (CSV ni PDF).
   const puedeDescargar = user.rol !== "usuario";
-  const [centroId, setCentroId] = useState("all"), [origenId, setOrigenId] = useState("all"), [data, setData] = useState<Informe | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null);
+  // Centro, origen y periodo se recuerdan entre visitas (localStorage).
+  const [centroId, setCentroId] = useFiltroPersistido("insuma.informes.centro", "all");
+  const [origenId, setOrigenId] = useFiltroPersistido("insuma.informes.origen", "all");
+  const periodo = usePeriodoPersistido("insuma.informes.periodo");
+  const [data, setData] = useState<Informe | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setData(await api.get<Informe>(`/api/informes?centro_id=${encodeURIComponent(centroId)}`)); }
+    const qs = new URLSearchParams({ centro_id: centroId });
+    if (periodo.desde) qs.set("desde", periodo.desde);
+    if (periodo.hasta) qs.set("hasta", periodo.hasta);
+    try { setData(await api.get<Informe>(`/api/informes?${qs.toString()}`)); }
     catch (e) { setError(e instanceof Error ? e.message : "Error generando el informe"); }
     finally { setLoading(false); }
-  }, [centroId]);
+  }, [centroId, periodo.desde, periodo.hasta]);
   useEffect(() => { void load(); }, [load]);
   if (loading) return <div className="loading">Generando informe…</div>;
   if (error || !data) return <div className="card empty"><span className="icon">⚠️</span>{error ?? "No hay datos"}</div>;
@@ -107,10 +118,25 @@ export function Informes({ user }: { user: { rol: string } }) {
     data.consumos_por_zona.map(z => [String(z.centro), String(z.zona), z.movimientos, z.unidades, String(z.ultimo ?? "")]));
   const csvEntregas = () => downloadCsv(`informe-entregas-${stamp}.csv`,
     ["Operario", "Login", "Entregas", "Unidades", "Última entrega"],
-    data.entregas_por_operario.map(e => [String(e.operario), String(e.username), e.entregas, e.unidades, e.ultima ? formatFecha(e.ultima) : ""]));
-  const csvRopa = () => downloadCsv(`informe-ropa-${stamp}.csv`,
+    data.entregas_por_operario.map(e => [String(e.operario), String(e.username), e.entregas, e.unidades, e.ultima ? formatFecha(e.ultima) : ""]));  const csvRopa = () => downloadCsv(`informe-ropa-${stamp}.csv`,
     ["Código", "Prenda", "Marca", "Modelo", "Talla", "Stock", "Centro"],
     data.ropas.map(p => [String(p.codigo ?? ""), String(p.prenda ?? ""), String(p.marca ?? ""), String(p.modelo ?? ""), String(p.talla ?? ""), formatNum(p.stock), String(p.centro_nombre ?? "—")]));
+  // Alertas por fecha de caducidad y resumen de los filtros aplicados.
+  const csvCaducidades = () => downloadCsv(`informe-caducidades-${stamp}.csv`,
+    ["Producto", "Código", "Lote", "Caducidad", "Días", "Estado", "Garrafas", "Centro"],
+    quimicos.map(q => [String(q.nombre ?? ""), String(q.codigo ?? ""), String(q.numero_lote ?? ""),
+      String(q.fecha_caducidad ?? ""), diasHasta(q.fecha_caducidad) ?? "", estadoCaducidad(q).label,
+      formatNum(q.num_garrafas), String(q.centro_nombre ?? "—")]));
+  const csvFiltros = () => downloadCsv(`informe-filtros-${stamp}.csv`,
+    ["Filtro", "Valor"], [
+      ["Centro", alcance],
+      ["Origen", origenId === "all" ? "Todo el origen" : origenId === "empresa" ? "Empresa" : "Fábrica"],
+      ["Periodo", periodo.activo ? periodo.etiqueta : "todo el histórico"],
+      ["Movimientos del periodo", formatNum(data.periodo.movimientos)],
+      ["Consumo del periodo (uds.)", formatNum(data.periodo.consumo)],
+      ["Caducidades (vencidas / ≤30 / ≤90)", `${formatNum(caducidad.vencidas)} / ${formatNum(caducidad.en30)} / ${formatNum(caducidad.en90)}`],
+      ["Stock bajo total", formatNum(stock_bajo.total)],
+    ]);
   // Valor del inventario: precio unitario (opcional) × cantidad de cada
   // artículo. Los productos sin precio no suman.
   const valorDe = (rows: Row[], cantidadKey: string): number => rows.reduce((acc, a) =>
@@ -134,13 +160,23 @@ export function Informes({ user }: { user: { rol: string } }) {
         <option value="fabrica">🏭 Fábrica</option>
         <option value="empresa">🏢 Empresa</option>
       </select>
+      <label htmlFor="desde-informe" style={{ fontWeight: 600 }}>Desde:</label>
+      <input id="desde-informe" className="input" type="date" style={{ maxWidth: 160 }} value={periodo.desde} onChange={e => periodo.setDesde(e.target.value)} />
+      <label htmlFor="hasta-informe" style={{ fontWeight: 600 }}>Hasta:</label>
+      <input id="hasta-informe" className="input" type="date" style={{ maxWidth: 160 }} value={periodo.hasta} onChange={e => periodo.setHasta(e.target.value)} />
       <div className="spacer" />
+      {puedeDescargar && <button className="btn secondary" onClick={csvFiltros} title="CSV con los filtros aplicados y sus totales">⬇️ Filtros (CSV)</button>}
       {puedeDescargar && <button className="btn secondary" onClick={() => window.print()}>🖨️ Imprimir / PDF</button>}
+      <button className="btn secondary" onClick={periodo.limpiar} disabled={!periodo.activo}>🗑️ Quitar periodo</button>
     </div>
     <div className="card card-pad" style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
       <div><h2 style={{ fontSize: 18 }}>Informe de material en planta</h2>
         <p style={{ margin: 0, color: "var(--muted)" }}>Alcance: <strong>{enAlcance}</strong> · Generado el {formatFecha(data.generado.slice(0, 10))} a las {data.generado.slice(11, 16)} h</p></div>
-    </div>
+      {periodo.activo && <div style={{ marginTop: 6 }} className="chips">
+        <span className="badge">📅 Periodo: {periodo.etiqueta}</span>
+        <span className="badge">{formatNum(data.periodo.movimientos)} movimientos · {formatNum(data.periodo.consumo)} uds.</span>
+        <button className="btn secondary small" onClick={periodo.limpiar}>Quitar</button>
+      </div>}</div>
     {caducidad.vencidas > 0 && <div className="banner danger">⚠️ {caducidad.vencidas} producto{caducidad.vencidas > 1 ? "s" : ""} químico{caducidad.vencidas > 1 ? "s" : ""} con la caducidad vencida. Retíralo{caducidad.vencidas > 1 ? "s" : ""} del almacén.</div>}
     {caducidad.en30 > 0 && <div className="banner warn">⏳ {caducidad.en30} lote{caducidad.en30 > 1 ? "s" : ""} caduca{caducidad.en30 > 1 ? "n" : ""} en menos de 30 días.</div>}
     {stock_bajo.total > 0 && <div className="banner warn">📉 {stock_bajo.total} referencia{stock_bajo.total > 1 ? "s" : ""} en el stock mínimo o por debajo: químicos {stock_bajo.quimicos} · material {stock_bajo.material} · EPIs {stock_bajo.epis} · ropa {stock_bajo.ropa}. Haz entrada desde «Entradas / Salidas».</div>}
@@ -151,6 +187,17 @@ export function Informes({ user }: { user: { rol: string } }) {
       <div className="kpi"><div className="label">EPIs · Ropa</div><div className="value">{formatNum(r.epis.unidades + r.ropa.unidades)} uds.</div><div style={{ color: "var(--muted)" }}>{formatNum(r.epis.registros)} EPIs · {formatNum(r.ropa.registros)} prendas</div></div>
       <div className="kpi"><div className="label">Valor del inventario</div><div className="value">{formatNum(valorInventario, 2)} €</div><div style={{ color: "var(--muted)" }}>{formatNum(conPrecio)} de {formatNum(totalArticulos)} artículos con precio</div></div>
       <div className={"kpi" + (stock_bajo.total > 0 || caducidad.vencidas > 0 ? " alert" : "")}><div className="label">Alertas</div><div className="value">{formatNum(stock_bajo.total + caducidad.vencidas)}</div><div style={{ color: "var(--muted)" }}>stock bajo + caducidades vencidas ({formatNum(caducidad.en90)} en ≤90 d)</div></div>
+    </div>
+    <div className="card card-pad">
+      <div className="section-head"><h3>⏳ Alertas de caducidad</h3>
+        {puedeDescargar && <button className="btn secondary small no-print" onClick={csvCaducidades} disabled={!quimicos.length}>⬇️ CSV</button>}</div>
+      <p style={{ color: "var(--muted)", marginTop: 0, fontSize: 12.5 }}>Lotes químicos de {enAlcance} según su fecha de caducidad, para revisar la ficha de seguridad y rotar antes de que venzan.</p>
+      <div className="chips" style={{ marginBottom: 0 }}>
+        <span className="badge danger">Vencidas: {formatNum(caducidad.vencidas)}</span>
+        <span className="badge warn">≤ 30 días: {formatNum(caducidad.en30)}</span>
+        <span className="badge info">≤ 90 días: {formatNum(caducidad.en90)}</span>
+        <span className="badge ok">En vigor: {formatNum(quimicos.length - caducidad.vencidas - caducidad.en30 - caducidad.en90)}</span>
+      </div>
     </div>
     <div className="card"><div className="card-pad section-head"><h3>📍 Consumos por zona y subzona</h3>{puedeDescargar && <button className="btn secondary small no-print" onClick={csvZonas} disabled={!data.consumos_por_zona.length}>⬇️ CSV</button>}</div>
       {data.consumos_por_zona.length ? <>

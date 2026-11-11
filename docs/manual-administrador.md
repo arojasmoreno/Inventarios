@@ -1,6 +1,6 @@
-# Manual del administrador · Inventarios
+# Manual del administrador · Insuma
 
-Guía completa de la aplicación **Inventarios** (químicos, material de limpieza y maquinaria) para el perfil **Administrador**: cómo entrar, qué hay en cada sección y cómo dar de alta y mantener los datos de la planta.
+Guía completa de la aplicación **Insuma** (químicos, material de limpieza y maquinaria) para el perfil **Administrador**: cómo entrar, qué hay en cada sección y cómo dar de alta y mantener los datos de la planta.
 
 > ¿Eres operario o usuario de consulta? El manual de tu perfil está en [manual-usuario.md](manual-usuario.md).
 
@@ -13,8 +13,8 @@ Guía completa de la aplicación **Inventarios** (químicos, material de limpiez
 
 ![Pantalla de acceso](img/acceso.png)
 
-- Tu usuario y contraseña te los facilita el administrador de la instalación. El recuadro inferior de «Primer acceso» es una ayuda de las instalaciones nuevas: en una planta ya en marcha, esas claves de prueba no existen, usa siempre tu cuenta real.
-- Si es la primera vez que entras, cambia la contraseña desde **Mi cuenta** (apartado 11).
+- Tu usuario y contraseña te los facilita el administrador de la instalación.
+- Si es la primera vez que entras, cambia la contraseña desde **Mi cuenta** (apartado 12).
 
 ### Errores frecuentes en el acceso
 
@@ -165,14 +165,18 @@ Pestañas: **Ropa de trabajo · EPIs · Entregas · Tipos de equipo · Tallas op
 Pestañas: **Centros · Zonas y subzonas · Usuarios · Empresa**.
 
 ### Centros
+
 Plantas o ubicaciones (nombre, ciudad, responsable, dirección). Todo lo demás de la app se agrupa por centro.
 
 ### Zonas y subzonas
+
 ![Zonas y subzonas](img/admin-zonas.png)
+
 - **＋ Nueva zona** dentro de cada centro y **＋ Añadir subzona** dentro de cada zona.
 - Cada zona muestra sus **puntos de consumo (estaciones)** con acceso directo al modo estación.
 
 ### Usuarios (solo administradores)
+
 ![Gestión de usuarios](img/admin-usuarios.png)
 
 **＋ Nuevo registro** para crear una cuenta:
@@ -190,6 +194,7 @@ Plantas o ubicaciones (nombre, ciudad, responsable, dirección). Todo lo demás 
 Para cambiar una contraseña de otro usuario: edita su ficha y escribe una nueva; para desactivarle, desmarca **Activo**.
 
 ### Empresa (solo administradores)
+
 Nombre y logotipo de la empresa, que aparecen en las hojas y documentos imprimibles.
 
 ![Datos de la empresa](img/admin-empresa.png)
@@ -214,6 +219,7 @@ Fichas de documentos (hojas de seguridad, procedimientos, manuales) con **URL**,
 Pestañas: **Dashboard · Informes · Auditoría · Copias de seguridad · Importar CSV**.
 
 ### Dashboard
+
 Vista única con toda la fotografía del planta: KPIs (químicos, material, maquinaria, EPIs, **valor del inventario**, consumo de 30 días y alertas), gráficos de dona y barras (origen, caducidad, consumo diario, caducidades por mes, inventario por planta, maquinaria, colores, consumos por zona y entregas) y las tablas de resumen por planta, caducidades próximas y stock bajo mínimo.
 
 - Filtros por **planta** y por **origen** (Fábrica / Empresa).
@@ -221,13 +227,17 @@ Vista única con toda la fotografía del planta: KPIs (químicos, material, maqu
 - **📧 Enviar por correo** (esquina superior derecha): el dashboard **solo se envía si lo pides**; no existe ningún envío automático.
 
 ### Informes
+
 Bloques con datos listos para exportar: consumos por zona y subzona, entregas por operario, productos químicos, material por color, maquinaria por tipo, EPIs y ropa de trabajo. Cada bloque lleva su botón **⬇️ CSV** y la página completa **🖨️ Imprimir / PDF**.
 
 ### Auditoría
+
 ![Auditoría de movimientos](img/admin-auditoria.png)
+
 Historial de todos los movimientos de stock (qué, cuánto, cuándo y quién), con búsqueda y exportación a CSV.
 
 ### Copias de seguridad (solo administradores)
+
 Descarga la información introducida **hoja por hoja**, filtrada por centro:
 
 1. Elige el **centro / planta** (o «Todos los centros»).
@@ -237,7 +247,9 @@ Descarga la información introducida **hoja por hoja**, filtrada por centro:
 > Las hojas marcadas **Global** (entradas y salidas) no se filtran por centro porque registran movimientos de toda la aplicación. La copia completa de la base de datos se hace desde el servidor con `sh ./scripts/backup-d1.sh` y queda en la carpeta local `backups/` (fuera de la nube y de git).
 
 ### Importar CSV (solo administradores)
+
 ![Importar CSV](img/admin-importar.png)
+
 1. Pulsa **⬇️ Descargar plantilla** y rellénala con tus datos.
 2. Sube el archivo y revisa la vista previa.
 3. Confirma la importación. Los errores se señalan fila a fila antes de guardar nada.
@@ -270,7 +282,7 @@ Escribe en **🔎 Buscar en todo…** (cabecera) al menos 2 letras. Los resultad
 | Crear/editar usuarios, tipos, tallas e importar CSV | ✅ | — | — |
 | Centros, documentación y entregas de equipación | ✅ | ✅ (sus centros) | solo lectura |
 | Entradas y salidas de stock | ✅ (registro) | solo lectura | solo lectura |
-| Inventario de químicos (entradas, salidas y recuento) | ✅ | solo lectura (puede consultar y imprimir la hoja) | solo lectura (puede consultar y imprimir la hoja) |
+| Inventario de químicos (entradas, salidas y recuento) | ✅ | solo lectura (puede consultar y imprimir la hoja) | solo lectura (puede consultar e imprimir la hoja) |
 | Consumir en modo estación (QR) | ✅ | ✅ | ✅ |
 | Descargar CSV / Imprimir PDF de listados e informes | ✅ | ✅ | ❌ |
 | Copias de seguridad (descargas por hoja) | ✅ | ❌ | ❌ |

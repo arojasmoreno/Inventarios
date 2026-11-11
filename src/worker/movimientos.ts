@@ -4,6 +4,7 @@ import type { Env } from "./d1";
 import type { Variables } from "./types";
 import { requireAuth, requireAdmin } from "./auth";
 import { logMovimiento } from "./audit";
+import { leerPeriodo } from "./periodo";
 
 // Auditoría: quién consumió o ajustó qué, cuándo y con qué cantidad.
 // (Sin costes: solo interesa la cantidad de producto consumida.)
@@ -30,6 +31,29 @@ const STOCK = STOCK_TABLA;
 // Entradas, salidas y ajustes de stock (solo administradores).
 export const movimientosRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ Bindings: Env; Variables: Variables }>()
   .use("*", requireAuth)
+  // Historial de movimientos de un artículo concreto (entradas, salidas,
+  // consumos y ajustes) con su fecha, usuario, motivo y estación.
+  .get("/historial", requireAdmin, async (c) => {
+    const tabla = (c.req.query("tabla") ?? "").trim();
+    const registroId = Number(c.req.query("registro_id"));
+    if (!Object.values(STOCK).some((t) => t.tabla === tabla)) return c.json({ error: "tabla no válida" }, 400);
+    if (!Number.isInteger(registroId) || registroId < 1) return c.json({ error: "registro_id no válido" }, 400);
+    const periodo = leerPeriodo(c.req.query("desde"), c.req.query("hasta"));
+    if ("error" in periodo) return c.json({ error: periodo.error }, 400);
+    const res = await c.env.DB.prepare(
+      `SELECT m.id, m.accion, m.cantidad, m.descripcion, m.motivo, m.created_at,
+              u.nombre AS usuario_nombre, u.username,
+              z.nombre AS zona_nombre, s.nombre AS subzona_nombre
+       FROM movimientos m
+       LEFT JOIN usuarios u ON u.id = m.usuario_id
+       LEFT JOIN estaciones e ON e.id = m.estacion_id
+       LEFT JOIN zonas z ON z.id = e.zona_id
+       LEFT JOIN subzonas s ON s.id = e.subzona_id
+       WHERE m.tabla = ? AND m.registro_id = ?${periodo.sql}
+       ORDER BY m.created_at DESC, m.id DESC LIMIT 100`,
+    ).bind(tabla, registroId, ...periodo.binds).all();
+    return c.json({ tabla, registro_id: registroId, desde: periodo.desde, hasta: periodo.hasta, movimientos: res.results });
+  })
   .post("/ajuste", requireAdmin, async (c) => {
     let body: { recurso?: unknown; id?: unknown; tipo?: unknown; cantidad?: unknown; motivo?: unknown };
     try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
@@ -57,6 +81,6 @@ export const movimientosRoutes: Hono<{ Bindings: Env; Variables: Variables }> = 
       }
     }
     const row = await c.env.DB.prepare(`SELECT ${target.columna} AS stock FROM ${target.tabla} WHERE id = ?`).bind(id).first();
-    await logMovimiento(c.env.DB, c.get("user"), tipo, target.tabla, id, `${String(item.nombre)} (${target.nombre})`, tipo === "ajuste" ? null : cantidad, motivo);
+    await logMovimiento(c.env.DB, c.get("user"), tipo, target.tabla, id, `${String(item.nombre)} (${target.nombre})`, tipo === "ajuste" ? null : cantidad, motivo, null);
     return c.json({ ok: true, stock: row?.stock ?? null, mensaje: `Movimiento registrado. Stock actual: ${Number(row?.stock ?? 0)}` });
   });

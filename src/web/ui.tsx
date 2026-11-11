@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { construirCsv } from "./csv";
 export type FieldType = "text" | "textarea" | "number" | "integer" | "date" | "boolean" | "enum" | "password" | "select" | "image";
 export interface SelectOption { value: string | number; label: string; }
 export interface FieldDef { name: string; label: string; type: FieldType; required?: boolean; enumValues?: string[]; options?: SelectOption[]; placeholder?: string; help?: string; writeOnly?: boolean; hasExisting?: boolean; previewUrl?: string; }
@@ -70,8 +71,7 @@ export function diasHasta(f: unknown): number | null { if (typeof f !== "string"
 const COLOR_HEX: Record<string,string> = { Rojo:"#dc2626", Azul:"#2563eb", Verde:"#16a34a", Amarillo:"#eab308", Blanco:"#f8fafc", Negro:"#111827", Naranja:"#ea580c", Morado:"#9333ea", Gris:"#6b7280", "Marrón":"#92400e", Otro:"#94a3b8" };
 export function ColorSwatch({ color }: { color: string }) { return <span className="swatch" style={{ background: COLOR_HEX[color] ?? "#94a3b8" }} aria-hidden="true" />; }
 export function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]): void {
-  const esc = (v: string | number): string => { const s = String(v ?? ""); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const csv = "\uFEFF" + [headers, ...rows].map((r) => r.map(esc).join(";")).join("\r\n");
+  const csv = construirCsv(headers, rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a");
   a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }

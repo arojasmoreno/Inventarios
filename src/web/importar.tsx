@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { Toast } from "./ui";
+import { downloadCsv, formatNum, Toast } from "./ui";
 
 type Row = Record<string, unknown>;
 
@@ -21,15 +21,29 @@ const RECURSOS = [
     columns: ["operario", "prenda", "talla", "notas"] },
 ] as const;
 
+// Campos sin los que la fila no se puede dar de alta; el resto son opcionales
+// y pueden quedarse sin asignar en el mapeo.
+const OBLIGATORIOS: Record<string, string[]> = {
+  quimicos: ["codigo", "nombre", "numero_lote"],
+  material_limpieza: ["codigo", "nombre", "color"],
+  maquinaria: ["nombre", "tipo", "zona"],
+  ropa_trabajo: ["codigo", "prenda"],
+  epis: ["codigo"],
+  tallas_operarios: ["operario", "prenda", "talla"],
+};
+
 interface Catalogos { centros: Row[]; usuarios: Row[]; zonas: Row[]; subzonas: Row[]; }
+
+const norm = (v: string): string =>
+  String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s_-]+/g, " ");
 
 function splitCsvLine(line: string): string[] {
   const out: string[] = []; let cur = ""; let inQ = false;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     if (inQ) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') inQ = false;
+      if (ch === "\"" && line[i + 1] === "\"") { cur += "\""; i++; }
+      else if (ch === "\"") inQ = false;
       else cur += ch;
     } else if (ch === "," || ch === ";" || ch === "\t") { out.push(cur); cur = ""; }
     else cur += ch;
@@ -50,10 +64,10 @@ function toBool(v: string | undefined): number {
 
 /** Resuelve un identificador por id, código o nombre (insensible a mayúsculas). */
 function resolver(valor: string, filas: Row[], claves: string[]): Row | undefined {
-  const v = valor.trim().toLowerCase();
-  return filas.find((f) => claves.some((k) => String(f[k] ?? "").trim().toLowerCase() === v));
+  const v = norm(valor);
+  return filas.find((f) => claves.some((k) => norm(String(f[k] ?? "")) === v));
 }
-function fallo(fila: number, msg: string): string { return `Fila ${fila}: ${msg}`; }
+const fallo = (fila: number, msg: string): string => `Fila ${fila}: ${msg}`;
 
 /** Traduce una fila del CSV al JSON que espera la API (resolviendo centros/operarios/prendas). */
 function parseRow(key: string, raw: Record<string, string>, fila: number, cat: Catalogos): Record<string, unknown> | string {
@@ -62,14 +76,12 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
   const centro = (): number | null => {
     const c = g("centro") ?? g("centro_id"); if (c === undefined) return null;
     const found = resolver(c, cat.centros, ["nombre", "id"]);
-    if (!found) return -1;
-    return Number(found.id);
+    return found ? Number(found.id) : -1;
   };
   const operario = (): number | null => {
     const o = g("operario") ?? g("operario_id"); if (o === undefined) return null;
     const found = resolver(o, cat.usuarios, ["username", "nombre", "id"]);
-    if (!found) return -1;
-    return Number(found.id);
+    return found ? Number(found.id) : -1;
   };
   switch (key) {
     case "quimicos": case "material_limpieza": {
@@ -80,12 +92,10 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       if (key === "quimicos") {
         if (!g("numero_lote")) return fallo(fila, "falta la columna 'numero_lote'");
         out.numero_lote = g("numero_lote");
-        // Ambas fechas son opcionales: la de fabricación es solo informativa.
         out.fecha_produccion = g("fecha_produccion") ?? null;
         out.fecha_caducidad = g("fecha_caducidad") ?? null;
         out.litros_por_garrafa = id("litros_por_garrafa") ?? 0;
         out.num_garrafas = id("num_garrafas") ?? 0;
-        // Estado del lote: Activo si la columna no viene en el CSV.
         out.estado = (g("estado") ?? "activo").trim().toLowerCase();
       } else {
         if (!g("color")) return fallo(fila, "falta la columna 'color'");
@@ -94,7 +104,6 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       }
       out.marca = g("marca") ?? null;
       out.stock_minimo = id("stock_minimo") ?? 0;
-      // Origen del consumible: fábrica o empresa (vacío → el valor por defecto).
       const org = (g("origen") ?? "").toLowerCase();
       out.origen = org.startsWith("emp") ? "empresa" : org.startsWith("fab") ? "fabrica" : null;
       out.centro_id = centro();
@@ -110,7 +119,6 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       out.numero_serie = g("numero_serie") ?? null;
       out.centro_id = centro(); out.notas = g("notas") ?? null;
       if (out.centro_id === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
-      // Ubicación: la zona es obligatoria y se resuelve por nombre en el centro.
       const zn = g("zona");
       if (!zn) return fallo(fila, "falta la columna 'zona'");
       const zonas = cat.zonas.filter((z) => out.centro_id == null || Number(z.centro_id) === Number(out.centro_id));
@@ -158,9 +166,11 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
   }
 }
 
-/** Importa un CSV con vista previa y upsert por código (endpoint batch del recurso). */
 export function ImportarPage() {
   const [recurso, setRecurso] = useState<string>(RECURSOS[0].key);
+  const [cabeceras, setCabeceras] = useState<string[]>([]);
+  const [lineas, setLineas] = useState<string[][]>([]);
+  const [mapa, setMapa] = useState<Record<string, string>>({});
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [erroresParse, setErroresParse] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -170,16 +180,7 @@ export function ImportarPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
 
-  // Catálogos para resolver centro / operario / prenda por nombre en el CSV.
-  const loadCat = useCallback(async () => {
-    try {
-      const centros = (await api.get<{ items: Row[] }>("/api/centros")).items;
-      setCat((prev) => (prev.centros.length ? prev : { ...prev, centros }));
-    } catch { /* se reintenta al parsear */ }
-  }, []);
-  useEffect(() => { void loadCat(); }, [loadCat]);
-  useEffect(() => { setRows([]); setErroresParse([]); setError(null); setDone(null); }, [recurso]);
-
+  // Catálogos para resolver centro / operario / zona por nombre en el CSV.
   const ensureCat = useCallback(async (): Promise<Catalogos> => {
     const needUsers = cfg.key === "tallas_operarios";
     const needZonas = cfg.key === "maquinaria";
@@ -194,44 +195,76 @@ export function ImportarPage() {
     return next;
   }, [cat, cfg.key]);
 
+  useEffect(() => {
+    setRows([]); setErroresParse([]); setError(null); setDone(null);
+    setCabeceras([]); setLineas([]); setMapa({});
+    if (inputRef.current) inputRef.current.value = "";
+  }, [recurso]);
+
+  const faltan = useMemo(() => (OBLIGATORIOS[cfg.key] ?? []).filter((f) => !mapa[f]), [cfg.key, mapa]);
+  const mapeados = useMemo(() => cfg.columns.filter((f) => mapa[f]).length, [cfg.columns, mapa]);
+
   const onFile = async (f: File | null) => {
     setDone(null); setError(null); setRows([]); setErroresParse([]);
+    setCabeceras([]); setLineas([]); setMapa({});
     if (!f) return;
     try {
-      const catalogos = await ensureCat();
-      const text = await f.text();
-      const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
-      if (lines.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
-      const headers = splitCsvLine(lines[0]);
-      const parsed: Record<string, unknown>[] = [];
-      const problems: string[] = [];
-      const total = Math.min(lines.length - 1, MAX_ROWS);
-      for (let i = 1; i <= total; i++) {
-        const cells = splitCsvLine(lines[i]);
-        const raw: Record<string, string> = {};
-        headers.forEach((h, idx) => { raw[h.toLowerCase()] = cells[idx] ?? ""; });
-        const out = parseRow(cfg.key, raw, i, catalogos);
-        if (typeof out === "string") { if (problems.length < 6) problems.push(out); }
-        else parsed.push(out);
+      const texto = await f.text();
+      const todas = texto.split(/\r?\n/).filter((l) => l.trim() !== "");
+      if (todas.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
+      const heads = splitCsvLine(todas[0]);
+      setCabeceras(heads);
+      setLineas(todas.slice(1).map(splitCsvLine));
+      // Mapeo automático: cada cabecera que coincida con un campo (sin
+      // acentos, guiones ni mayúsculas) se asigna sola; el resto lo elige el
+      // usuario en la tabla.
+      const auto: Record<string, string> = {};
+      for (const campo of cfg.columns) {
+        const idx = heads.findIndex((h) => norm(h) === norm(campo));
+        auto[campo] = idx >= 0 ? String(idx) : "";
       }
-      if (lines.length - 1 > MAX_ROWS) problems.push(`(solo se procesan los primeros ${MAX_ROWS} registros)`);
-      setRows(parsed); setErroresParse(problems);
-      if (!parsed.length) setError(problems[0] ?? "No se encontraron filas válidas.");
-    } catch { setError("No se pudieron leer los catálogos (centros/usuarios). Inténtalo de nuevo."); }
+      setMapa(auto);
+    } catch { setError("No se pudo leer el archivo."); }
   };
 
+  const previsualizar = async () => {
+    setError(null); setDone(null); setRows([]); setErroresParse([]);
+    if (!lineas.length) { setError("Elige primero un archivo CSV."); return; }
+    if (faltan.length) { setError(`Asigna una columna para: ${faltan.join(", ")}.`); return; }
+    try {
+      const catalogos = await ensureCat();
+      const parsed: Record<string, unknown>[] = [];
+      const problemas: string[] = [];
+      const total = Math.min(lineas.length, MAX_ROWS);
+      for (let i = 0; i < total; i++) {
+        const cells = lineas[i];
+        const raw: Record<string, string> = {};
+        for (const campo of cfg.columns) {
+          const idx = Number(mapa[campo]);
+          if (mapa[campo] !== "" && Number.isInteger(idx)) raw[campo] = cells[idx] ?? "";
+        }
+        const out = parseRow(cfg.key, raw, i + 2, catalogos);
+        if (typeof out === "string") problemas.push(out);
+        else parsed.push(out);
+      }
+      if (lineas.length > MAX_ROWS) problemas.push(`(solo se procesan los primeros ${MAX_ROWS} registros)`);
+      setRows(parsed);
+      setErroresParse(problemas);
+      if (!parsed.length) setError(problemas[0] ?? "No se encontraron filas válidas.");
+    } catch { setError("No se pudieron leer los catálogos (centros/usuarios/zonas). Inténtalo de nuevo."); }
+  };
+
+  // Plantilla con las cabeceras y una fila de ejemplo del recurso elegido.
   const plantilla = () => {
     const ejemplos: Record<string, string[]> = {
-      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2027-06-30", "3", "fabrica", "Planta Norte", ""],
+      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2026-01-01", "2027-06-30", "3", "fabrica", "Planta Norte", ""],
       material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "fabrica", "Planta Norte", ""],
       maquinaria: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "F80-0012", "Planta Norte", "Lavado", "Paletización", ""],
       ropa_trabajo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "Planta Norte"],
       epis: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "Planta Norte"],
       tallas_operarios: ["operario", "Chaqueta", "L", "Prefiere talla M"],
     };
-    const csv = [cfg.columns.join(","), (ejemplos[cfg.key] ?? []).join(",")].join("\n");
-    const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a"); a.href = url; a.download = `${cfg.key}-plantilla.csv`; a.click(); URL.revokeObjectURL(url);
+    downloadCsv(`${cfg.key}-plantilla.csv`, [...cfg.columns], [ejemplos[cfg.key] ?? []]);
   };
 
   const importar = async () => {
@@ -248,10 +281,12 @@ export function ImportarPage() {
     finally { setBusy(false); }
   };
 
-  return <div className="card card-pad" style={{ maxWidth: 780 }}>
+  return <div className="card card-pad" style={{ maxWidth: 900 }}>
     <div className="section-head"><h3>Importar CSV</h3></div>
     <p style={{ color: "var(--muted)", marginTop: 0 }}>
-      Cabeceras para <strong>{cfg.label}</strong>: <code style={{ fontSize: 12 }}>{cfg.columns.join(", ")}</code>. La columna <strong>codigo</strong> hace de clave: si ya existe el registro se actualiza; si no, se crea. Acepta separador coma, punto y coma o tabulador. Centro, operario y prenda se pueden escribir por nombre.
+      Sube el archivo y comprueba el <strong>mapeo de columnas</strong>: cada columna del CSV se asigna a un campo de{" "}
+      <strong>{cfg.label}</strong>. Solo los campos obligatorios son necesarios. La clave es <code>codigo</code>:
+      si el registro ya existe se actualiza y si no se crea. Acepta separador coma, punto y coma o tabulador.
     </p>
     <div className="form-grid" style={{ marginBottom: 12 }}>
       <div><div className="field"><label htmlFor="imp-rec">Recurso</label>
@@ -261,21 +296,53 @@ export function ImportarPage() {
       <div><div className="field"><label htmlFor="imp-file">Archivo CSV</label>
         <input id="imp-file" ref={inputRef} className="input" type="file" accept=".csv,text/csv" onChange={(e) => void onFile(e.target.files?.[0] ?? null)} /></div></div>
     </div>
+
+    {cabeceras.length > 0 && <div style={{ marginBottom: 12 }}>
+      <div className="section-head" style={{ marginBottom: 6 }}>
+        <h3 style={{ fontSize: 14 }}>Mapeo de columnas</h3>
+        <span className="badge muted">{formatNum(mapeados)} de {formatNum(cfg.columns.length)} campos asignados</span>
+      </div>
+      <div className="table-scroll"><table>
+        <thead><tr><th>Campo</th><th>Columna del CSV</th><th /></tr></thead>
+        <tbody>{cfg.columns.map((campo) => {
+          const obligatorio = (OBLIGATORIOS[cfg.key] ?? []).includes(campo);
+          const sinAsignar = obligatorio && !mapa[campo];
+          return <tr key={campo}>
+            <td><code>{campo}</code>{obligatorio && <span className="badge warn" style={{ marginLeft: 6 }}>obligatorio</span>}</td>
+            <td><select className={"input" + (sinAsignar ? " error" : "")} aria-label={`Columna para ${campo}`} value={mapa[campo] ?? ""}
+              onChange={(e) => setMapa((prev) => ({ ...prev, [campo]: e.target.value }))}>
+              <option value="">— Sin asignar —</option>
+              {cabeceras.map((h, i) => <option key={`${h}-${i}`} value={String(i)}>{h || `Columna ${i + 1}`}</option>)}
+            </select></td>
+            <td>{mapa[campo] ? <span className="badge ok">{cabeceras[Number(mapa[campo])]}</span> : <span className="badge muted">—</span>}</td>
+          </tr>;
+        })}</tbody></table></div>
+    </div>}
+
     {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
     {done && <div className="banner" style={{ marginBottom: 12, background: "#dcfce7", color: "#166534" }}>{done}</div>}
+
     {rows.length > 0 && <div className="banner" style={{ marginBottom: 12, background: "#dbeafe", color: "#1e40af" }}>
-      ✅ <strong>{rows.length}</strong> filas listas para importar en {cfg.label}.
+      ✅ <strong>{formatNum(rows.length)}</strong> filas válidas listas para importar en {cfg.label}.
+      {erroresParse.length > 0 && <> ⚠️ {formatNum(erroresParse.length)} fila{erroresParse.length === 1 ? "" : "s"} con problemas no se importará{erroresParse.length === 1 ? "" : "n"}.</>}
     </div>}
-    {erroresParse.length > 0 && <div className="form-error" style={{ marginBottom: 12 }}>{erroresParse.join(" · ")}</div>}
+    {erroresParse.length > 0 && <div className="form-error" style={{ marginBottom: 12 }}>
+      {erroresParse.slice(0, 8).join(" · ")}{erroresParse.length > 8 ? ` · …y ${erroresParse.length - 8} más` : ""}
+    </div>}
+
     <div className="modal-footer" style={{ justifyContent: "space-between" }}>
-      <button className="btn secondary" onClick={plantilla}>⬇️ Descargar plantilla</button>
-      <button className="btn" onClick={() => void importar()} disabled={busy || !rows.length}>{busy ? "Importando…" : `Importar ${rows.length || ""}`.trim()}</button>
+      <div className="chips" style={{ margin: 0 }}>
+        <button className="btn secondary" onClick={plantilla}>⬇️ Descargar plantilla</button>
+        <button className="btn secondary" onClick={() => void previsualizar()} disabled={!lineas.length || faltan.length > 0}>🔍 Previsualizar</button>
+      </div>
+      <button className="btn" onClick={() => void importar()} disabled={busy || !rows.length}>{busy ? "Importando…" : `Importar ${rows.length ? formatNum(rows.length) : ""}`.trim()}</button>
     </div>
+
     {rows.length > 0 && <div className="table-scroll" style={{ marginTop: 12 }}>
       <table><thead><tr><th>#</th><th>Vista previa</th></tr></thead>
-      <tbody>{rows.slice(0, 5).map((r, i) => <tr key={i}><td>{i + 1}</td><td style={{ fontSize: 12, fontFamily: "monospace" }}>{JSON.stringify(r).slice(0, 150)}</td></tr>)}</tbody></table>
+        <tbody>{rows.slice(0, 5).map((r, i) => <tr key={i}><td>{i + 1}</td><td style={{ fontSize: 12, fontFamily: "monospace" }}>{JSON.stringify(r).slice(0, 180)}</td></tr>)}</tbody></table>
     </div>}
-    {rows.length > 5 && <p style={{ color: "var(--muted)", fontSize: 12 }}>…y {rows.length - 5} filas más.</p>}
+    {rows.length > 5 && <p style={{ color: "var(--muted)", fontSize: 12 }}>…y {formatNum(rows.length - 5)} filas más.</p>}
     {done && <Toast message={done} kind="ok" onClose={() => setDone(null)} />}
   </div>;
 }

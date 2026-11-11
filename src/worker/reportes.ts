@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "./d1";
 import type { Variables } from "./types";
 import { requireAuth } from "./auth";
+import { etiquetaPeriodo, leerPeriodo } from "./periodo";
 
 type Row = Record<string, unknown>;
 export const reportesRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -11,6 +12,9 @@ reportesRoutes.get("/", async (c) => {
   const centroParam = c.req.query("centro_id");
   const centroId = centroParam && centroParam !== "all" ? Number(centroParam) : null;
   if (centroId !== null && (!Number.isInteger(centroId) || centroId < 1)) return c.json({ error: "centro_id no válido" }, 400);
+  // Filtro de periodo (opcional): acota los consumos y los totales del panel.
+  const periodo = leerPeriodo(c.req.query("desde"), c.req.query("hasta"));
+  if ("error" in periodo) return c.json({ error: periodo.error }, 400);
   const where = centroId ? " WHERE centro_id = ?" : "";
   const bind = <T extends Row>(sql: string) => (centroId ? db.prepare(sql).bind(centroId).all<T>() : db.prepare(sql).all<T>());
   const centrosRes = await db.prepare("SELECT id, nombre FROM centros ORDER BY nombre").all<Row>();
@@ -35,19 +39,21 @@ reportesRoutes.get("/", async (c) => {
   const porTipo = new Map<string, { tipo: string; unidades: number; registros: number }>();
   for (const r of maquinaria) { const tipo = String(r.tipo); const e = porTipo.get(tipo) ?? { tipo, unidades: 0, registros: 0 }; e.unidades += Number(r.cantidad ?? 0); e.registros++; porTipo.set(tipo, e); }
   const estado = (r: Row): string => String(r.estado_caducidad);
-  // Consumos de estaciones agrupados por ubicación (zona y subzona).
-  const whereMov = centroId ? " AND e.centro_id = ?" : "";
-  const bindMov = <T extends Row>(sql: string) => (centroId ? db.prepare(sql).bind(centroId).all<T>() : db.prepare(sql).all<T>());
+  // Consumos de estaciones agrupados por ubicación (zona y subzona), dentro del
+  // centro y del periodo elegidos.
+  const movWhere = `m.accion = 'consumo'${centroId ? " AND e.centro_id = ?" : ""}${periodo.sql}`;
+  const movBinds = [...(centroId ? [centroId] : []), ...periodo.binds];
+  const bindMov = <T extends Row>(sql: string) => db.prepare(sql).bind(...movBinds).all<T>();
   const porZonaRes = await bindMov<Row>(`SELECT COALESCE(c.nombre, '(sin centro)') AS centro, COALESCE(z.nombre, '(sin zona)') AS zona,
     COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS unidades, MAX(m.created_at) AS ultimo
     FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
     LEFT JOIN zonas z ON z.id = e.zona_id LEFT JOIN centros c ON c.id = e.centro_id
-    WHERE m.accion = 'consumo'${whereMov} GROUP BY centro, zona ORDER BY unidades DESC`);
+    WHERE ${movWhere} GROUP BY centro, zona ORDER BY unidades DESC`);
   const porSubzonaRes = await bindMov<Row>(`SELECT COALESCE(z.nombre, '(sin zona)') AS zona, COALESCE(s.nombre, '(sin subzona)') AS subzona,
     COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS unidades, MAX(m.created_at) AS ultimo
     FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
     LEFT JOIN zonas z ON z.id = e.zona_id LEFT JOIN subzonas s ON s.id = e.subzona_id
-    WHERE m.accion = 'consumo'${whereMov} GROUP BY zona, subzona ORDER BY unidades DESC`);
+    WHERE ${movWhere} GROUP BY zona, subzona ORDER BY unidades DESC`);
   // Entregas de equipación agrupadas por operario (bloque de Informes).
   const entregasRes = await bind<Row>(`SELECT u.id AS operario_id, u.nombre AS operario, u.username,
     COUNT(*) AS entregas, COALESCE(SUM(re.cantidad), 0) AS unidades, MAX(re.fecha) AS ultima
@@ -95,11 +101,15 @@ reportesRoutes.get("/", async (c) => {
   for (const r of origenMRes.results) porOrigen.set(String(r.origen), {
     ...(porOrigen.get(String(r.origen)) ?? {}), origen: r.origen, material_registros: r.registros, material_unidades: r.unidades,
   });
-  // Consumo diario de los últimos 30 días (gráfico de líneas/barras del dashboard).
+  // Consumo diario: los últimos 30 días sin filtro de periodo, o todo el rango
+  // elegido cuando se ha aplicado uno (gráfico del dashboard).
   const consumoDiaRes = await bindMov<Row>(`SELECT date(m.created_at) AS fecha, COALESCE(SUM(m.cantidad), 0) AS unidades, COUNT(*) AS movimientos
     FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
-    WHERE m.accion = 'consumo' AND m.created_at >= datetime('now', '-30 days')${whereMov}
+    WHERE ${movWhere}${periodo.sql ? "" : " AND m.created_at >= datetime('now', '-30 days')"}
     GROUP BY fecha ORDER BY fecha`);
+  // Totales del periodo aplicado, que el dashboard muestra junto al filtro.
+  const periodoRes = await bindMov<Row>(`SELECT COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS consumo
+    FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id WHERE ${movWhere}`);
   // Actividad de los últimos 30 días por tipo de movimiento (alcance global).
   const actividadRes = await db.prepare(`SELECT accion, COUNT(*) AS registros FROM movimientos
     WHERE created_at >= datetime('now', '-30 days') GROUP BY accion ORDER BY registros DESC`).all<Row>();
@@ -155,6 +165,14 @@ reportesRoutes.get("/", async (c) => {
     entregas_por_operario: entregasRes.results,
     por_centro: porCentroRes.results,
     por_origen: [...porOrigen.values()],
+    desde: periodo.desde,
+    hasta: periodo.hasta,
+    periodo: {
+      etiqueta: etiquetaPeriodo(periodo.desde, periodo.hasta),
+      movimientos: Number(periodoRes.results[0]?.movimientos ?? 0),
+      consumo: Number(periodoRes.results[0]?.consumo ?? 0),
+      por_dia: consumoDiaRes.results,
+    },
     consumo_por_dia: consumoDiaRes.results,
     actividad: actividadRes.results,
     globales: globalesRes ?? {},

@@ -1,6 +1,6 @@
-# Manual del usuario · Inventarios
+# Manual del usuario · Insuma
 
-Guía para el perfil **Usuario** (operario) de la aplicación **Inventarios**: cómo entrar, consultar el inventario, consumir material en planta con el QR y gestionar tu cuenta.
+Guía para el perfil **Usuario** (operario) de la aplicación **Insuma**: cómo entrar, consultar el inventario, consumir material en planta con el QR y gestionar tu cuenta.
 
 > Si eres administrador, consulta el [manual-administrador.md](manual-administrador.md).
 
@@ -29,7 +29,7 @@ Si intentas abrir una sección sin permisos verás un aviso 🔒 **Sección rest
 
 ![Pantalla de acceso](img/acceso.png)
 
-- Tus credenciales te las da el administrador de la planta. El recuadro «Primer acceso» es una ayuda de instalaciones nuevas; en tu planta usa siempre tu cuenta.
+- Tus credenciales te las da el administrador de la planta.
 - **¿Has olvidado tu contraseña?** → introduce tu correo, escribe el código que te llega por correo (caduca en 10 minutos) y elige una contraseña nueva de al menos 6 caracteres.
 - **🔑 Entrar con código por correo**: si tu cuenta tiene correo, puedes entrar sin contraseña recibiendo un código de 8 caracteres.
 
@@ -76,6 +76,7 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 Tus secciones de consulta comparten los mismos controles: **🔍 Buscar…** y filtro **por centro**. En tu perfil **no aparecen los botones de descarga** (⬇️ CSV ni 🖨️ Imprimir / PDF): los listados son de solo consulta. **Única excepción**: en el inventario de químicos puedes imprimir la **🖨️ Hoja de recuento**.
 
 ### Estaciones de consumo
+
 ![Estaciones de consumo](img/usuario-estaciones.png)
 
 Lista agrupada por centro › zona › subzona con el stock de cada estación, el botón **➖ −1 ud** en la primera columna y **▶ Consumir** para abrir el modo estación.
@@ -93,11 +94,13 @@ Consulta agrupada de todo el stock de químicos: una fila por producto con sus *
 - No hay botones de entrada, salida ni recuento, ni exportación a CSV: es una pantalla de consulta.
 
 ### Control de maquinaria
+
 ![Maquinaria](img/usuario-maquinaria.png)
 
 Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**. La tabla de máquinas **ya no muestra la columna de estado**: el estado de cada máquina es su último registro del histórico (Operativa, En reparación, Averiada…). El histórico se filtra por máquina, **centro**, estado y periodo, y cada registro indica **fecha, estado y notas**.
 
 ### Documentación
+
 ![Documentación](img/usuario-documentacion.png)
 
 Abre las fichas y documentos compartidos (hojas de seguridad, procedimientos…).
@@ -113,6 +116,7 @@ Abre las fichas y documentos compartidos (hojas de seguridad, procedimientos…)
 Es la acción principal de un operario: descontar unidades de un artículo al usarlo.
 
 **Opción A · Escanear el QR con el móvil**
+
 1. Apunta la cámara al **QR de la estación** (etiqueta pegada en el soporte).
 2. Se abre la pantalla grande del **modo estación**:
 
@@ -123,6 +127,7 @@ Es la acción principal de un operario: descontar unidades de un artículo al us
 5. **📷 Escanear otra estación** permite continuar con el siguiente punto sin salir.
 
 **Opción B · Desde la lista**
+
 1. Ve a **Estaciones de consumo** en el menú lateral:
 
 ![Estaciones de consumo](img/usuario-estaciones.png)
@@ -138,7 +143,7 @@ Es la acción principal de un operario: descontar unidades de un artículo al us
 ![Mi cuenta](img/usuario-cuenta.png)
 
 1. **Datos de acceso**: tu usuario, nombre, correo y rol (solo consulta).
-2. **Cambiar contraseña**: escribe tu **contraseña actual**, la **nueva** (mínimo 6 caracteres) y repítela. Al guardar, se cierran las demás sesiones abiertas con tu cuenta.
+2. **Cambiar contraseña**: escribe tu **contraseña actual**, la **nueva** (mínimo 6 caracteres) y repítela. Al guardar, se cierren las demás sesiones abiertas con tu cuenta.
 
 ---
 

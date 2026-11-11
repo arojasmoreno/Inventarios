@@ -82,8 +82,10 @@ app.route("/api/centros", centros as any);
 app.route("/api/usuarios", usuarios as any);
 app.route("/api/epis", epis as any);
 app.route("/api/ropa-trabajo", ropa as any);
-app.route("/api/movimientos", movimientos as any);
+// Primero las rutas específicas (historial del artículo, ajustes de stock) para
+// que GET /:id del CRUD no capture «/historial».
 app.route("/api/movimientos", movimientosRoutes as any);
+app.route("/api/movimientos", movimientos as any);
 // Control de lotes de químicos: entradas, salidas FEFO y recuentos de inventario.
 app.route("/api/inventario", inventarioRoutes);
 app.route("/api/zonas", zonas);

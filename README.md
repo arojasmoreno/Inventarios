@@ -1,4 +1,4 @@
-# Inventarios
+# Insuma
 
 Aplicación web para gestionar el inventario de una planta: **productos químicos**, **material de limpieza** (segregado por colores), **maquinaria de limpieza** (segregada por tipos), **usuarios** y **centros**.
 

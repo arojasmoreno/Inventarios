@@ -5,8 +5,9 @@ import { requireAuth } from "./auth";
 
 type Row = Record<string, unknown>;
 
-// Búsqueda global de la barra superior: artículos, ubicaciones, estaciones y
-// usuarios, devolviendo la ruta de la web a la que lleva cada resultado.
+// Búsqueda global de la barra superior: artículos, ubicaciones, estaciones,
+// documentación y usuarios, devolviendo la ruta de la web a la que lleva cada
+// resultado. El filtro por categoría se resuelve en el cliente.
 export const buscadorRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ Bindings: Env; Variables: Variables }>();
 buscadorRoutes.use("*", requireAuth);
 
@@ -20,7 +21,7 @@ buscadorRoutes.get("/", async (c) => {
   const db = c.env.DB;
   // Cada consulta repite el patrón tantas veces como comodines contiene.
   const buscar = (sql: string, params: number) => db.prepare(sql).bind(...Array(params).fill(like)).all<Row>();
-  const [quimicos, material, epis, ropa, maquinaria, centros, zonas, subzonas, soportes, estaciones, usuarios] = await Promise.all([
+  const [quimicos, material, epis, ropa, maquinaria, centros, zonas, subzonas, soportes, estaciones, documentos, usuarios] = await Promise.all([
     buscar("SELECT id, nombre, codigo AS extra, 'quimicos' AS hash, 'Químicos' AS categoria FROM quimicos WHERE nombre LIKE ? ESCAPE '\\' OR codigo LIKE ? ESCAPE '\\' OR numero_lote LIKE ? ESCAPE '\\' LIMIT 5", 3),
     buscar("SELECT id, nombre, codigo AS extra, 'material' AS hash, 'Material de limpieza' AS categoria FROM material_limpieza WHERE nombre LIKE ? ESCAPE '\\' OR codigo LIKE ? ESCAPE '\\' LIMIT 5", 2),
     buscar("SELECT id, COALESCE(NULLIF(descripcion, ''), codigo) AS nombre, codigo AS extra, 'epis' AS hash, 'EPIs' AS categoria FROM epis WHERE descripcion LIKE ? ESCAPE '\\' OR codigo LIKE ? ESCAPE '\\' OR modelo LIKE ? ESCAPE '\\' LIMIT 5", 3),
@@ -39,11 +40,14 @@ buscadorRoutes.get("/", async (c) => {
       LEFT JOIN soportes sp ON sp.id = e.soporte_id
       LEFT JOIN consumibles_tipos ct ON ct.id = e.tipo_consumible_id
       WHERE z.nombre LIKE ? ESCAPE '\\' OR s.nombre LIKE ? ESCAPE '\\' OR sp.nombre LIKE ? ESCAPE '\\' LIMIT 5`, 3),
+    buscar(`SELECT d.id, d.nombre, dt.nombre AS extra, 'documentos' AS hash, 'Documentación' AS categoria
+      FROM documentos d LEFT JOIN documento_tipos dt ON dt.id = d.tipo_id
+      WHERE d.nombre LIKE ? ESCAPE '\\' OR d.descripcion LIKE ? ESCAPE '\\' OR d.fabricante LIKE ? ESCAPE '\\' LIMIT 4`, 3),
     c.get("user")?.rol === "admin"
       ? buscar("SELECT id, nombre, username AS extra, 'usuarios' AS hash, 'Usuarios' AS categoria FROM usuarios WHERE nombre LIKE ? ESCAPE '\\' OR username LIKE ? ESCAPE '\\' LIMIT 4", 2)
       : Promise.resolve({ results: [] as Row[] }),
   ]);
-  const todos = [quimicos, material, epis, ropa, maquinaria, centros, zonas, subzonas, soportes, estaciones, usuarios]
+  const todos = [quimicos, material, epis, ropa, maquinaria, centros, zonas, subzonas, soportes, estaciones, documentos, usuarios]
     .flatMap((r) => r.results)
     .slice(0, 24)
     .map((r) => ({

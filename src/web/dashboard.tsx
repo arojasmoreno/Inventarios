@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { ColorSwatch, Toast, downloadCsv, formatFecha, formatNum } from "./ui";
+import { ColorSwatch, Toast, diasHasta, downloadCsv, formatFecha, formatNum } from "./ui";
+import { useFiltroPersistido, usePeriodoPersistido } from "./filtros";
 
 type Row = Record<string, unknown>;
 
@@ -26,6 +27,9 @@ interface DashboardData {
   entregas_por_operario: { operario_id: number; operario: string; username: string; entregas: number; unidades: number; ultima: string | null }[];
   por_centro: Row[];
   por_origen: Row[];
+  desde: string | null;
+  hasta: string | null;
+  periodo: { etiqueta: string; movimientos: number; consumo: number; por_dia: { fecha: string; unidades: number; movimientos: number }[] };
   consumo_por_dia: { fecha: string; unidades: number; movimientos: number }[];
   actividad: { accion: string; registros: number }[];
   globales: Row;
@@ -100,8 +104,10 @@ function HBarras({ items, alt = false, sufijo = "" }: { items: { label: string; 
 export function Dashboard({ user }: { user: { rol: string } }) {
   // Los usuarios ven el dashboard pero no pueden descargarlo (CSV ni PDF).
   const puedeDescargar = user.rol !== "usuario";
-  const [centroId, setCentroId] = useState("all");
-  const [origenId, setOrigenId] = useState("all");
+  // Planta y origen se recuerdan entre visitas; el periodo de fechas también.
+  const [centroId, setCentroId] = useFiltroPersistido("insuma.dashboard.centro", "all");
+  const [origenId, setOrigenId] = useFiltroPersistido("insuma.dashboard.origen", "all");
+  const periodo = usePeriodoPersistido("insuma.dashboard.periodo");
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,18 +133,24 @@ export function Dashboard({ user }: { user: { rol: string } }) {
     }
   };
 
+  // El periodo acota los consumos y los totales: se envía al servidor junto a
+  // la planta, así el dashboard se calcula íntegro dentro del rango elegido.
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setData(await api.get<DashboardData>(`/api/informes?centro_id=${encodeURIComponent(centroId)}`)); }
+    const qs = new URLSearchParams({ centro_id: centroId });
+    if (periodo.desde) qs.set("desde", periodo.desde);
+    if (periodo.hasta) qs.set("hasta", periodo.hasta);
+    try { setData(await api.get<DashboardData>(`/api/informes?${qs.toString()}`)); }
     catch (e) { setError(e instanceof Error ? e.message : "No se pudo cargar el dashboard"); }
     finally { setLoading(false); }
-  }, [centroId]);
+  }, [centroId, periodo.desde, periodo.hasta]);
   useEffect(() => { void load(); }, [load]);
 
   if (loading) return <div className="loading">Generando dashboard…</div>;
   if (error || !data) return <div className="card empty"><span className="icon">⚠️</span>{error ?? "No hay datos"}</div>;
 
-  // ---- Filtros: planta (server) y origen (cliente sobre los consumibles) ----
+  // ---- Filtros: planta (server), origen (cliente sobre los consumibles) y
+  // ---- periodo (range de fecha devuelto por el mismo endpoint /api/informes).
   const enOrigen = (row: Row) => origenId === "all" || origenDe(row) === origenId;
   const quimicos = data.quimicos.filter(enOrigen), material = data.material.filter(enOrigen);
   const alcance = data.centro ? data.centro.nombre : "todos los centros";
@@ -209,7 +221,9 @@ export function Dashboard({ user }: { user: { rol: string } }) {
     label: estado_, value: n, color: estado_ === "Operativo" ? "#16a34a" : estado_ === "Averiado" ? "#dc2626" : estado_ === "En reparación" ? "#d97706" : estado_ === "Baja" ? "#64748b" : COLORES_SERIE[i % COLORES_SERIE.length],
   }));
 
-  // Consumo diario (30 días) y caducidades de los próximos 12 meses.
+  // Consumo del periodo filtrado (cabecera, filtro y panel): los datos del
+  // endpoint ya devuelven el periodo completo y el cálculo de consumo diario
+  // apunta a ese mismo rango, así el dashboard respeta el filtro de fecha.
   const consumo30 = suma(data.consumo_por_dia as unknown as Row[], "unidades");
   const movimientos30 = suma(data.consumo_por_dia as unknown as Row[], "movimientos");
   const hoy = new Date();
@@ -250,6 +264,25 @@ export function Dashboard({ user }: { user: { rol: string } }) {
     ["Origen", "Químicos (prod.)", "Garrafas", "Litros", "Material (ref.)", "Material (uds.)"],
     porOrigen.map(r => [String(r.origen) === "empresa" ? "Empresa" : "Fabrica", formatNum(r.quimicos_registros),
       formatNum(r.quimicos_garrafas), formatNum(r.quimicos_litros, 2), formatNum(r.material_registros), formatNum(r.material_unidades)]));
+  // Panel de alertas por fechas: cada lote con su estado (vencido / 0-30 / 31-90
+  // días) para revisar la ficha de seguridad y planificar la rotación.
+  const estadoTexto = (q: Row): string => { const e = estado(q); return e === "vencida" ? "Vencida" : e === "30" ? "≤ 30 días" : e === "90" ? "≤ 90 días" : "En vigor"; };
+  const csvCaducidades = () => downloadCsv(`dashboard-caducidades-${stamp}.csv`,
+    ["Producto", "Código", "Lote", "Caducidad", "Días", "Estado", "Garrafas", "Centro", "Origen"],
+    quimicos.map(q => [String(q.nombre ?? ""), String(q.codigo ?? ""), String(q.numero_lote ?? ""),
+      String(q.fecha_caducidad ?? ""), diasHasta(q.fecha_caducidad) ?? "", estadoTexto(q),
+      formatNum(q.num_garrafas), String(q.centro_nombre ?? ""), etiquetaOrigen(origenDe(q))]));
+  // Exportación de los filtros aplicados, para adjuntar al informe.
+  const csvFiltros = () => downloadCsv(`dashboard-filtros-${stamp}.csv`,
+    ["Filtro", "Valor"], [
+      ["Planta", alcance],
+      ["Origen", origenId === "all" ? "Todo el origen" : etiquetaOrigen(origenId)],
+      ["Periodo", periodo.activo ? periodo.etiqueta : "todo el histórico"],
+      ["Consumo del periodo (uds.)", formatNum(consumo30)],
+      ["Movimientos del periodo", formatNum(movimientos30)],
+      ["Alertas de caducidad (vencidas / ≤30 / ≤90)", `${formatNum(caducidad.vencidas)} / ${formatNum(caducidad.en30)} / ${formatNum(caducidad.en90)}`],
+      ["Artículos bajo mínimo", formatNum(stockBajo.length)],
+    ]);
 
   return <>
     <div className="toolbar no-print">
@@ -264,8 +297,14 @@ export function Dashboard({ user }: { user: { rol: string } }) {
         <option value="fabrica">🏭 Fábrica</option>
         <option value="empresa">🏢 Empresa</option>
       </select>
+      <label htmlFor="dash-desde" style={{ fontWeight: 600 }}>Desde:</label>
+      <input id="dash-desde" className="input" type="date" style={{ maxWidth: 160 }} value={periodo.desde} onChange={e => periodo.setDesde(e.target.value)} />
+      <label htmlFor="dash-hasta" style={{ fontWeight: 600 }}>Hasta:</label>
+      <input id="dash-hasta" className="input" type="date" style={{ maxWidth: 160 }} value={periodo.hasta} onChange={e => periodo.setHasta(e.target.value)} />
       <div className="spacer" />
+      {puedeDescargar && <button className="btn secondary" onClick={csvFiltros} title="CSV con los filtros aplicados y sus totales">⬇️ Filtros (CSV)</button>}
       {puedeDescargar && <button className="btn secondary" onClick={() => window.print()}>🖨️ Imprimir / PDF</button>}
+      <button className="btn secondary" onClick={periodo.limpiar} disabled={!periodo.activo}>🗑️ Quitar periodo</button>
     </div>
 
     <div className="card card-pad">
@@ -273,7 +312,11 @@ export function Dashboard({ user }: { user: { rol: string } }) {
         <div><h2 style={{ fontSize: 19, marginBottom: 2 }}>📊 Dashboard de gestión</h2>
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
             Alcance: <strong>{alcanceTexto}</strong> · Generado el {formatFecha(data.generado.slice(0, 10))} a las {data.generado.slice(11, 16)} h
-          </p></div>
+          </p>
+          {periodo.activo && <div style={{ marginTop: 6 }} className="chips">
+            <span className="badge">📅 Periodo: {periodo.etiqueta}</span>
+            <span className="badge">{formatNum(movimientos30)} movimientos · {formatNum(consumo30)} uds.</span>
+          </div>}</div>
         {/* Esquina superior derecha del dashboard: el envío es solo bajo petición. */}
         {esAdmin && <button className="btn secondary no-print" onClick={() => void enviarPorCorreo()} disabled={enviando}
           title="Envía este dashboard y las alertas por correo a los administradores">
@@ -305,7 +348,7 @@ export function Dashboard({ user }: { user: { rol: string } }) {
         <div className="kpi-sub">{formatNum(data.resumen.maquinaria.registros)} máquinas · {formatNum(porSituacion.get("Operativo") ?? 0)} operativas</div></div>
       <div className="kpi"><div className="label">EPIs · Ropa</div><div className="value">{formatNum(data.resumen.epis.unidades + data.resumen.ropa.unidades)} uds.</div>
         <div className="kpi-sub">{formatNum(data.resumen.epis.registros)} EPIs · {formatNum(data.resumen.ropa.registros)} prendas</div></div>
-      <div className="kpi"><div className="label">Consumo 30 días</div><div className="value">{formatNum(consumo30)} uds.</div>
+      <div className="kpi"><div className="label">{periodo.activo ? "Consumo del periodo" : "Consumo 30 días"}</div><div className="value">{formatNum(consumo30)} uds.</div>
         <div className="kpi-sub">{formatNum(movimientos30)} movimientos de estaciones</div></div>
       <div className="kpi"><div className="label">Valor del inventario</div><div className="value">{formatNum(valorInventario, 2)} €</div>
         <div className="kpi-sub">{formatNum(conPrecio)} de {formatNum(totalArticulos)} artículos con precio</div></div>
@@ -333,8 +376,9 @@ export function Dashboard({ user }: { user: { rol: string } }) {
       </div>
 
       <div className="card card-pad">
-        <div className="section-head"><h3>🧪 Estado de caducidad de los químicos</h3></div>
-        <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>Distribución de {formatNum(quimicos.length)} productos por su fecha de caducidad.</p>
+        <div className="section-head"><h3>🧪 Estado de caducidad de los químicos</h3>
+          {puedeDescargar && <button className="btn secondary small no-print" onClick={csvCaducidades} disabled={!quimicos.length}>⬇️ CSV</button>}</div>
+        <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>Distribución de {formatNum(quimicos.length)} lotes por su fecha de caducidad.</p>
         <Donut partes={partesCaducidad} centro="lotes" />
         <div className="chips" style={{ margin: "10px 0 0" }}>
           <span className="badge danger">Vencidas: {formatNum(caducidad.vencidas)}</span>
@@ -347,8 +391,8 @@ export function Dashboard({ user }: { user: { rol: string } }) {
 
     <div className="dash-grid">
       <div className="card card-pad">
-        <div className="section-head"><h3>📈 Consumo por día (30 días)</h3>
-          <span style={{ color: "var(--muted)", fontSize: 12.5 }}>Total {formatNum(consumo30)} uds.</span></div>
+        <div className="section-head"><h3>📈 Consumo por día</h3>
+          <span style={{ color: "var(--muted)", fontSize: 12.5 }}>{data.periodo?.movimientos ? `Total ${formatNum(data.periodo.consumo)} uds. en ${formatNum(data.periodo.movimientos)} movimientos` : `Total ${formatNum(consumo30)} uds.`}</span></div>
         <Barras items={data.consumo_por_dia.map(d => ({
           label: String(d.fecha).slice(8, 10) + "/" + String(d.fecha).slice(5, 7),
           value: Number(d.unidades), title: `${formatFecha(d.fecha)}: ${formatNum(d.unidades)} uds. en ${formatNum(d.movimientos)} movimientos`,
@@ -357,7 +401,7 @@ export function Dashboard({ user }: { user: { rol: string } }) {
       </div>
 
       <div className="card card-pad">
-        <div className="section-head"><h3>📅 Caducidades por mes (próximos 12 meses)</h3>
+        <div className="section-head"><h3>📅 Caducidades por mes</h3>
           <span style={{ color: "var(--muted)", fontSize: 12.5 }}>{formatNum(porMes.reduce((a, m) => a + m.value, 0))} lotes</span></div>
         <Barras items={porMes} color="#d97706" unidad="lotes" />
         <p style={{ color: "var(--muted)", fontSize: 12, margin: "6px 0 0" }}>Planifica la rotación y los pedidos antes de cada mes marcado.</p>
@@ -367,7 +411,8 @@ export function Dashboard({ user }: { user: { rol: string } }) {
     <div className="dash-grid">
       <div className="card card-pad">
         <div className="section-head"><h3>🏙️ Inventario por planta</h3>
-          {puedeDescargar && <button className="btn secondary small no-print" onClick={csvPlantas} disabled={!centrosRows.length}>⬇️ CSV</button>}</div>
+          {puedeDescargar && <button className="btn secondary small no-print" onClick={csvPlantas} disabled={!centrosRows.length}>⬇️ CSV</button>}
+        </div>
         <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>Comparativa global entre plantas (sin aplicar el filtro de cabecera).</p>
         <div className="section-head" style={{ marginBottom: 4 }}><h3 style={{ fontSize: 13 }}>🧪 Litros de químicos</h3></div>
         <HBarras items={centrosRows.map(c => ({ label: String(c.nombre), value: Number(c.litros) }))} sufijo="L" />
@@ -463,7 +508,8 @@ export function Dashboard({ user }: { user: { rol: string } }) {
 
     <div className="dash-grid">
       <div className="card">
-        <div className="card-pad section-head"><h3>⏳ Caducidades próximas ({formatNum(proximas.length)})</h3></div>
+        <div className="card-pad section-head"><h3>⏳ Caducidades próximas ({formatNum(proximas.length)})</h3>
+          {puedeDescargar && <button className="btn secondary small no-print" onClick={csvCaducidades} disabled={!quimicos.length}>⬇️ CSV</button>}</div>
         {!proximas.length ? <div className="empty" style={{ padding: 20 }}>Ningún lote vencido ni por vencer en 90 días. ✅</div>
           : <div className="table-scroll"><table>
             <thead><tr><th>Producto</th><th>Lote</th><th>Caducidad</th><th>Estado</th><th>Origen</th></tr></thead>
