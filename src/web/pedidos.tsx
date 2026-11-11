@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { Modal, Toast, downloadCsv, formatFecha, formatNum } from "./ui";
+import { bajoMinimo, faltanteHastaMinimo, sugerenciasReposicion } from "./reposicion";
 
 type Row = Record<string, unknown>;
 type Estado = "borrador" | "enviado" | "recibido" | "aplicado";
@@ -208,7 +209,10 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
   const [proveedorId, setProveedorId] = useState(String(opciones.proveedores[0]?.id ?? ""));
   const [notas, setNotas] = useState("");
   const [q, setQ] = useState("");
+  // Origen de las líneas del pedido (fábrica o empresa gestora).
+  const [origen, setOrigen] = useState("empresa");
   const [cantidades, setCantidades] = useState<Record<string, string>>({});
+  const [sugeridos, setSugeridos] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -235,6 +239,25 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
 
   const totalUds = lineas.reduce((n, l) => n + Number(l.cantidad ?? 0), 0);
 
+  // Productos del proveedor que están en su mínimo o por debajo: son los que
+  // interesa reponer, y de ahí sale la cantidad propuesta (mínimo − almacén).
+  const aReponer = useMemo(() => bajoMinimo(productosProveedor), [productosProveedor]);
+
+  const sugerir = () => {
+    const propuesta = sugerenciasReposicion(productosProveedor);
+    setCantidades((prev) => {
+      const salida = { ...prev };
+      let nuevos = 0;
+      for (const [id, cantidad] of Object.entries(propuesta)) {
+        if (Number(salida[id] ?? 0) > 0) continue; // no pisa lo que ya escribió el usuario
+        salida[id] = cantidad;
+        nuevos += 1;
+      }
+      setSugeridos(nuevos);
+      return salida;
+    });
+  };
+
   const guardar = async () => {
     if (!centroId) { setError("Elige el centro"); return; }
     if (!proveedorId) { setError("Elige el proveedor"); return; }
@@ -247,7 +270,7 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
         notas: notas.trim() || null,
         lineas: lineas.map((l) => ({
           codigo: String(l.codigo ?? ""), producto: String(l.producto ?? ""),
-          cantidad: Number(l.cantidad ?? 0), precio: l.precio ?? null, origen: "empresa",
+          cantidad: Number(l.cantidad ?? 0), precio: l.precio ?? null, origen,
         })),
       });
       onCreado(`Pedido ${r.numero ?? ""} creado con ${lineas.length} líneas`);
@@ -278,26 +301,44 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
           {opciones.proveedores.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
         </select>
       </div>
+      <div className="field">
+        <label htmlFor="pe-origen">Origen de las líneas</label>
+        <select id="pe-origen" className="input" value={origen} onChange={(e) => setOrigen(e.target.value)}>
+          <option value="empresa">🏢 Empresa</option>
+          <option value="fabrica">🏭 Fábrica</option>
+        </select>
+        <small>Se aplica a todas las líneas del pedido; después puede ajustarse al recibirlo.</small>
+      </div>
       <div className="field full">
         <label htmlFor="pe-notas">Notas del pedido</label>
         <input id="pe-notas" className="input" value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej. Reponer antes del cambio de turno" maxLength={500} />
       </div>
     </div>
 
-    <div className="section-head" style={{ marginTop: 16 }}>
+    <div className="section-head" style={{ marginTop: 16, gap: 8, flexWrap: "wrap" }}>
       <h3>Productos a pedir</h3>
       <input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar producto…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <button type="button" className="btn secondary" onClick={sugerir} disabled={!aReponer.length}
+        title={aReponer.length ? "Rellena la cantidad que falta hasta el stock mínimo de cada producto" : "Ningún producto de este proveedor está por debajo de su mínimo"}>
+        ✨ Sugerir por mínimos ({formatNum(aReponer.length)})
+      </button>
     </div>
+    {sugeridos > 0 && <p className="muted" style={{ margin: "0 0 8px", fontSize: 12.5 }}>
+      Se han propuesto cantidades para {formatNum(sugeridos)} productos: lo que falta para llegar a su mínimo.
+    </p>}
     {!productosProveedor.length
       ? <div className="banner warn">Este proveedor no tiene productos: crea los suyos en «Productos disponibles» para poder pedirlos.</div>
       : <div className="table-scroll" style={{ maxHeight: 320, border: "1px solid var(--border)", borderRadius: 10 }}>
         <table className="tabla-frec">
-          <thead><tr><th>Código</th><th>Producto</th><th className="right">Precio (€)</th><th className="right">En almacén</th><th style={{ width: 110 }}>Cantidad</th></tr></thead>
-          <tbody>{filtrados.map((p) => <tr key={String(p.id)}>
+          <thead><tr><th>Código</th><th>Producto</th><th className="right">Precio (€)</th><th className="right">En almacén</th><th className="right">Mínimo</th><th style={{ width: 110 }}>Cantidad</th></tr></thead>
+          <tbody>{filtrados.map((p) => {
+            const falta = faltanteHastaMinimo(p.unidades_almacen, p.stock_minimo);
+            return <tr key={String(p.id)}>
             <td><strong>{String(p.codigo ?? "—")}</strong></td>
             <td style={{ whiteSpace: "normal" }}>{String(p.producto ?? "—")}</td>
             <td className="right">{p.precio == null || p.precio === "" ? "—" : formatNum(p.precio, 2)}</td>
-            <td className="right">{formatNum(p.unidades_almacen)}</td>
+            <td className="right">{formatNum(p.unidades_almacen)}{falta > 0 && <div><span className="badge danger" title={`Faltan ${falta} para el mínimo`}>⚠️ reponer</span></div>}</td>
+            <td className="right">{Number(p.stock_minimo ?? 0) > 0 ? formatNum(p.stock_minimo) : "—"}</td>
             <td>
               <input
                 className="input"
@@ -310,7 +351,8 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
                 onChange={(e) => setCantidades((prev) => ({ ...prev, [String(p.id)]: e.target.value }))}
               />
             </td>
-          </tr>)}</tbody>
+          </tr>;
+          })}</tbody>
         </table>
       </div>}
 

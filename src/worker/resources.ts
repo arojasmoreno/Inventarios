@@ -549,7 +549,13 @@ export const proveedoresSpec: CrudSpec = {
   table: "proveedores", orderBy: "nombre",
   extraSelect: [
     "(SELECT COUNT(*) FROM productos_disponibles pd WHERE pd.proveedor_id = t.id) AS productos",
+    // Pedidos vivos (sin aplicar al stock) y lo que queda por recibir de ellos:
+    // sirve para ver de un vistazo cuánto hay pendiente con cada proveedor.
     "(SELECT COUNT(*) FROM pedidos p WHERE p.proveedor_id = t.id AND p.estado <> 'aplicado') AS pedidos_pendientes",
+    `(SELECT COALESCE(SUM(pl.cantidad), 0) FROM pedido_lineas pl JOIN pedidos p ON p.id = pl.pedido_id
+      WHERE p.proveedor_id = t.id AND p.estado <> 'aplicado') AS unidades_pendientes`,
+    `(SELECT COALESCE(SUM(pl.cantidad * COALESCE(pl.precio, 0)), 0) FROM pedido_lineas pl JOIN pedidos p ON p.id = pl.pedido_id
+      WHERE p.proveedor_id = t.id AND p.estado <> 'aplicado') AS importe_pendiente`,
   ],
   read: "centros", create: "admin", update: "admin", delete: "admin",
   fields: [

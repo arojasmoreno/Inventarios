@@ -404,6 +404,10 @@ export const PROVEEDORES: ResourceConfig = {
     { key: "activo", label: "Estado", render: r => Number(r.activo ?? 1) === 1 ? <span className="badge ok">Activo</span> : <span className="badge muted">Inactivo</span>, csv: r => (Number(r.activo ?? 1) === 1 ? "Activo" : "Inactivo") },
     { key: "productos", label: "Productos", align: "right", render: r => <span className={`badge ${Number(r.productos) ? "info" : "muted"}`}>{formatNum(r.productos)}</span>, csv: r => formatNum(r.productos) },
     { key: "pedidos_pendientes", label: "Pedido pendiente", align: "right", render: r => Number(r.pedidos_pendientes) ? <span className="badge warn">{formatNum(r.pedidos_pendientes)}</span> : <span className="badge muted">0</span>, csv: r => formatNum(r.pedidos_pendientes) },
+    // Lo que queda por recibir de los pedidos sin aplicar: unidades e importe.
+    { key: "unidades_pendientes", label: "Por recibir", align: "right",
+      render: r => Number(r.unidades_pendientes) ? <>{formatNum(r.unidades_pendientes)} uds<div style={{ color: "var(--muted)", fontSize: 12 }}>{formatNum(r.importe_pendiente, 2)} €</div></> : <span className="badge muted">—</span>,
+      csv: r => `${formatNum(r.unidades_pendientes)} uds · ${formatNum(r.importe_pendiente, 2)} €` },
   ],
 };
 export const MOVIMIENTOS: ResourceConfig = {

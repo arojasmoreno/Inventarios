@@ -312,6 +312,46 @@ test("la importación masiva crea proveedores y asigna cada producto a su códig
   expect(Number(items[0].proveedor_id)).toBe(p1);
 });
 
+test("el alta del pedido conoce el stock mínimo de cada producto", async () => {
+  await d1.prepare("UPDATE material_limpieza SET stock_minimo = 8 WHERE codigo = 'P-1'").run();
+  const opciones = await get("/api/pedidos/opciones");
+  expect(opciones.status).toBe(200);
+  const producto = (opciones.body.productos as Array<Record<string, unknown>>).find((p) => p.codigo === "P-1");
+  expect(producto).toBeTruthy();
+  expect(Number(producto?.stock_minimo)).toBe(8);
+  expect(Number(producto?.unidades_almacen)).toBe(5);
+});
+
+test("los proveedores muestran lo que queda por recibir de sus pedidos", async () => {
+  const creado = await post("/api/pedidos", {
+    centro_id: 1, proveedor_id: prov1,
+    lineas: [{ codigo: "P-1", producto: "Producto Uno", cantidad: 3, precio: 2, origen: "fabrica" }],
+  });
+  expect(creado.status).toBe(201);
+
+  const lista = await get("/api/proveedores");
+  const prov = (lista.body.items as Array<Record<string, unknown>>).find((p) => Number(p.id) === prov1);
+  expect(prov).toBeTruthy();
+  expect(Number(prov?.pedidos_pendientes)).toBe(1);
+  expect(Number(prov?.unidades_pendientes)).toBe(3);
+  expect(Number(prov?.importe_pendiente)).toBe(6);
+
+  // Al aplicar el pedido deja de contar como pendiente.
+  const id = Number(creado.body.id);
+  expect((await post(`/api/pedidos/${String(id)}/enviar`, {})).status).toBe(200);
+  const detalle = await get(`/api/pedidos/${String(id)}`);
+  const linea = (detalle.body.lineas as Array<Record<string, unknown>>)[0];
+  expect((await post(`/api/pedidos/${String(id)}/recibir`, {
+    albaran: "ALB-PEND", lineas: [{ id: Number(linea.id), cantidad_recibida: 3 }],
+  })).status).toBe(200);
+  expect((await post(`/api/pedidos/${String(id)}/aplicar`, {})).status).toBe(200);
+
+  const tras = await get("/api/proveedores");
+  const provTras = (tras.body.items as Array<Record<string, unknown>>).find((p) => Number(p.id) === prov1);
+  expect(Number(provTras?.pedidos_pendientes)).toBe(0);
+  expect(Number(provTras?.unidades_pendientes)).toBe(0);
+});
+
 test("un proveedor con productos o pedidos no se puede borrar", async () => {
   const borrado = await del(`/api/proveedores/${String(prov1)}`);
   expect(borrado.status).toBe(400);

@@ -156,10 +156,14 @@ pedidosRoutes.get("/opciones", async (c) => {
   const proveedores = await db.prepare(
     "SELECT id, codigo, nombre, contacto, email, telefono FROM proveedores WHERE activo = 1 ORDER BY nombre COLLATE NOCASE",
   ).all<Row>();
+  // `stock_minimo` viaja con el producto para que el alta del pedido pueda
+  // proponer la cantidad que falta hasta el mínimo sin otra petición.
   const productos = await db.prepare(
     `SELECT p.id, p.proveedor_id, p.codigo, p.producto, p.precio, pr.codigo AS proveedor_codigo,
             (SELECT COALESCE(SUM(ml.cantidad), 0) FROM material_limpieza ml
-              WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS unidades_almacen
+              WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS unidades_almacen,
+            (SELECT COALESCE(MAX(ml.stock_minimo), 0) FROM material_limpieza ml
+              WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS stock_minimo
      FROM productos_disponibles p LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
      ORDER BY p.producto COLLATE NOCASE`,
   ).all<Row>();
