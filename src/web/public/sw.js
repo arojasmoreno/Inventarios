@@ -2,7 +2,7 @@
 // en planta. La API nunca se cachea: los consumos siempre van a la red.
 // Cambiar el nombre de la caché en cada release purga las versiones antiguas
 // que se quedaron instaladas en los navegadores de la planta.
-const CACHE = "insuma-v2";
+const CACHE = "insuma-v3";
 
 self.addEventListener("install", () => { self.skipWaiting(); });
 self.addEventListener("activate", (e) => {
