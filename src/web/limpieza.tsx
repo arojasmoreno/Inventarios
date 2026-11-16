@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Modal, Toast, formatFecha, formatNum } from "./ui";
-import { PlanHigieneModal } from "./limpieza-plan";
+import { PlanHigieneModal, type PlanTarea, type RespPlan } from "./limpieza-plan";
+
+
 import { TablasMes } from "./limpieza-tablas";
 
 type Turno = "dia" | "tarde" | "noche";
 type Modo = "planificar" | "marcar";
-type Vista = "calendario" | "tablas";
+type Vista = "calendario" | "tablas" | "plan";
 
 interface Usuario { id: number; nombre: string; rol: string; }
 interface Centro { id: number; nombre: string; }
@@ -82,6 +84,12 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const [mes, setMes] = useState(hoy.mes);
   const [turno, setTurno] = useState<Turno>("dia");
   const [vista, setVista] = useState<Vista>("calendario");
+  const [planFiltro, setPlanFiltro] = useState<{ zona: string; subzona: string; frecuencia: string }>({ zona: "", subzona: "", frecuencia: "" });
+  const [planTareas, setPlanTareas] = useState<PlanTarea[]>([]);
+  const [planTotal, setPlanTotal] = useState(0);
+  const [planCargando, setPlanCargando] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planVersion, setPlanVersion] = useState(0);
   const [cal, setCal] = useState<Calendario | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +172,22 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
       progreso: transcurridas ? Math.min(100, Math.round((completadas / transcurridas) * 100)) : 0,
     };
   }, [cal, anio, mes, hoy.iso]);
+
+  useEffect(() => {
+    if (vista !== "plan" || !centroId) return;
+    let vivo = true;
+    setPlanCargando(true);
+    setPlanError(null);
+    const params = new URLSearchParams({ centro_id: String(centroId) });
+    if (planFiltro.zona.trim()) params.set("zona", planFiltro.zona.trim());
+    if (planFiltro.subzona.trim()) params.set("subzona", planFiltro.subzona.trim());
+    if (planFiltro.frecuencia.trim()) params.set("frecuencia", planFiltro.frecuencia.trim());
+    api.get<RespPlan>(`/api/limpieza/plan?${params.toString()}`)
+      .then((r) => { if (vivo) { setPlanTareas(r.tareas); setPlanTotal(r.total); } })
+      .catch((e) => { if (vivo) setPlanError(e instanceof Error ? e.message : "No se pudo cargar el plan"); })
+      .finally(() => { if (vivo) setPlanCargando(false); });
+    return () => { vivo = false; };
+  }, [centroId, vista, planFiltro, planVersion]);
 
   const cambiarMes = (delta: number) => {
     const d = new Date(anio, mes - 1 + delta, 1);
@@ -279,6 +303,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
         <div className="cal-tabs" role="tablist" aria-label="Vista de limpieza">
           <button type="button" role="tab" aria-selected={vista === "calendario"} className={vista === "calendario" ? "active" : ""} onClick={() => setVista("calendario")}>📅 Calendario</button>
           <button type="button" role="tab" aria-selected={vista === "tablas"} className={vista === "tablas" ? "active" : ""} onClick={() => setVista("tablas")}>🗂️ Tablas del mes</button>
+          <button type="button" role="tab" aria-selected={vista === "plan"} className={vista === "plan" ? "active" : ""} onClick={() => setVista("plan")}>📋 Plan de higiene</button>
         </div>
 
         {vista === "calendario" && <div className="cal-turns" role="group" aria-label="Turno del calendario">
@@ -457,6 +482,84 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
       onAviso={(mensaje, kind) => setToast({ message: mensaje, kind: kind ?? "ok" })}
       onAbrirPlan={() => setPlanModal(true)}
     />}
+
+    {vista === "plan" && centroActual && (
+      <div className="card">
+        <div className="cal-toolbar">
+          <div className="cal-toolbar-title">
+            <h3>Plan de higiene de {centroActual.nombre}</h3>
+            <p>Tareas cargadas desde Excel. Busca por zona, subzona o frecuencia de cálculo.</p>
+          </div>
+          {planCargando && <div className="cal-loading-bar" role="progressbar" aria-label="Cargando plan"><span /></div>}
+        </div>
+
+        <div className="plan-buscar">
+          <input
+            className="input plan-buscar-input"
+            type="text"
+            placeholder="Filtrar por zona…"
+            value={planFiltro.zona}
+            onChange={(e) => { setPlanFiltro((p) => ({ ...p, zona: e.target.value })); setPlanVersion((v) => v + 1); }}
+            aria-label="Filtrar por zona"
+          />
+          <input
+            className="input plan-buscar-input"
+            type="text"
+            placeholder="Filtrar por subzona…"
+            value={planFiltro.subzona}
+            onChange={(e) => { setPlanFiltro((p) => ({ ...p, subzona: e.target.value })); setPlanVersion((v) => v + 1); }}
+            aria-label="Filtrar por subzona"
+          />
+          <input
+            className="input plan-buscar-input"
+            type="text"
+            placeholder="Filtrar por frecuencia…"
+            value={planFiltro.frecuencia}
+            onChange={(e) => { setPlanFiltro((p) => ({ ...p, frecuencia: e.target.value })); setPlanVersion((v) => v + 1); }}
+            aria-label="Filtrar por frecuencia"
+          />
+          <button
+            type="button"
+            className="btn secondary small"
+            onClick={() => { setPlanFiltro({ zona: "", subzona: "", frecuencia: "" }); setPlanVersion((v) => v + 1); }}
+            disabled={!planFiltro.zona && !planFiltro.subzona && !planFiltro.frecuencia}
+          >
+            Limpiar filtros
+          </button>
+        </div>
+
+        {planError ? <div className="empty">⚠️ {planError}</div>
+          : planCargando ? <div className="loading">Cargando el plan…</div>
+          : planTotal === 0 ? <div className="empty">
+              <span className="icon">📋</span>
+              <strong>No hay tareas en el plan de higiene</strong>
+              <p>Importa el plan desde Excel o genera el calendario desde el modal de plan.</p>
+              {planVersion === 0 && <button type="button" className="btn secondary" onClick={() => setPlanModal(true)}>📊 Cargar plan</button>}
+            </div>
+          : <div className="plan-table-wrap">
+              <table className="plan-table">
+                <thead><tr>
+                  <th>Zona</th>
+                  <th>Subzona</th>
+                  <th>Tipo de limpieza</th>
+                  <th>Frecuencia de cálculo</th>
+                </tr></thead>
+                <tbody>
+                  {planTareas.map((t) => <tr key={t.id}>
+                    <td>{t.zona}</td>
+                    <td>{t.subzona ?? "—"}</td>
+                    <td>{t.tipo_limpieza ?? "—"}</td>
+                    <td>{t.frecuencia_calculo}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>}
+
+        {planTotal > 0 && (
+          <p className="cal-foot-note">{planTotal} tarea{planTotal === 1 ? "" : "s"} del plan de higiene de {centroActual.nombre}.</p>
+        )}
+      </div>
+    )}
 
     {faenaModal && centroActual && <FaenaModal
       centro={centroActual}

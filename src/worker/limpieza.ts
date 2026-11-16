@@ -548,19 +548,30 @@ async function recalcularProxima(db: D1Database, planId: number, fechaRetirada: 
 }
 
 // Tareas del plan de un centro (lo que se ha cargado desde Excel).
+// Admite filtros adicionales para la vista de listado del plan de higiene:
+//   zona, subzona y frecuencia (búsqueda por texto libre, COLLATE NOCASE).
 limpiezaRoutes.get("/plan", async (c) => {
   const user = c.get("user");
   const db = c.env.DB;
   const centroId = entero(c.req.query("centro_id"));
   if (!centroId) return c.json({ error: "Indica el centro" }, 400);
   if (!(await puedeVerCentro(db, user, centroId))) return c.json({ error: "No tienes acceso a este centro" }, 403);
+  const filtroZona = texto(c.req.query("zona"), 120);
+  const filtroSubzona = texto(c.req.query("subzona"), 120);
+  const filtroFrecuencia = texto(c.req.query("frecuencia"), 200);
+  const whereExtra: string[] = [];
+  const params: Array<string | number> = [centroId];
+  if (filtroZona) { whereExtra.push("zona LIKE ?"); params.push(`%${filtroZona}%`); }
+  if (filtroSubzona) { whereExtra.push("subzona LIKE ?"); params.push(`%${filtroSubzona ?? ""}%`); }
+  if (filtroFrecuencia) { whereExtra.push("frecuencia_calculo LIKE ?"); params.push(`%${filtroFrecuencia}%`); }
+  const where = whereExtra.length ? "WHERE " + whereExtra.join(" AND ") : "";
   const res = await db.prepare(
     `SELECT id, tipo_limpieza, zona, subzona, tipo_zona, elemento, frecuencia_calculo,
             frecuencia_informativa, tiempo, factor, horas_semana, turno, auditable,
             fecha_inicio, ultima_realizacion, proxima_fecha
-     FROM limpieza_plan WHERE centro_id = ?
+     FROM limpieza_plan WHERE centro_id = ? ${where}
      ORDER BY turno, zona COLLATE NOCASE, subzona COLLATE NOCASE, elemento COLLATE NOCASE`,
-  ).bind(centroId).all<PlanDb>();
+  ).bind(...params).all<PlanDb>();
   return c.json({
     centro_id: centroId,
     tareas: res.results,

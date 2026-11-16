@@ -373,6 +373,9 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .plan-table-wrap{max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:10px}
 .plan-table{font-size:12.5px}
 .plan-table th,.plan-table td{padding:7px 10px}
+
+.plan-buscar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.plan-buscar-input{flex:1 1 180px;min-width:140px}
 .cal-zona-text{min-width:0;flex:1}
 .cal-elemento{display:block;color:var(--muted);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 

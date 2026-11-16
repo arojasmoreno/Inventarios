@@ -4,7 +4,7 @@ import { descargarPlantilla, leerPlanExcel, type PlanLeido } from "./plan-excel"
 import { Modal, formatFecha, formatNum } from "./ui";
 
 interface Centro { id: number; nombre: string; }
-interface PlanTarea {
+export interface PlanTarea {
   id: number;
   tipo_limpieza: string | null;
   zona: string;
@@ -19,7 +19,7 @@ interface PlanTarea {
   ultima_realizacion: string | null;
   proxima_fecha: string | null;
 }
-interface RespPlan { tareas: PlanTarea[]; total: number; puede_gestionar: boolean; }
+export interface RespPlan { tareas: PlanTarea[]; total: number; puede_gestionar: boolean; }
 interface RespImportar { insertadas: number; actualizadas: number; eliminadas: number; errores: Array<{ fila: number; mensaje: string }>; }
 
 const ETIQUETA_TURNO: Record<string, string> = { dia: "Día", tarde: "Tarde", noche: "Noche" };
