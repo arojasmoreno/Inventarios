@@ -1,38 +1,142 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api";
+import { api, reportarError } from "./api";
 import { downloadCsv, formatNum, Toast } from "./ui";
 
 type Row = Record<string, unknown>;
 
 const MAX_ROWS = 500;
 
-const RECURSOS = [
-  { key: "quimicos", endpoint: "/api/quimicos", label: "Productos químicos",
-    columns: ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_produccion", "fecha_caducidad", "stock_minimo", "origen", "centro", "notas"] },
-  { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza",
-    columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "origen", "centro", "notas"] },
-  { key: "maquinaria", endpoint: "/api/maquinaria", label: "Maquinaria",
-    columns: ["nombre", "tipo", "marca", "modelo", "numero_serie", "centro", "zona", "subzona", "notas"] },
-  { key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo",
-    columns: ["codigo", "prenda", "marca", "fabricante", "modelo", "talla", "alta_visibilidad", "manga_larga", "descripcion", "color", "stock", "stock_minimo", "centro"] },
-  { key: "epis", endpoint: "/api/epis", label: "EPIs",
-    columns: ["codigo", "marca", "modelo", "talla", "descripcion", "color", "stock", "stock_minimo", "fecha_revision", "centro"] },
-  { key: "tallas_operarios", endpoint: "/api/tallas", label: "Tallas de operarios",
-    columns: ["operario", "prenda", "talla", "notas"] },
-] as const;
+type Catalogo = "centros" | "proveedores" | "zonas" | "subzonas" | "usuarios" | "documento_tipos";
 
-// Campos sin los que la fila no se puede dar de alta; el resto son opcionales
-// y pueden quedarse sin asignar en el mapeo.
-const OBLIGATORIOS: Record<string, string[]> = {
-  quimicos: ["codigo", "nombre", "numero_lote"],
-  material_limpieza: ["codigo", "nombre", "color"],
-  maquinaria: ["nombre", "tipo", "zona"],
-  ropa_trabajo: ["codigo", "prenda"],
-  epis: ["codigo"],
-  tallas_operarios: ["operario", "prenda", "talla"],
-};
+interface Recurso {
+  key: string;
+  endpoint: string;
+  label: string;
+  grupo: string;
+  columns: string[];
+  obligatorios: string[];
+  ejemplo: string[];
+  needs?: Catalogo[];
+}
 
-interface Catalogos { centros: Row[]; usuarios: Row[]; zonas: Row[]; subzonas: Row[]; }
+// Todas las tablas que se pueden rellenar por CSV desde Gestión de informes →
+// Importar CSV, con su plantilla y su fila de ejemplo.
+const RECURSOS: Recurso[] = [
+  {
+    key: "centros", endpoint: "/api/centros", label: "Centros", grupo: "Centros y zonas",
+    columns: ["nombre", "direccion", "ciudad", "responsable", "telefono"],
+    obligatorios: ["nombre"], ejemplo: ["Planta Este", "Calle Mayor 1", "Valencia", "Marta Ruiz", "960 000 333"],
+  },
+  {
+    key: "zonas", endpoint: "/api/zonas", label: "Zonas", grupo: "Centros y zonas",
+    columns: ["centro", "nombre", "notas"], obligatorios: ["centro", "nombre"],
+    ejemplo: ["Planta Norte", "Lavado", ""], needs: ["centros"],
+  },
+  {
+    key: "subzonas", endpoint: "/api/subzonas", label: "Subzonas", grupo: "Centros y zonas",
+    columns: ["centro", "zona", "nombre", "notas"], obligatorios: ["zona", "nombre"],
+    ejemplo: ["Planta Norte", "Lavado", "Paletización", ""], needs: ["centros", "zonas"],
+  },
+  {
+    key: "proveedores", endpoint: "/api/proveedores", label: "Proveedores", grupo: "Proveedores y compras",
+    columns: ["id_proveedor", "nombre", "contacto", "email", "telefono", "direccion", "notas", "activo"],
+    obligatorios: ["id_proveedor", "nombre"],
+    ejemplo: ["PROV-001", "Suministros García", "Ana López", "ana@suministros.test", "910 111 222", "Calle Industria 4", "", "1"],
+  },
+  {
+    key: "productos_disponibles", endpoint: "/api/productos-disponibles", label: "Productos disponibles", grupo: "Proveedores y compras",
+    columns: ["proveedor", "proveedor_alternativo", "codigo", "producto", "precio"], obligatorios: ["proveedor", "codigo", "producto"],
+    ejemplo: ["PROV-001", "PROV-002", "M-001", "Mopa de microfibra", "4,50"], needs: ["proveedores"],
+  },
+  {
+    key: "pedidos", endpoint: "/api/pedidos", label: "Pedidos (cabecera + líneas)", grupo: "Proveedores y compras",
+    columns: ["pedido", "centro", "proveedor", "codigo", "producto", "cantidad", "precio", "origen", "notas"],
+    obligatorios: ["pedido", "centro", "proveedor", "codigo", "producto", "cantidad"],
+    ejemplo: ["PED-001", "Planta Norte", "PROV-001", "M-001", "Mopa de microfibra", "10", "4,50", "empresa", "Reposición mensual"],
+    needs: ["centros", "proveedores"],
+  },
+  {
+    key: "trabajos", endpoint: "/api/trabajos", label: "Trabajos", grupo: "Trabajos",
+    columns: ["centro", "zona", "subzona", "titulo", "descripcion", "tipo", "prioridad", "estado", "operario", "fecha_prevista", "horas", "material", "notas"],
+    obligatorios: ["centro", "titulo"],
+    ejemplo: ["Planta Norte", "Lavado", "Paletización", "Limpieza de la zona de carga", "Incluye paredes y suelo", "limpieza", "alta", "abierto", "operario", "2026-12-01", "2,5", "2 garrafas de desengrasante", ""],
+    needs: ["centros", "zonas", "subzonas", "usuarios"],
+  },
+  {
+    key: "quimicos", endpoint: "/api/quimicos", label: "Productos químicos", grupo: "Consumibles",
+    columns: ["codigo", "marca", "nombre", "numero_lote", "litros_por_garrafa", "num_garrafas", "fecha_produccion", "fecha_caducidad", "stock_minimo", "origen", "centro", "notas"],
+    obligatorios: ["codigo", "nombre", "numero_lote"],
+    ejemplo: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2026-01-01", "2027-06-30", "3", "fabrica", "Planta Norte", ""],
+    needs: ["centros"],
+  },
+  {
+    key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza", grupo: "Consumibles",
+    columns: ["codigo", "marca", "nombre", "color", "cantidad", "stock_minimo", "origen", "centro", "notas"],
+    obligatorios: ["codigo", "nombre", "color"],
+    ejemplo: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "fabrica", "Planta Norte", ""],
+    needs: ["centros"],
+  },
+  {
+    key: "maquinaria", endpoint: "/api/maquinaria", label: "Maquinaria", grupo: "Maquinaria",
+    columns: ["nombre", "tipo", "marca", "modelo", "numero_serie", "centro", "zona", "subzona", "notas"],
+    obligatorios: ["nombre", "tipo", "zona"],
+    ejemplo: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "F80-0012", "Planta Norte", "Lavado", "Paletización", ""],
+    needs: ["centros", "zonas", "subzonas"],
+  },
+  {
+    key: "tipos_maquinaria", endpoint: "/api/tipos-maquinaria", label: "Tipos de maquinaria", grupo: "Maquinaria",
+    columns: ["nombre", "notas"], obligatorios: ["nombre"], ejemplo: ["Fregadora", ""],
+  },
+  {
+    key: "situaciones", endpoint: "/api/situaciones", label: "Situaciones de maquinaria", grupo: "Maquinaria",
+    columns: ["nombre"], obligatorios: ["nombre"], ejemplo: ["Operativo"],
+  },
+  {
+    key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo", grupo: "Equipación",
+    columns: ["codigo", "prenda", "marca", "fabricante", "modelo", "talla", "alta_visibilidad", "manga_larga", "descripcion", "color", "stock", "stock_minimo", "centro"],
+    obligatorios: ["codigo", "prenda"],
+    ejemplo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "Planta Norte"],
+    needs: ["centros"],
+  },
+  {
+    key: "epis", endpoint: "/api/epis", label: "EPIs", grupo: "Equipación",
+    columns: ["codigo", "marca", "modelo", "talla", "descripcion", "color", "stock", "stock_minimo", "fecha_revision", "centro"],
+    obligatorios: ["codigo"],
+    ejemplo: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "Planta Norte"],
+    needs: ["centros"],
+  },
+  {
+    key: "tallas_operarios", endpoint: "/api/tallas", label: "Tallas de operarios", grupo: "Equipación",
+    columns: ["operario", "prenda", "talla", "notas"], obligatorios: ["operario", "prenda", "talla"],
+    ejemplo: ["operario", "Chaqueta", "L", "Prefiere talla M"], needs: ["usuarios"],
+  },
+  {
+    key: "tipos_equipo", endpoint: "/api/tipos-equipo", label: "Tipos de equipo", grupo: "Equipación",
+    columns: ["nombre"], obligatorios: ["nombre"], ejemplo: ["Abrigo"],
+  },
+  {
+    key: "formaciones", endpoint: "/api/catalogo-formaciones", label: "Formaciones y carnets", grupo: "Formación y documentos",
+    columns: ["nombre", "tipo", "meses_validez", "notas"], obligatorios: ["nombre"],
+    ejemplo: ["Carretilla elevadora", "carnet", "36", ""],
+  },
+  {
+    key: "documento_tipos", endpoint: "/api/documentos-tipos", label: "Tipos de documento", grupo: "Formación y documentos",
+    columns: ["nombre"], obligatorios: ["nombre"], ejemplo: ["Ficha de seguridad"],
+  },
+  {
+    key: "soportes", endpoint: "/api/soportes", label: "Soportes de estación", grupo: "Estaciones",
+    columns: ["nombre"], obligatorios: ["nombre"], ejemplo: ["Pared"],
+  },
+  {
+    key: "consumibles_tipos", endpoint: "/api/consumibles-tipos", label: "Tipos de consumible", grupo: "Estaciones",
+    columns: ["nombre", "articulo_tipo"], obligatorios: ["nombre", "articulo_tipo"],
+    ejemplo: ["Químicos", "quimicos"],
+  },
+];
+
+const GRUPOS = [...new Set(RECURSOS.map((r) => r.grupo))];
+
+interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; subzonas: Row[]; usuarios: Row[]; documento_tipos: Row[]; }
 
 const norm = (v: string): string =>
   String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s_-]+/g, " ");
@@ -69,7 +173,8 @@ function resolver(valor: string, filas: Row[], claves: string[]): Row | undefine
 }
 const fallo = (fila: number, msg: string): string => `Fila ${fila}: ${msg}`;
 
-/** Traduce una fila del CSV al JSON que espera la API (resolviendo centros/operarios/prendas). */
+/** Traduce una fila del CSV al JSON que espera la API (resolviendo centros,
+ *  proveedores, operarios, prendas y zonas por su nombre o su ID). */
 function parseRow(key: string, raw: Record<string, string>, fila: number, cat: Catalogos): Record<string, unknown> | string {
   const g = (k: string): string | undefined => { const v = raw[k]?.trim(); return v === "" ? undefined : v; };
   const id = (k: string): number | null => toNumber(g(k));
@@ -84,6 +189,108 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
     return found ? Number(found.id) : -1;
   };
   switch (key) {
+    case "centros": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      return { nombre, direccion: g("direccion") ?? null, ciudad: g("ciudad") ?? null, responsable: g("responsable") ?? null, telefono: g("telefono") ?? null };
+    }
+    case "zonas": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      const centroId = centro();
+      if (centroId === null) return fallo(fila, "falta la columna 'centro'");
+      if (centroId === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
+      return { centro_id: centroId, nombre, notas: g("notas") ?? null };
+    }
+    case "subzonas": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      const zn = g("zona"); if (!zn) return fallo(fila, "falta la columna 'zona'");
+      const centroId = centro();
+      if (centroId === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
+      const zonas = centroId && centroId > 0 ? cat.zonas.filter((z) => Number(z.centro_id) === centroId) : cat.zonas;
+      const z = resolver(zn, zonas, ["nombre", "id"]);
+      if (!z) return fallo(fila, `la zona «${zn}» no existe${centroId ? " en ese centro" : ""}`);
+      return { zona_id: Number(z.id), nombre, notas: g("notas") ?? null };
+    }
+    case "proveedores": {
+      const idp = g("id_proveedor") ?? g("codigo") ?? g("id");
+      const nombre = g("nombre");
+      if (!idp) return fallo(fila, "falta la columna 'id_proveedor'");
+      if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      const activo = g("activo") === undefined ? 1 : toBool(g("activo"));
+      return { id_proveedor: idp, nombre, contacto: g("contacto") ?? null, email: g("email") ?? null, telefono: g("telefono") ?? null, direccion: g("direccion") ?? null, notas: g("notas") ?? null, activo };
+    }
+    case "productos_disponibles": {
+      const pv = g("proveedor") ?? g("id_proveedor") ?? g("proveedor_codigo");
+      const codigo = g("codigo"); const producto = g("producto");
+      if (!pv) return fallo(fila, "falta la columna 'proveedor'");
+      if (!codigo) return fallo(fila, "falta la columna 'codigo'");
+      if (!producto) return fallo(fila, "falta la columna 'producto'");
+      const found = resolver(pv, cat.proveedores, ["id_proveedor", "codigo", "nombre", "id"]);
+      if (!found) return fallo(fila, `el proveedor «${pv}» no existe`);
+      const alt = g("proveedor_alternativo");
+      let alternativoId: number | null = null;
+      if (alt) {
+        const altProv = resolver(alt, cat.proveedores, ["id_proveedor", "codigo", "nombre", "id"]);
+        if (!altProv) return fallo(fila, `el proveedor alternativo «${alt}» no existe`);
+        if (Number(altProv.id) === Number(found.id)) return fallo(fila, "el proveedor alternativo debe ser distinto del principal");
+        alternativoId = Number(altProv.id);
+      }
+      return { proveedor_id: Number(found.id), proveedor_alternativo_id: alternativoId, codigo, producto, precio: id("precio") };
+    }
+    case "pedidos": {
+      const ref = g("pedido");
+      if (!ref) return fallo(fila, "falta la columna 'pedido'");
+      const centroId = centro();
+      if (centroId === null) return fallo(fila, "falta la columna 'centro'");
+      if (centroId === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
+      const pv = g("proveedor") ?? g("id_proveedor") ?? g("proveedor_codigo");
+      if (!pv) return fallo(fila, "falta la columna 'proveedor'");
+      const prov = resolver(pv, cat.proveedores, ["id_proveedor", "codigo", "nombre", "id"]);
+      if (!prov) return fallo(fila, `el proveedor «${pv}» no existe`);
+      const codigo = g("codigo"); if (!codigo) return fallo(fila, "falta la columna 'codigo'");
+      const producto = g("producto"); if (!producto) return fallo(fila, "falta la columna 'producto'");
+      const cantidad = id("cantidad");
+      if (!cantidad || cantidad < 1) return fallo(fila, "la cantidad debe ser mayor que 0");
+      const org = (g("origen") ?? "empresa").toLowerCase();
+      return {
+        pedido: ref, centro_id: centroId, proveedor_id: Number(prov.id), codigo, producto, cantidad,
+        precio: id("precio"), origen: org.startsWith("fab") ? "fabrica" : "empresa",
+        notas: g("notas") ?? null,
+      };
+    }
+    case "trabajos": {
+      const titulo = g("titulo"); if (!titulo) return fallo(fila, "falta la columna 'titulo'");
+      const centroId = centro();
+      if (centroId === null) return fallo(fila, "falta la columna 'centro'");
+      if (centroId === -1) return fallo(fila, `el centro «${g("centro")}» no existe`);
+      let zonaId: number | null = null;
+      let subzonaId: number | null = null;
+      const zn = g("zona");
+      if (zn) {
+        const z = resolver(zn, cat.zonas.filter((x) => Number(x.centro_id) === centroId), ["nombre", "id"]);
+        if (!z) return fallo(fila, `la zona «${zn}» no existe en ese centro`);
+        zonaId = Number(z.id);
+        const sn = g("subzona");
+        if (sn) {
+          const s = resolver(sn, cat.subzonas.filter((x) => Number(x.zona_id) === zonaId), ["nombre", "id"]);
+          if (!s) return fallo(fila, `la subzona «${sn}» no existe en esa zona`);
+          subzonaId = Number(s.id);
+        }
+      }
+      const operarioId = operario();
+      if (operarioId === -1) return fallo(fila, `el operario «${g("operario")}» no existe`);
+      const t = norm(g("tipo") ?? "limpieza");
+      const tipo = t.startsWith("mant") ? "mantenimiento" : t.startsWith("incid") ? "incidencia" : t.startsWith("limpi") ? "limpieza" : "otro";
+      const p = norm(g("prioridad") ?? "normal");
+      const prioridad = ["baja", "normal", "alta", "urgente"].includes(p) ? p : "normal";
+      const e = norm(g("estado") ?? "abierto").replace(/ /g, "_");
+      const estado = ["abierto", "en_curso", "pausado", "cerrado"].includes(e) ? e : "abierto";
+      return {
+        centro_id: centroId, zona_id: zonaId, subzona_id: subzonaId, titulo,
+        descripcion: g("descripcion") ?? null, tipo, prioridad, estado,
+        operario_id: operarioId, fecha_prevista: g("fecha_prevista") ?? null,
+        horas: id("horas"), material: g("material") ?? null, notas: g("notas") ?? null,
+      };
+    }
     case "quimicos": case "material_limpieza": {
       const codigo = g("codigo") ?? g("id"); const nombre = g("nombre");
       if (!codigo) return fallo(fila, "falta la columna 'codigo'");
@@ -162,6 +369,28 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       const talla = g("talla"); if (!talla) return fallo(fila, "falta la columna 'talla'");
       return { usuario_id: operarioId, prenda, talla, notas: g("notas") ?? null };
     }
+    case "formaciones": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      const t = norm(g("tipo") ?? "formacion");
+      const tipo = t.startsWith("rev") ? "revision" : t.startsWith("carn") ? "carnet" : t.startsWith("form") ? "formacion" : "";
+      if (!tipo) return fallo(fila, "el tipo debe ser formacion, revision o carnet");
+      return { nombre, tipo, meses_validez: id("meses_validez") ?? 0, notas: g("notas") ?? null, activo: g("activo") === undefined ? 1 : toBool(g("activo")) };
+    }
+    case "consumibles_tipos": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      const t = norm(g("articulo_tipo") ?? "material_limpieza");
+      const articulo = t.startsWith("quim") ? "quimicos" : t.startsWith("maquin") ? "maquinaria" : t.startsWith("material") || t.startsWith("limpieza") ? "material_limpieza" : "";
+      if (!articulo) return fallo(fila, "el tipo de artículo debe ser quimicos, material_limpieza o maquinaria");
+      return { nombre, articulo_tipo: articulo };
+    }
+    case "tipos_maquinaria": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      return { nombre, notas: g("notas") ?? null };
+    }
+    case "tipos_equipo": case "situaciones": case "soportes": case "documento_tipos": {
+      const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
+      return { nombre };
+    }
     default: return "recurso no soportado";
   }
 }
@@ -176,24 +405,27 @@ export function ImportarPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cat, setCat] = useState<Catalogos>({ centros: [], usuarios: [], zonas: [], subzonas: [] });
+  const [cat, setCat] = useState<Catalogos>({ centros: [], proveedores: [], zonas: [], subzonas: [], usuarios: [], documento_tipos: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
 
-  // Catálogos para resolver centro / operario / zona por nombre en el CSV.
+  // Catálogos para resolver centro / proveedor / operario / zona por nombre en el CSV.
   const ensureCat = useCallback(async (): Promise<Catalogos> => {
-    const needUsers = cfg.key === "tallas_operarios";
-    const needZonas = cfg.key === "maquinaria";
+    const need = new Set<Catalogo>(cfg.needs ?? []);
     const next: Catalogos = { ...cat };
-    if (!next.centros.length) next.centros = (await api.get<{ items: Row[] }>("/api/centros")).items;
-    if (needUsers && !next.usuarios.length) next.usuarios = (await api.get<{ items: Row[] }>("/api/usuarios")).items;
-    if (needZonas) {
-      if (!next.zonas.length) next.zonas = (await api.get<{ items: Row[] }>("/api/zonas")).items;
-      if (!next.subzonas.length) next.subzonas = (await api.get<{ items: Row[] }>("/api/subzonas")).items;
-    }
+    const cargar = async (k: Catalogo, endpoint: string): Promise<void> => {
+      if (!need.has(k) || next[k].length) return;
+      next[k] = (await api.get<{ items: Row[] }>(endpoint)).items;
+    };
+    await cargar("centros", "/api/centros");
+    await cargar("proveedores", "/api/proveedores");
+    await cargar("zonas", "/api/zonas");
+    await cargar("subzonas", "/api/subzonas");
+    await cargar("usuarios", "/api/usuarios");
+    await cargar("documento_tipos", "/api/documentos-tipos");
     setCat(next);
     return next;
-  }, [cat, cfg.key]);
+  }, [cat, cfg.needs]);
 
   useEffect(() => {
     setRows([]); setErroresParse([]); setError(null); setDone(null);
@@ -201,7 +433,7 @@ export function ImportarPage() {
     if (inputRef.current) inputRef.current.value = "";
   }, [recurso]);
 
-  const faltan = useMemo(() => (OBLIGATORIOS[cfg.key] ?? []).filter((f) => !mapa[f]), [cfg.key, mapa]);
+  const faltan = useMemo(() => cfg.obligatorios.filter((f) => !mapa[f]), [cfg.obligatorios, mapa]);
   const mapeados = useMemo(() => cfg.columns.filter((f) => mapa[f]).length, [cfg.columns, mapa]);
 
   const onFile = async (f: File | null) => {
@@ -251,21 +483,19 @@ export function ImportarPage() {
       setRows(parsed);
       setErroresParse(problemas);
       if (!parsed.length) setError(problemas[0] ?? "No se encontraron filas válidas.");
-    } catch { setError("No se pudieron leer los catálogos (centros/usuarios/zonas). Inténtalo de nuevo."); }
+      // Los problemas detectados quedan en el histórico de errores (como avisos)
+      // para poder revisarlos después desde la pestaña «Errores».
+      if (problemas.length) {
+        reportarError(
+          `${problemas.length} fila(s) con problemas al preparar la importación de ${cfg.label}`,
+          { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: problemas.slice(0, 10).join("\n") },
+        );
+      }
+    } catch { setError("No se pudieron leer los catálogos (centros/proveedores/zonas). Inténtalo de nuevo."); }
   };
 
   // Plantilla con las cabeceras y una fila de ejemplo del recurso elegido.
-  const plantilla = () => {
-    const ejemplos: Record<string, string[]> = {
-      quimicos: ["Q-001", "Proquima", "Desengrasante alcalino", "L-2026-001", "5", "12", "2026-01-01", "2027-06-30", "3", "fabrica", "Planta Norte", ""],
-      material_limpieza: ["M-001", "3M", "Mopa de microfibra", "Rojo", "40", "5", "fabrica", "Planta Norte", ""],
-      maquinaria: ["Fregadora Aquamatic", "Fregadora", "Nilfisk", "BA-500", "F80-0012", "Planta Norte", "Lavado", "Paletización", ""],
-      ropa_trabajo: ["RT-010", "Chaqueta alta visibilidad", "Lindström", "Lindström", "HV-300", "L", "1", "1", "Clase 2", "Amarillo", "30", "5", "Planta Norte"],
-      epis: ["EPI-010", "Delta Plus", "Ventec Pro", "L", "Guantes anticorte", "Azul", "40", "10", "2027-01-31", "Planta Norte"],
-      tallas_operarios: ["operario", "Chaqueta", "L", "Prefiere talla M"],
-    };
-    downloadCsv(`${cfg.key}-plantilla.csv`, [...cfg.columns], [ejemplos[cfg.key] ?? []]);
-  };
+  const descargarPlantilla = (r: Recurso) => downloadCsv(`${r.key}-plantilla.csv`, r.columns, [r.ejemplo]);
 
   const importar = async () => {
     if (!rows.length) return;
@@ -275,7 +505,13 @@ export function ImportarPage() {
       const partes = [`${r.creados ?? 0} creados`, `${r.actualizados ?? 0} actualizados`];
       const aviso = r.errores?.length ? ` · ${r.errores.length} con error` : "";
       setDone(`Importados: ${partes.join(" · ")}${aviso}`);
-      if (r.errores?.length) setError(r.errores.slice(0, 4).join(" · "));
+      if (r.errores?.length) {
+        setError(r.errores.slice(0, 4).join(" · "));
+        reportarError(
+          `${r.errores.length} fila(s) no se pudieron importar en ${cfg.label}`,
+          { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: r.errores.slice(0, 10).join("\n") },
+        );
+      }
       setRows([]); setErroresParse([]); if (inputRef.current) inputRef.current.value = "";
     } catch (e) { setError(e instanceof Error ? e.message : "No se pudo importar"); }
     finally { setBusy(false); }
@@ -285,13 +521,17 @@ export function ImportarPage() {
     <div className="section-head"><h3>Importar CSV</h3></div>
     <p style={{ color: "var(--muted)", marginTop: 0 }}>
       Sube el archivo y comprueba el <strong>mapeo de columnas</strong>: cada columna del CSV se asigna a un campo de{" "}
-      <strong>{cfg.label}</strong>. Solo los campos obligatorios son necesarios. La clave es <code>codigo</code>:
-      si el registro ya existe se actualiza y si no se crea. Acepta separador coma, punto y coma o tabulador.
+      <strong>{cfg.label}</strong>. Solo los campos obligatorios son necesarios. En las tablas con código o ID
+      (productos, proveedores, químicos, ropa, EPIs…) ese valor es la clave: si el registro ya existe se actualiza y
+      si no se crea. Acepta separador coma, punto y coma o tabulador. En <strong>Proveedores</strong> el{" "}
+      <code>id_proveedor</code> lo pones tú: no es autonumérico.
     </p>
     <div className="form-grid" style={{ marginBottom: 12 }}>
-      <div><div className="field"><label htmlFor="imp-rec">Recurso</label>
+      <div><div className="field"><label htmlFor="imp-rec">Tabla / recurso</label>
         <select id="imp-rec" className="input" value={recurso} onChange={(e) => setRecurso(e.target.value)}>
-          {RECURSOS.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+          {GRUPOS.map((g) => <optgroup key={g} label={g}>
+            {RECURSOS.filter((r) => r.grupo === g).map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </optgroup>)}
         </select></div></div>
       <div><div className="field"><label htmlFor="imp-file">Archivo CSV</label>
         <input id="imp-file" ref={inputRef} className="input" type="file" accept=".csv,text/csv" onChange={(e) => void onFile(e.target.files?.[0] ?? null)} /></div></div>
@@ -305,7 +545,7 @@ export function ImportarPage() {
       <div className="table-scroll"><table>
         <thead><tr><th>Campo</th><th>Columna del CSV</th><th /></tr></thead>
         <tbody>{cfg.columns.map((campo) => {
-          const obligatorio = (OBLIGATORIOS[cfg.key] ?? []).includes(campo);
+          const obligatorio = cfg.obligatorios.includes(campo);
           const sinAsignar = obligatorio && !mapa[campo];
           return <tr key={campo}>
             <td><code>{campo}</code>{obligatorio && <span className="badge warn" style={{ marginLeft: 6 }}>obligatorio</span>}</td>
@@ -332,7 +572,7 @@ export function ImportarPage() {
 
     <div className="modal-footer" style={{ justifyContent: "space-between" }}>
       <div className="chips" style={{ margin: 0 }}>
-        <button className="btn secondary" onClick={plantilla}>⬇️ Descargar plantilla</button>
+        <button className="btn secondary" onClick={() => descargarPlantilla(cfg)}>⬇️ Descargar plantilla</button>
         <button className="btn secondary" onClick={() => void previsualizar()} disabled={!lineas.length || faltan.length > 0}>🔍 Previsualizar</button>
       </div>
       <button className="btn" onClick={() => void importar()} disabled={busy || !rows.length}>{busy ? "Importando…" : `Importar ${rows.length ? formatNum(rows.length) : ""}`.trim()}</button>
@@ -343,6 +583,17 @@ export function ImportarPage() {
         <tbody>{rows.slice(0, 5).map((r, i) => <tr key={i}><td>{i + 1}</td><td style={{ fontSize: 12, fontFamily: "monospace" }}>{JSON.stringify(r).slice(0, 180)}</td></tr>)}</tbody></table>
     </div>}
     {rows.length > 5 && <p style={{ color: "var(--muted)", fontSize: 12 }}>…y {formatNum(rows.length - 5)} filas más.</p>}
+
+    <details style={{ marginTop: 16, borderTop: "1px solid var(--border, #e5e7eb)", paddingTop: 12 }}>
+      <summary style={{ cursor: "pointer", fontWeight: 600 }}>📄 Plantillas CSV de todas las tablas ({formatNum(RECURSOS.length)})</summary>
+      <p style={{ color: "var(--muted)", fontSize: 13 }}>
+        Descarga la plantilla de cualquier tabla, rellénala con tus datos y súbela aquí mismo. Cada plantilla incluye
+        las cabeceras y una fila de ejemplo.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {RECURSOS.map((r) => <button key={r.key} className="btn secondary small" title={`Plantilla de ${r.label}`} onClick={() => descargarPlantilla(r)}>⬇️ {r.label}</button>)}
+      </div>
+    </details>
     {done && <Toast message={done} kind="ok" onClose={() => setDone(null)} />}
   </div>;
 }

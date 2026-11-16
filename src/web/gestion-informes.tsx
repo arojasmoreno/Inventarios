@@ -4,13 +4,15 @@ import { ImportarPage } from "./importar";
 import { Informes } from "./Informes";
 import { Dashboard } from "./dashboard";
 import { DescargasPage } from "./descargas";
+import { ErroresPage } from "./errores";
 
-type Tab = "dashboard" | "informes" | "auditoria" | "descargas" | "importar";
+type Tab = "dashboard" | "informes" | "auditoria" | "errores" | "descargas" | "importar";
 
 const TABS: Array<{ id: Tab; label: string; icon: string; adminOnly?: boolean }> = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
   { id: "informes", label: "Informes", icon: "📈" },
   { id: "auditoria", label: "Auditoría", icon: "📋" },
+  { id: "errores", label: "Errores", icon: "🐞", adminOnly: true },
   { id: "descargas", label: "Copias de seguridad", icon: "💾", adminOnly: true },
   { id: "importar", label: "Importar CSV", icon: "📤", adminOnly: true },
 ];
@@ -21,6 +23,7 @@ const TABS: Array<{ id: Tab; label: string; icon: string; adminOnly?: boolean }>
 export function GestionInformesPage({ user }: { user: { rol: string } }) {
   const hash = typeof window !== "undefined" ? window.location.hash : "";
   const inicial: Tab = hash === "#/movimientos" ? "auditoria"
+    : hash === "#/errores" ? "errores"
     : hash === "#/importar" ? "importar"
     : hash === "#/informes" ? "informes" : "dashboard";
   const [tab, setTab] = useState<Tab>(inicial);
@@ -37,12 +40,15 @@ export function GestionInformesPage({ user }: { user: { rol: string } }) {
       ))}
       <div className="spacer" />
       <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
-        Dashboard, informes, auditoría, copias de seguridad e importación de CSV
+        Dashboard, informes, auditoría, errores, copias de seguridad e importación de CSV
       </span>
     </div>
     {activa === "dashboard" && <Dashboard key="dashboard" user={user} />}
     {activa === "informes" && <Informes key="informes" user={user} />}
     {activa === "auditoria" && <ResourcePage key="auditoria" config={MOVIMIENTOS} user={user} />}
+    {activa === "errores" && (user.rol === "admin"
+      ? <ErroresPage key="errores" user={user} />
+      : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden consultar el histórico de errores.</p></div>)}
     {activa === "descargas" && (user.rol === "admin"
       ? <DescargasPage key="descargas" />
       : <div className="card empty"><span className="icon">🔒</span><strong>Sección restringida</strong><p>Solo los administradores pueden descargar las copias.</p></div>)}

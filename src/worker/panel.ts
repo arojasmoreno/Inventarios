@@ -106,9 +106,62 @@ panelRoutes.get("/", async (c) => {
          WHERE o2.usuario_id = of.usuario_id AND o2.formacion_id = of.formacion_id AND o2.fecha > of.fecha)
      ORDER BY of.caducidad LIMIT 20`,
   ).all<Row>();
+  // KPI operativos: pedidos, trabajos, errores y valor del almacén.
+  const [pedidosRes, trabajosRes, erroresRes, valorRes, consumo90] = await Promise.all([
+    db.prepare(
+      `SELECT COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN estado <> 'aplicado' THEN 1 ELSE 0 END), 0) AS pendientes,
+        COALESCE(SUM(CASE WHEN estado IN ('enviado', 'recibido') AND fecha_prevista IS NOT NULL
+          AND date(fecha_prevista) < date('now') THEN 1 ELSE 0 END), 0) AS retrasados
+       FROM pedidos`,
+    ).first<Row>(),
+    db.prepare(
+      `SELECT COALESCE(SUM(CASE WHEN estado <> 'cerrado' THEN 1 ELSE 0 END), 0) AS abiertos,
+        COALESCE(SUM(CASE WHEN estado = 'en_curso' THEN 1 ELSE 0 END), 0) AS en_curso,
+        COALESCE(SUM(CASE WHEN estado <> 'cerrado' AND fecha_prevista IS NOT NULL
+          AND date(fecha_prevista) < date('now') THEN 1 ELSE 0 END), 0) AS vencidos
+       FROM trabajos`,
+    ).first<Row>(),
+    db.prepare("SELECT COUNT(*) AS n FROM errores WHERE fecha >= datetime('now', '-1 day')").first<Row>(),
+    db.prepare(
+      `SELECT
+        (SELECT COALESCE(SUM(num_garrafas * COALESCE(precio, 0)), 0) FROM quimicos) AS quimicos,
+        (SELECT COALESCE(SUM(cantidad * COALESCE(precio, 0)), 0) FROM material_limpieza) AS material,
+        (SELECT COALESCE(SUM(stock * COALESCE(precio, 0)), 0) FROM epis) AS epis,
+        (SELECT COALESCE(SUM(stock * COALESCE(precio, 0)), 0) FROM ropa_trabajo) AS ropa,
+        (SELECT COALESCE(SUM(num_garrafas), 0) FROM quimicos) +
+        (SELECT COALESCE(SUM(cantidad), 0) FROM material_limpieza) +
+        (SELECT COALESCE(SUM(stock), 0) FROM epis) +
+        (SELECT COALESCE(SUM(stock), 0) FROM ropa_trabajo) AS uds`,
+    ).first<Row>(),
+    db.prepare(
+      "SELECT COALESCE(SUM(cantidad), 0) AS n FROM movimientos WHERE accion IN ('consumo', 'salida') AND created_at >= datetime('now', '-90 days')",
+    ).first<Row>(),
+  ]);
+  const valor = {
+    quimicos: Number(valorRes?.quimicos ?? 0), material: Number(valorRes?.material ?? 0),
+    epis: Number(valorRes?.epis ?? 0), ropa: Number(valorRes?.ropa ?? 0),
+  };
+  const valorTotal = valor.quimicos + valor.material + valor.epis + valor.ropa;
   return c.json({
     generado: new Date().toISOString(),
     formaciones_proximas: formacionesProximas.results,
+    pedidos: {
+      total: Number(pedidosRes?.total ?? 0), pendientes: Number(pedidosRes?.pendientes ?? 0),
+      retrasados: Number(pedidosRes?.retrasados ?? 0),
+    },
+    trabajos: {
+      abiertos: Number(trabajosRes?.abiertos ?? 0), en_curso: Number(trabajosRes?.en_curso ?? 0),
+      vencidos: Number(trabajosRes?.vencidos ?? 0),
+    },
+    errores_24h: Number(erroresRes?.n ?? 0),
+    valor_stock: { ...valor, total: valorTotal },
+    rotacion_90d: {
+      unidades: Number(consumo90?.n ?? 0),
+      stock: Number(valorRes?.uds ?? 0),
+      indice: Number(valorRes?.uds ?? 0) > 0
+        ? Number((Number(consumo90?.n ?? 0) / Number(valorRes?.uds)).toFixed(2)) : 0,
+    },
     formaciones_caducan30: formacionesProximas.results.length,
     consumo: {
       hoy: { unidades: Number(hoy?.unidades ?? 0), movimientos: Number(hoy?.movimientos ?? 0) },

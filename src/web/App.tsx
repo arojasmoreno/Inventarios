@@ -14,6 +14,7 @@ import { GlobalSearch } from "./busqueda";
 import { DocumentosPage } from "./documentos";
 import { AyudaPage } from "./ayuda";
 import { LimpiezaPage } from "./limpieza";
+import { TrabajosPage } from "./trabajos";
 export interface User {
   id: number;
   username: string;
@@ -44,6 +45,7 @@ const NAV: NavGroup[] = [
     section: "Resumen",
     items: [
       { hash: "#/panel", label: "Panel de control", icon: "🏠" },
+      { hash: "#/trabajos", label: "Trabajos", icon: "🛠️" },
     ],
   },
   {
@@ -380,8 +382,10 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
     || route === "#/pedidos" || route === "#/proveedores";
   // Rutas de la sección Gestión de centros (su propia ruta y las antiguas).
   const esGestionCentros = route === "#/gestion-centros" || route === "#/centros" || route === "#/zonas" || route === "#/usuarios" || route === "#/empresa";
+  // Órdenes de trabajo: planificación y seguimiento por centro.
+  const esTrabajos = route === "#/trabajos";
   // Rutas de la sección Gestión de informes (su propia ruta y las antiguas).
-  const esGestionInformes = route === "#/gestion-informes" || route === "#/movimientos" || route === "#/importar" || route === "#/informes";
+  const esGestionInformes = route === "#/gestion-informes" || route === "#/movimientos" || route === "#/errores" || route === "#/importar" || route === "#/informes";
   // Menú y rutas permitidas según el rol: el perfil «Usuario» solo tiene
   // acceso a las secciones de su lista; cualquier otra ruta redirige a
   // «Estaciones de consumo».
@@ -406,6 +410,7 @@ function Shell({ user, route, onUserChange }: { user: User; route: string; onUse
   if (route === "#/ayuda") page = <AyudaPage user={user} />;
   else if (route === "#/cuenta") page = <MiCuenta user={user} />;
   else if (route === "#/panel") page = <PanelPage user={user} />;
+  else if (esTrabajos) page = <TrabajosPage user={user} />;
   else if (route === "#/limpieza") page = <LimpiezaPage user={user} />;
   else if (esConsumibles) page = <ConsumiblesPage key={route} user={user} />;
   else if (esGestionCentros) page = <GestionCentrosPage key={route} user={user} />;

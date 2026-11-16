@@ -93,13 +93,21 @@ CREATE TABLE IF NOT EXISTS documentos (id INTEGER PRIMARY KEY AUTOINCREMENT, nom
 CREATE TABLE IF NOT EXISTS documento_centros (documento_id INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (documento_id, centro_id));
 
 -- Proveedores: cada producto del catálogo se pide a un único proveedor. El
--- código es la referencia corta que se usa en el catálogo y en los pedidos.
-CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, direccion TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+-- ID de proveedor lo asigna el usuario (no es autonumérico) y es la referencia
+-- corta que se usa en el catálogo y en los pedidos; `codigo` se mantiene igual
+-- por compatibilidad con los datos anteriores.
+CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, id_proveedor TEXT NOT NULL UNIQUE, codigo TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, direccion TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, dias_entrega INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+-- Histórico de errores: validaciones, importaciones y fallos del servidor.
+CREATE TABLE IF NOT EXISTS errores (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL DEFAULT (datetime('now')), nivel TEXT NOT NULL DEFAULT 'error', origen TEXT NOT NULL DEFAULT 'servidor', metodo TEXT, ruta TEXT, mensaje TEXT NOT NULL, detalle TEXT, usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, usuario TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+
+CREATE INDEX IF NOT EXISTS idx_errores_fecha ON errores(fecha);
+CREATE INDEX IF NOT EXISTS idx_errores_nivel ON errores(nivel, origen);
 
 -- Catálogo de productos que se pueden pedir (proveedor, código, producto y
 -- precio). El código lo relaciona con material_limpieza (unidades en almacén)
 -- y con las líneas del pedido de material.
-CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), proveedor_alternativo_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
 -- Líneas del pedido de material: proveedor, código, producto, cantidad, precio
 -- y origen. `aplicado` marca las líneas cuyas cantidades ya se sumaron en
@@ -107,7 +115,14 @@ CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINC
 CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 
 -- Pedido de consumibles de un centro: borrador → enviado → recibido → aplicado.
-CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT NOT NULL UNIQUE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL, estado TEXT NOT NULL DEFAULT 'borrador', fecha TEXT NOT NULL DEFAULT (date('now')), fecha_envio TEXT, fecha_recepcion TEXT, albaran TEXT, notas TEXT, reclamacion TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT NOT NULL UNIQUE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL, estado TEXT NOT NULL DEFAULT 'borrador', fecha TEXT NOT NULL DEFAULT (date('now')), fecha_envio TEXT, fecha_prevista TEXT, fecha_recepcion TEXT, albaran TEXT, notas TEXT, reclamacion TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+-- Órdenes de trabajo: limpieza, mantenimiento e incidencias por centro.
+CREATE TABLE IF NOT EXISTS trabajos (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL, subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL, titulo TEXT NOT NULL, descripcion TEXT, tipo TEXT NOT NULL DEFAULT 'limpieza', prioridad TEXT NOT NULL DEFAULT 'normal', estado TEXT NOT NULL DEFAULT 'abierto', operario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, fecha_apertura TEXT NOT NULL DEFAULT (date('now')), fecha_prevista TEXT, fecha_cierre TEXT, horas REAL, material TEXT, notas TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
+
+CREATE INDEX IF NOT EXISTS idx_trabajos_centro ON trabajos(centro_id, estado);
+CREATE INDEX IF NOT EXISTS idx_trabajos_fecha ON trabajos(fecha_prevista);
+CREATE INDEX IF NOT EXISTS idx_trabajos_operario ON trabajos(operario_id);
 
 CREATE TABLE IF NOT EXISTS pedido_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, cantidad_recibida INTEGER, precio REAL, origen TEXT NOT NULL DEFAULT 'empresa', reclamar INTEGER NOT NULL DEFAULT 0, motivo TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT);
 

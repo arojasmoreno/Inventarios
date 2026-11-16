@@ -22,6 +22,8 @@ import { limpiezaRoutes } from "./limpieza";
 import { pedidosRoutes } from "./pedidos";
 import { formacionesRoutes } from "./formaciones";
 import { operariosRoutes } from "./operarios";
+import { erroresRoutes, registrarError } from "./errores";
+import { trabajosRoutes } from "./trabajos";
 
 // Origenes externos de confianza: el frontend servido por Freebuff y el
 // servidor de desarrollo de Vite. Las peticiones same-origin siempre pasan.
@@ -100,6 +102,8 @@ app.route("/api/consumibles-tipos", consumiblesTipos);
 app.route("/api/productos-disponibles", productosDisponibles);
 app.route("/api/proveedores", proveedores);
 app.route("/api/pedidos", pedidosRoutes);
+// Órdenes de trabajo: limpieza, mantenimiento e incidencias por centro.
+app.route("/api/trabajos", trabajosRoutes);
 // Catálogo de formaciones/carnets/revisiones y su matriz por centro.
 app.route("/api/catalogo-formaciones", formaciones);
 app.route("/api/formaciones", formacionesRoutes);
@@ -112,14 +116,28 @@ app.route("/api/buscar", buscadorRoutes);
 app.route("/api/documentos", documentos);
 app.route("/api/documentos-tipos", documentosTipos);
 app.route("/api/alertas", alertasRoutes);
+// Histórico de errores que alimenta la pestaña «Errores» de Gestión de informes.
+app.route("/api/errores", erroresRoutes);
 app.get("/api/salud", (c) => c.json({ ok: true, app: "Inventarios" }));
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) return c.json({ error: "Ruta no encontrada" }, 404);
   return c.env.ASSETS.fetch(c.req.raw);
 });
-app.onError((err, c) => {
+app.onError(async (err, c) => {
   if (err instanceof ValidationError) return c.json({ error: err.message }, 400);
   console.error("Error no controlado:", err);
+  // Cada fallo del servidor queda en el histórico de errores (pestaña Errores).
+  const user = c.get("user") as { id: number; username: string; nombre: string } | undefined;
+  await registrarError(c.env.DB, {
+    nivel: "error",
+    origen: "servidor",
+    metodo: c.req.method,
+    ruta: new URL(c.req.url).pathname,
+    mensaje: err instanceof Error ? err.message : String(err),
+    detalle: err instanceof Error ? err.stack ?? null : null,
+    usuario_id: user?.id ?? null,
+    usuario: user ? `${user.nombre} (${user.username})` : null,
+  });
   return c.json({ error: "Error interno del servidor" }, 500);
 });
 // El resumen de alertas (stock, caducidades, revisiones de EPI, formaciones y

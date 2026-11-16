@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { Field, Modal, Toast, camposConError, downloadCsv, formatNum, type FieldDef } from "./ui";
+import { Field, Modal, Toast, camposConError, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
 
 type Row = Record<string, unknown>;
 
@@ -129,6 +129,8 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
   // Proveedor de destino para los productos antiguos que aún no tienen uno.
   const [asignarA, setAsignarA] = useState("");
   const [filaDestino, setFilaDestino] = useState<Record<string, string>>({});
+  // Historial de precios del producto seleccionado.
+  const [precios, setPrecios] = useState<{ codigo: string; producto: string; items: Row[]; cargando: boolean } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async (preferido?: string) => {
@@ -176,6 +178,11 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       options: proveedores.map(p => ({ value: Number(p.id), label: `${String(p.codigo ?? "")} · ${String(p.nombre ?? "")}` })),
       help: "Cada producto pertenece a un único proveedor.",
     },
+    {
+      name: "proveedor_alternativo_id", label: "Proveedor alternativo", type: "select",
+      options: proveedores.map(p => ({ value: Number(p.id), label: `${String(p.codigo ?? "")} · ${String(p.nombre ?? "")}` })),
+      help: "Opcional: proveedor de respaldo si el principal no puede servir.",
+    },
     ...CAMPOS_PRODUCTO,
   ], [proveedores]);
   const etiquetas = campos.map(f => ({ clave: f.name, etiqueta: f.label }));
@@ -183,13 +190,13 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
   const openCreate = () => {
     if (!proveedores.length) { onGoProveedores?.(); return; }
     setFormError(null); setFieldErrors([]);
-    setEditing({ mode: "create", values: { proveedor_id: proveedorId || String(proveedores[0]?.id ?? ""), codigo: "", producto: "", precio: "" } });
+    setEditing({ mode: "create", values: { proveedor_id: proveedorId || String(proveedores[0]?.id ?? ""), proveedor_alternativo_id: "", codigo: "", producto: "", precio: "" } });
   };
   const openEdit = (row: Row) => {
     setFormError(null); setFieldErrors([]);
     setEditing({
       mode: "edit",
-      values: { id: row.id, proveedor_id: row.proveedor_id ?? "", codigo: row.codigo ?? "", producto: row.producto ?? "", precio: row.precio ?? "" },
+      values: { id: row.id, proveedor_id: row.proveedor_id ?? "", proveedor_alternativo_id: row.proveedor_alternativo_id ?? "", codigo: row.codigo ?? "", producto: row.producto ?? "", precio: row.precio ?? "" },
     });
   };
 
@@ -209,7 +216,12 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
     }
     setSaving(true); setFormError(null); setFieldErrors([]);
     try {
-      const payload: Row = { proveedor_id: Number(proveedor), codigo, producto, precio };
+      const alternativo = String(editing.values.proveedor_alternativo_id ?? "").trim();
+      const payload: Row = {
+        proveedor_id: Number(proveedor),
+        proveedor_alternativo_id: alternativo ? Number(alternativo) : null,
+        codigo, producto, precio,
+      };
       if (editing.mode === "create") await api.post("/api/productos-disponibles", payload);
       else await api.put(`/api/productos-disponibles/${String(editing.values.id)}`, payload);
       setEditing(null);
@@ -257,6 +269,18 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       setAviso({ message: `«${String(row.producto)}» asignado a ${etiquetaProveedor(prov)}`, kind: "ok" });
       await load(String(prov.id));
     } catch (e) { setAviso({ message: e instanceof Error ? e.message : "No se pudo asignar el proveedor", kind: "error" }); }
+  };
+
+  const abrirPrecios = async (row: Row) => {
+    const codigo = String(row.codigo ?? "");
+    setPrecios({ codigo, producto: String(row.producto ?? ""), items: [], cargando: true });
+    try {
+      const r = await api.get<{ items: Row[] }>(`/api/pedidos/precios?codigo=${encodeURIComponent(codigo)}`);
+      setPrecios({ codigo, producto: String(row.producto ?? ""), items: r.items, cargando: false });
+    } catch (e) {
+      setPrecios({ codigo, producto: String(row.producto ?? ""), items: [], cargando: false });
+      setAviso({ message: e instanceof Error ? e.message : "No se pudo cargar el historial de precios", kind: "error" });
+    }
   };
 
   const eliminar = async (row: Row) => {
@@ -454,12 +478,17 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
             : "Todavía no se han dado de alta productos para este proveedor."}</p>
         </div>
         : <div className="table-scroll"><table>
-          <thead><tr><th>Código</th><th>Producto</th><th>Proveedor</th><th className="right">Precio (€)</th><th>Material de limpieza</th>{admin && <th className="right">Acciones</th>}</tr></thead>
+          <thead><tr><th>Código</th><th>Producto</th><th>Proveedor</th><th className="right">Precio (€)</th><th className="right">Reservado</th><th className="right">Disponible</th><th>Material de limpieza</th>{admin && <th className="right">Acciones</th>}</tr></thead>
           <tbody>{filtrados.map(r => <tr key={String(r.id)}>
             <td><strong>{String(r.codigo ?? "—")}</strong></td>
             <td>{String(r.producto ?? "—")}</td>
-            <td><span className="provider-mini">{String(r.proveedor_codigo ?? "—")}</span> {String(r.proveedor_nombre ?? "")}</td>
-            <td className="right">{precioTexto(r.precio)}</td>
+            <td><span className="provider-mini">{String(r.proveedor_codigo ?? "—")}</span> {String(r.proveedor_nombre ?? "")}
+              {r.proveedor_alternativo_nombre ? <div><small style={{ color: "var(--muted)" }}>alt.: {String(r.proveedor_alternativo_nombre)}</small></div> : null}</td>
+            <td className="right">{precioTexto(r.precio)}{r.ultimo_precio != null && Number(r.ultimo_precio) !== Number(r.precio) && <div><small style={{ color: "var(--muted)" }}>últ. {formatNum(r.ultimo_precio, 2)} €</small></div>}</td>
+            <td className="right">{Number(r.unidades_reservadas ?? 0) > 0 ? <span className="badge warn">{formatNum(r.unidades_reservadas)}</span> : "—"}</td>
+            <td className="right">{Number(r.unidades_reservadas ?? 0) > 0
+              ? <span className={Number(r.unidades_almacen ?? 0) - Number(r.unidades_reservadas ?? 0) <= 0 ? "badge danger" : "badge ok"}>{formatNum(Math.max(0, Number(r.unidades_almacen ?? 0) - Number(r.unidades_reservadas ?? 0)))}</span>
+              : formatNum(r.unidades_almacen ?? 0)}</td>
             <td>{Number(r.en_almacen) === 1
               ? <span className="badge ok">{formatNum(r.unidades_almacen)} uds</span>
               : <span className="badge muted" title="Todavía no hay stock de este código en Material de limpieza">Sin registro</span>}</td>
@@ -472,6 +501,7 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
                 </select>
                 <button className="btn small" disabled={!filaDestino[String(r.id)]} onClick={() => void asignarUno(r)}>✓ Asignar</button>
               </>}
+              <button className="btn secondary small" title="Historial de precios de compra" onClick={() => void abrirPrecios(r)}>💶 Precios</button>
               <button className="btn secondary small" onClick={() => openEdit(r)}>✏️ Editar</button>
               <button className="btn danger small" onClick={() => void eliminar(r)}>🗑️ Borrar</button>
             </div></td>}
@@ -493,6 +523,22 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
         <button className="btn secondary" onClick={() => setEditing(null)}>Cancelar</button>
         <button className="btn" onClick={() => void guardar()} disabled={saving}>{saving ? "Guardando…" : "Guardar"}</button>
       </div>
+    </Modal>}
+    {precios && <Modal title={`Historial de precios · ${precios.producto}`} subtitle={`Código ${precios.codigo} · compras registradas en pedidos`} onClose={() => setPrecios(null)} wide>
+      {precios.cargando ? <div className="loading">Cargando precios…</div>
+        : !precios.items.length ? <div className="empty"><span className="icon">💶</span><strong>Sin compras registradas</strong><p>Aquí aparecerán los precios de los pedidos que incluyan este código.</p></div>
+        : <div className="table-scroll"><table>
+          <thead><tr><th>Fecha</th><th>Pedido</th><th>Proveedor</th><th className="right">Cantidad</th><th className="right">Precio (€)</th><th>Origen</th></tr></thead>
+          <tbody>{precios.items.map((x, i) => <tr key={`${String(x.numero)}-${i}`}>
+            <td>{formatFecha(x.fecha)}</td>
+            <td><strong>{String(x.numero ?? "—")}</strong></td>
+            <td>{String(x.proveedor_nombre ?? "—")}</td>
+            <td className="right">{formatNum(x.cantidad)}</td>
+            <td className="right">{x.precio == null ? "—" : formatNum(x.precio, 2)}</td>
+            <td>{String(x.origen ?? "") === "fabrica" ? "🏭 Fábrica" : "🏢 Empresa"}</td>
+          </tr>)}</tbody>
+        </table></div>}
+      <div className="modal-footer"><button className="btn secondary" onClick={() => setPrecios(null)}>Cerrar</button></div>
     </Modal>}
     {aviso && <Toast message={aviso.message} kind={aviso.kind} onClose={() => setAviso(null)} />}
   </>;

@@ -50,6 +50,38 @@ export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ 
     }
     return c.json({ ok: true });
   })
+  // Importación masiva desde CSV: una fila por talla de operario. Los errores
+  // de una fila no detienen el resto (se devuelven acumulados).
+  .post("/import", async (c) => {
+    if (!allowed(c.get("user"), "admin")) return c.json({ error: "No tienes permiso para importar registros" }, 403);
+    let body: { rows?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
+    if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
+    if (body.rows.length > 500) return c.json({ error: "Máximo 500 registros por importación" }, 400);
+    let creados = 0;
+    const errores: string[] = [];
+    for (let i = 0; i < body.rows.length; i++) {
+      const raw = body.rows[i];
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) { if (errores.length < 8) errores.push(`Fila ${i + 1}: no es un registro válido`); continue; }
+      const fila = raw as Row;
+      const usuarioId = Number(fila.usuario_id);
+      const prenda = typeof fila.prenda === "string" ? fila.prenda.trim() : "";
+      const talla = typeof fila.talla === "string" ? fila.talla.trim() : "";
+      if (!Number.isInteger(usuarioId) || usuarioId < 1) { if (errores.length < 8) errores.push(`Fila ${i + 1}: el operario no es válido`); continue; }
+      if (!prenda) { if (errores.length < 8) errores.push(`Fila ${i + 1}: la prenda es obligatoria`); continue; }
+      if (!talla) { if (errores.length < 8) errores.push(`Fila ${i + 1}: la talla es obligatoria`); continue; }
+      const persona = await c.env.DB.prepare("SELECT id FROM usuarios WHERE id = ?").bind(usuarioId).first();
+      if (!persona) { if (errores.length < 8) errores.push(`Fila ${i + 1}: el operario ${usuarioId} no existe`); continue; }
+      const hoy = new Date().toISOString().slice(0, 10);
+      const fecha = typeof fila.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fila.fecha) ? fila.fecha : hoy;
+      await c.env.DB.prepare("INSERT INTO tallas_operarios (usuario_id, prenda, talla, notas, fecha) VALUES (?, ?, ?, ?, ?)")
+        .bind(usuarioId, prenda, talla, typeof fila.notas === "string" && fila.notas.trim() ? fila.notas.trim() : null, fecha).run();
+      creados++;
+    }
+    if (!creados && errores.length) return c.json({ error: errores[0], errores }, 400);
+    await logMovimiento(c.env.DB, c.get("user"), "alta", "tallas_operarios", null, `Importación de tallas: ${creados} registro(s)`, null, null);
+    return c.json({ creados, actualizados: 0, errores });
+  })
   .put("/:id", async (c) => {
     if (!allowed(c.get("user"), "admin")) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const id = Number(c.req.param("id"));

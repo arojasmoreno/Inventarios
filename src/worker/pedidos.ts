@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { requireAuth, centrosDeUsuario, type SessionUser } from "./auth";
 import { logMovimiento } from "./audit";
+import { sendResumen } from "./email";
 import type { D1Database, D1Statement, Env } from "./d1";
 import type { Variables } from "./types";
 
@@ -154,7 +155,7 @@ pedidosRoutes.get("/opciones", async (c) => {
   const db = c.env.DB;
   const centros = await centrosVisibles(db, user);
   const proveedores = await db.prepare(
-    "SELECT id, codigo, nombre, contacto, email, telefono FROM proveedores WHERE activo = 1 ORDER BY nombre COLLATE NOCASE",
+    "SELECT id, codigo, nombre, contacto, email, telefono, dias_entrega FROM proveedores WHERE activo = 1 ORDER BY nombre COLLATE NOCASE",
   ).all<Row>();
   // `stock_minimo` viaja con el producto para que el alta del pedido pueda
   // proponer la cantidad que falta hasta el mínimo sin otra petición.
@@ -163,7 +164,14 @@ pedidosRoutes.get("/opciones", async (c) => {
             (SELECT COALESCE(SUM(ml.cantidad), 0) FROM material_limpieza ml
               WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS unidades_almacen,
             (SELECT COALESCE(MAX(ml.stock_minimo), 0) FROM material_limpieza ml
-              WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS stock_minimo
+              WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(p.codigo))) AS stock_minimo,
+            -- Reservado: lo pedido en pedidos aún no aplicados al stock.
+            (SELECT COALESCE(SUM(pl.cantidad), 0) FROM pedido_lineas pl JOIN pedidos pe ON pe.id = pl.pedido_id
+              WHERE pe.estado <> 'aplicado' AND TRIM(UPPER(pl.codigo)) = TRIM(UPPER(p.codigo))) AS unidades_reservadas,
+            -- Último precio pagado por este producto (histórico de pedidos).
+            (SELECT pl.precio FROM pedido_lineas pl JOIN pedidos pe ON pe.id = pl.pedido_id
+              WHERE pl.precio IS NOT NULL AND TRIM(UPPER(pl.codigo)) = TRIM(UPPER(p.codigo))
+              ORDER BY pe.fecha DESC, pl.id DESC LIMIT 1) AS ultimo_precio
      FROM productos_disponibles p LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
      ORDER BY p.producto COLLATE NOCASE`,
   ).all<Row>();
@@ -198,7 +206,13 @@ pedidosRoutes.get("/", async (c) => {
   }
   const res = await db.prepare(
     `SELECT p.id, p.numero, p.centro_id, p.proveedor_id, p.estado, p.fecha, p.fecha_envio,
-            p.fecha_recepcion, p.albaran, p.notas, p.reclamacion,
+            p.fecha_prevista, p.fecha_recepcion, p.albaran, p.notas, p.reclamacion,
+            pr.dias_entrega,
+            CASE WHEN p.estado IN ('enviado', 'recibido') AND p.fecha_prevista IS NOT NULL
+                   AND date(p.fecha_prevista) < date('now') THEN 1 ELSE 0 END AS retrasado,
+            CASE WHEN p.estado IN ('enviado', 'recibido') AND p.fecha_prevista IS NOT NULL
+                   AND date(p.fecha_prevista) < date('now')
+                 THEN CAST(julianday('now') - julianday(p.fecha_prevista) AS INTEGER) ELSE 0 END AS dias_retraso,
             c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre, pr.codigo AS proveedor_codigo,
             (SELECT COUNT(*) FROM pedido_lineas l WHERE l.pedido_id = p.id) AS lineas,
             (SELECT COALESCE(SUM(l.cantidad), 0) FROM pedido_lineas l WHERE l.pedido_id = p.id) AS unidades,
@@ -217,6 +231,107 @@ pedidosRoutes.get("/", async (c) => {
   });
 });
 
+// Presupuesto por centro: pedidos e importe del año, pendiente de recibir y
+// pedidos retrasados. Alimenta el cuadro de gasto del listado de pedidos.
+pedidosRoutes.get("/resumen", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const visibles = await centrosVisibles(db, user);
+  if (!visibles.length) return c.json({ items: [] });
+  const marcas = visibles.map(() => "?").join(", ");
+  const res = await db.prepare(
+    `SELECT c.id, c.nombre,
+       (SELECT COUNT(*) FROM pedidos p WHERE p.centro_id = c.id
+          AND strftime('%Y', p.fecha) = strftime('%Y', 'now')) AS pedidos_anio,
+       (SELECT COALESCE(SUM(l.cantidad * COALESCE(l.precio, 0)), 0) FROM pedidos p
+          JOIN pedido_lineas l ON l.pedido_id = p.id
+          WHERE p.centro_id = c.id AND strftime('%Y', p.fecha) = strftime('%Y', 'now')) AS importe_anio,
+       (SELECT COALESCE(SUM(l.cantidad * COALESCE(l.precio, 0)), 0) FROM pedidos p
+          JOIN pedido_lineas l ON l.pedido_id = p.id
+          WHERE p.centro_id = c.id AND p.estado <> 'aplicado') AS importe_pendiente,
+       (SELECT COUNT(*) FROM pedidos p WHERE p.centro_id = c.id AND p.estado IN ('enviado', 'recibido')
+          AND p.fecha_prevista IS NOT NULL AND date(p.fecha_prevista) < date('now')) AS retrasados
+     FROM centros c WHERE c.id IN (${marcas}) ORDER BY c.nombre COLLATE NOCASE`,
+  ).bind(...visibles.map((x) => x.id)).all<Row>();
+  return c.json({ items: res.results });
+});
+
+// Historial de precios de un producto: todos los pedidos en los que se compró.
+pedidosRoutes.get("/precios", async (c) => {
+  const codigo = texto(c.req.query("codigo"), 40);
+  if (!codigo) return c.json({ error: "Indica el código del producto" }, 400);
+  const res = await c.env.DB.prepare(
+    `SELECT pl.codigo, pl.producto, pl.precio, pl.cantidad, pl.origen,
+            p.numero, p.fecha, pr.nombre AS proveedor_nombre, pr.codigo AS proveedor_codigo
+     FROM pedido_lineas pl JOIN pedidos p ON p.id = pl.pedido_id
+     LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
+     WHERE TRIM(UPPER(pl.codigo)) = TRIM(UPPER(?))
+     ORDER BY p.fecha DESC, pl.id DESC LIMIT 60`,
+  ).bind(codigo).all<Row>();
+  return c.json({ items: res.results });
+});
+
+// Importación masiva de pedidos: cada fila es una línea y las filas con la
+// misma referencia «pedido» se agrupan en una cabecera con sus líneas.
+pedidosRoutes.post("/import", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const body = await leerCuerpo(c);
+  if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
+  if (body.rows.length > 500) return c.json({ error: "Máximo 500 líneas por importación" }, 400);
+  const errores: string[] = [];
+  const grupos = new Map<string, Row[]>();
+  for (const raw of body.rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const fila = raw as Row;
+    const clave = texto(fila.pedido, 40);
+    if (!clave) { if (errores.length < 8) errores.push("Hay filas sin la referencia de pedido"); continue; }
+    grupos.set(clave, [...(grupos.get(clave) ?? []), fila]);
+  }
+  let creados = 0, lineasCreadas = 0;
+  for (const [clave, filas] of grupos) {
+    const primera = filas[0];
+    const centroId = entero(primera.centro_id);
+    const proveedorId = entero(primera.proveedor_id);
+    if (!centroId || !proveedorId) { if (errores.length < 8) errores.push(`Pedido ${clave}: faltan centro o proveedor`); continue; }
+    if (!(await puedeGestionarCentro(db, user, centroId))) { if (errores.length < 8) errores.push(`Pedido ${clave}: no puedes gestionar ese centro`); continue; }
+    const proveedor = await db.prepare("SELECT nombre FROM proveedores WHERE id = ?").bind(proveedorId).first<{ nombre: string }>();
+    if (!proveedor) { if (errores.length < 8) errores.push(`Pedido ${clave}: el proveedor no existe`); continue; }
+    const catalogo = await db.prepare("SELECT codigo, producto FROM productos_disponibles WHERE proveedor_id = ?")
+      .bind(proveedorId).all<{ codigo: string; producto: string }>();
+    const permitidos = new Map(catalogo.results.map((p) => [String(p.codigo).trim().toUpperCase(), String(p.producto)]));
+    const lineas: Array<{ codigo: string; producto: string; cantidad: number; precio: number | null; origen: string }> = [];
+    let falloGrupo: string | null = null;
+    for (const fila of filas) {
+      const codigo = texto(fila.codigo, 40);
+      const cantidad = entero(fila.cantidad);
+      if (!codigo) { falloGrupo = "hay una línea sin código"; break; }
+      if (!cantidad || cantidad < 1) { falloGrupo = `la cantidad de «${codigo}» no es válida`; break; }
+      if (!permitidos.has(codigo.toUpperCase())) { falloGrupo = `el producto «${codigo}» no pertenece al proveedor`; break; }
+      // Un mismo código repetido en el CSV se suma en una sola línea.
+      const repetida = lineas.find((l) => l.codigo.toUpperCase() === codigo.toUpperCase());
+      if (repetida) { repetida.cantidad += cantidad; continue; }
+      lineas.push({ codigo, producto: permitidos.get(codigo.toUpperCase()) ?? codigo, cantidad, precio: decimal(fila.precio), origen: origenValido(fila.origen) });
+    }
+    if (falloGrupo || !lineas.length) { if (errores.length < 8) errores.push(`Pedido ${clave}: ${falloGrupo ?? "sin líneas"}`); continue; }
+    const numero = await siguienteNumero(db);
+    const notas = texto(primera.notas, 500) ?? `Importado desde CSV (${clave})`;
+    const res = await db.prepare(
+      "INSERT INTO pedidos (numero, centro_id, proveedor_id, estado, notas, creado_por) VALUES (?, ?, ?, 'borrador', ?, ?)",
+    ).bind(numero, centroId, proveedorId, notas, user.id).run();
+    const id = Number((res.meta as { last_row_id?: number }).last_row_id);
+    if (!id) { if (errores.length < 8) errores.push(`Pedido ${clave}: no se pudo crear`); continue; }
+    await ejecutar(db, lineas.map((l) => db.prepare(
+      "INSERT INTO pedido_lineas (pedido_id, codigo, producto, cantidad, precio, origen) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind(id, l.codigo, l.producto, l.cantidad, l.precio, l.origen)));
+    creados++;
+    lineasCreadas += lineas.length;
+    await logMovimiento(db, user, "alta", "pedidos", id, `Pedido ${numero} importado (${clave}) · ${lineas.length} líneas`, null, null);
+  }
+  if (!creados && errores.length) return c.json({ error: errores[0], errores }, 400);
+  return c.json({ creados, actualizados: 0, lineas: lineasCreadas, errores });
+});
+
 // Detalle de un pedido con sus líneas.
 pedidosRoutes.get("/:id", async (c) => {
   const user = c.get("user");
@@ -230,7 +345,8 @@ pedidosRoutes.get("/:id", async (c) => {
   }
   const [cabecera, lineas] = await Promise.all([
     db.prepare(
-      `SELECT p.*, c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre, pr.codigo AS proveedor_codigo, u.nombre AS creado_por_nombre
+      `SELECT p.*, c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre, pr.codigo AS proveedor_codigo,
+              pr.email AS proveedor_email, pr.dias_entrega, u.nombre AS creado_por_nombre
        FROM pedidos p JOIN centros c ON c.id = p.centro_id
        LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
        LEFT JOIN usuarios u ON u.id = p.creado_por
@@ -420,11 +536,99 @@ pedidosRoutes.post("/:id/enviar", async (c) => {
   if (pedido.estado !== "borrador") return c.json({ error: "El pedido ya se ha enviado" }, 400);
   const n = await db.prepare("SELECT COUNT(*) AS n FROM pedido_lineas WHERE pedido_id = ?").bind(id).first<{ n: number }>();
   if (!Number(n?.n)) return c.json({ error: "El pedido no tiene líneas" }, 400);
+  // Fecha prevista = hoy + plazo de entrega configurado en el proveedor.
+  const prov = pedido.proveedor_id
+    ? await db.prepare("SELECT dias_entrega FROM proveedores WHERE id = ?").bind(Number(pedido.proveedor_id)).first<{ dias_entrega: number }>()
+    : null;
+  const dias = Math.max(0, Number(prov?.dias_entrega ?? 0));
   await db.prepare(
-    "UPDATE pedidos SET estado = 'enviado', fecha_envio = date('now'), updated_at = datetime('now') WHERE id = ?",
-  ).bind(id).run();
-  await logMovimiento(db, user, "edicion", "pedidos", id, `Pedido ${pedido.numero} enviado al proveedor`, null, null);
-  return c.json({ ok: true, estado: "enviado" });
+    "UPDATE pedidos SET estado = 'enviado', fecha_envio = date('now'), fecha_prevista = date('now', ?), updated_at = datetime('now') WHERE id = ?",
+  ).bind(`+${dias} days`, id).run();
+  await logMovimiento(db, user, "edicion", "pedidos", id, `Pedido ${pedido.numero} enviado al proveedor · entrega prevista en ${dias} días`, null, null);
+  return c.json({ ok: true, estado: "enviado", dias_entrega: dias });
+});
+
+// Duplicar un pedido: crea un borrador nuevo con las mismas líneas y centro.
+pedidosRoutes.post("/:id/duplicar", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id < 1) return c.json({ error: "Pedido no válido" }, 400);
+  const pedido = await cargarPedido(db, id);
+  if (!pedido) return c.json({ error: "Pedido no encontrado" }, 404);
+  if (!(await puedeGestionarCentro(db, user, Number(pedido.centro_id)))) {
+    return c.json({ error: "Solo los responsables del centro pueden duplicar el pedido" }, 403);
+  }
+  const lineas = await db.prepare(
+    "SELECT codigo, producto, cantidad, precio, origen FROM pedido_lineas WHERE pedido_id = ? ORDER BY id",
+  ).bind(id).all<LineaEntrada>();
+  if (!lineas.results.length) return c.json({ error: "El pedido no tiene líneas que duplicar" }, 400);
+  const numero = await siguienteNumero(db);
+  const notas = texto(`Duplicado de ${pedido.numero}${pedido.notas ? ` · ${pedido.notas}` : ""}`, 500);
+  const res = await db.prepare(
+    "INSERT INTO pedidos (numero, centro_id, proveedor_id, estado, notas, creado_por) VALUES (?, ?, ?, 'borrador', ?, ?)",
+  ).bind(numero, Number(pedido.centro_id), pedido.proveedor_id, notas, user.id).run();
+  const nuevoId = Number((res.meta as { last_row_id?: number }).last_row_id);
+  if (!nuevoId) return c.json({ error: "No se pudo duplicar el pedido" }, 500);
+  await ejecutar(db, lineas.results.map((l) => db.prepare(
+    "INSERT INTO pedido_lineas (pedido_id, codigo, producto, cantidad, precio, origen) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind(nuevoId, l.codigo, l.producto, l.cantidad, l.precio, l.origen)));
+  await logMovimiento(db, user, "alta", "pedidos", nuevoId, `Pedido ${numero} duplicado de ${pedido.numero}`, null, null);
+  return c.json({ id: nuevoId, numero, ok: true }, 201);
+});
+
+// Enviar la hoja del pedido al proveedor por correo (SendGrid). Si no hay
+// proveedor de correo configurado responde «simulado», sin romper el flujo.
+pedidosRoutes.post("/:id/enviar-email", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id < 1) return c.json({ error: "Pedido no válido" }, 400);
+  const pedido = await cargarPedido(db, id);
+  if (!pedido) return c.json({ error: "Pedido no encontrado" }, 404);
+  if (!(await puedeGestionarCentro(db, user, Number(pedido.centro_id)))) {
+    return c.json({ error: "Solo los responsables del centro pueden enviar el pedido" }, 403);
+  }
+  const cabecera = await db.prepare(
+    `SELECT p.numero, c.nombre AS centro_nombre, pr.nombre AS proveedor_nombre,
+            pr.email AS proveedor_email, pr.contacto AS proveedor_contacto
+     FROM pedidos p JOIN centros c ON c.id = p.centro_id
+     LEFT JOIN proveedores pr ON pr.id = p.proveedor_id WHERE p.id = ?`,
+  ).bind(id).first<Row>();
+  const email = String(cabecera?.proveedor_email ?? "").trim();
+  if (!email) return c.json({ error: "El proveedor no tiene correo electrónico configurado" }, 400);
+  const lineas = await db.prepare(
+    "SELECT codigo, producto, cantidad, precio, origen FROM pedido_lineas WHERE pedido_id = ? ORDER BY producto",
+  ).bind(id).all<Row>();
+  if (!lineas.results.length) return c.json({ error: "El pedido no tiene líneas" }, 400);
+  const total = lineas.results.reduce((n, l) => n + Number(l.cantidad ?? 0) * Number(l.precio ?? 0), 0);
+  const filas = lineas.results.map((l) => `<tr>
+    <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${String(l.codigo ?? "")}</td>
+    <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${String(l.producto ?? "")}</td>
+    <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right">${Number(l.cantidad ?? 0)}</td>
+    <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right">${l.precio == null ? "—" : Number(l.precio).toFixed(2) + " €"}</td>
+  </tr>`).join("");
+  const html = `<div style="font-family:Segoe UI,system-ui,sans-serif;max-width:680px;margin:0 auto">
+    <h2 style="color:#1e3a8a">Pedido ${String(cabecera?.numero ?? "")}</h2>
+    <p><strong>Centro:</strong> ${String(cabecera?.centro_nombre ?? "")}<br/>
+       <strong>Proveedor:</strong> ${String(cabecera?.proveedor_nombre ?? "")}</p>
+    <table style="border-collapse:collapse;width:100%;font-size:14px">
+      <thead><tr style="background:#eff6ff"><th style="padding:8px 10px;text-align:left">Código</th><th style="padding:8px 10px;text-align:left">Producto</th><th style="padding:8px 10px;text-align:right">Cantidad</th><th style="padding:8px 10px;text-align:right">Precio</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    <p style="text-align:right"><strong>Total estimado: ${total.toFixed(2)} €</strong></p>
+    <p style="color:#64748b;font-size:12px">Enviado desde Inventarios por ${String(user.nombre)}.</p>
+  </div>`;
+  const text = `Pedido ${String(cabecera?.numero ?? "")}\nCentro: ${String(cabecera?.centro_nombre ?? "")}\nProveedor: ${String(cabecera?.proveedor_nombre ?? "")}\n\n` +
+    lineas.results.map((l) => `${String(l.codigo)} · ${String(l.producto)} · ${Number(l.cantidad ?? 0)} uds · ${l.precio == null ? "—" : Number(l.precio).toFixed(2) + " €"}`).join("\n") +
+    `\n\nTotal estimado: ${total.toFixed(2)} €`;
+  try {
+    const resultado = await sendResumen(c.env, email, `Pedido ${String(cabecera?.numero ?? "")} · Inventarios`, html, text);
+    await logMovimiento(db, user, "edicion", "pedidos", id, `Pedido ${pedido.numero} enviado por correo a ${email} (${resultado})`, null, null);
+    return c.json({ ok: true, enviado: resultado === "enviado", simulado: resultado === "simulado", to: email });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "No se pudo enviar el correo" }, 502);
+  }
 });
 
 // Recepción: número de albarán y recuento real línea a línea. Las líneas donde

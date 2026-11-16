@@ -51,9 +51,14 @@ function descargarPedido(pedido: Row, lineas: Row[]): void {
 
 interface Opciones {
   centros: Array<{ id: number; nombre: string }>;
-  proveedores: Array<{ id: number; codigo: string; nombre: string }>;
+  proveedores: Array<{ id: number; codigo: string; nombre: string; dias_entrega?: number }>;
   productos: Row[];
   puede_gestionar: boolean;
+}
+
+interface ResumenCentro {
+  id: number; nombre: string; pedidos_anio: number; importe_anio: number;
+  importe_pendiente: number; retrasados: number;
 }
 
 // ─────────────────────────────── Listado ─────────────────────────────────────
@@ -70,6 +75,10 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
   const [aviso, setAviso] = useState<Aviso | null>(null);
   const [detalleId, setDetalleId] = useState<number | null>(null);
   const [nuevo, setNuevo] = useState(false);
+  // Proveedor y reposición automática cuando se crea el pedido desde el
+  // cuadro de «Reposición pendiente» agrupado por proveedor.
+  const [sugerencia, setSugerencia] = useState<{ proveedorId: string; auto: boolean } | null>(null);
+  const [resumenCentros, setResumenCentros] = useState<ResumenCentro[]>([]);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -78,13 +87,15 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
       const params = new URLSearchParams();
       if (centroFiltro) params.set("centro_id", centroFiltro);
       if (estadoFiltro) params.set("estado", estadoFiltro);
-      const [lista, ops] = await Promise.all([
+      const [lista, ops, gasto] = await Promise.all([
         api.get<{ items: Row[]; total: number; puede_gestionar: boolean; centros: Opciones["centros"] }>(`/api/pedidos${params.size ? `?${params.toString()}` : ""}`),
         api.get<Opciones>("/api/pedidos/opciones"),
+        api.get<{ items: ResumenCentro[] }>("/api/pedidos/resumen"),
       ]);
       setItems(lista.items);
       setTotal(lista.total);
       setOpciones(ops);
+      setResumenCentros(gasto.items);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudieron cargar los pedidos");
     } finally {
@@ -104,8 +115,31 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
       unidades: items.reduce((n, p) => n + Number(p.unidades ?? 0), 0),
       importe: items.reduce((n, p) => n + Number(p.importe ?? 0), 0),
       reclamaciones: items.reduce((n, p) => n + Number(p.reclamaciones ?? 0), 0),
+      retrasados: items.filter((p) => Number(p.retrasado) === 1).length,
     };
   }, [items]);
+
+  // Reposición agrupada por proveedor: productos por debajo de su mínimo,
+  // descontando lo que ya viene de camino (unidades reservadas).
+  const reposicion = useMemo(() => {
+    const porProveedor = new Map<string, { id: string; nombre: string; deficit: number; productos: number }>();
+    for (const p of opciones?.productos ?? []) {
+      const min = Number(p.stock_minimo ?? 0);
+      if (min <= 0) continue;
+      const faltan = min - (Number(p.unidades_almacen ?? 0) + Number(p.unidades_reservadas ?? 0));
+      if (faltan <= 0) continue;
+      const id = String(p.proveedor_id ?? "");
+      if (!id) continue;
+      const prev = porProveedor.get(id);
+      porProveedor.set(id, {
+        id,
+        nombre: String(p.proveedor_nombre ?? opciones?.proveedores.find((x) => String(x.id) === id)?.nombre ?? "Proveedor"),
+        deficit: (prev?.deficit ?? 0) + faltan,
+        productos: (prev?.productos ?? 0) + 1,
+      });
+    }
+    return [...porProveedor.values()].sort((a, b) => b.deficit - a.deficit);
+  }, [opciones]);
 
   return <>
     <div className="toolbar no-print" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -125,10 +159,25 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
       Todavía no hay proveedores: créalos en la pestaña «Proveedores» para poder generar pedidos.
     </div>}
 
+    {puedeGestionar && reposicion.length > 0 && <div className="card card-pad no-print" style={{ marginBottom: 12 }}>
+      <div className="section-head"><h3>🔄 Reposición pendiente por proveedor</h3>
+        <span style={{ color: "var(--muted)", fontSize: 12.5 }}>Productos bajo mínimo descontando lo que ya viene de camino</span></div>
+      <div className="table-scroll"><table>
+        <thead><tr><th>Proveedor</th><th className="right">Productos bajo mínimo</th><th className="right">Unidades que faltan</th><th className="right">Acción</th></tr></thead>
+        <tbody>{reposicion.map((r) => <tr key={r.id}>
+          <td><strong>{r.nombre}</strong></td>
+          <td className="right">{formatNum(r.productos)}</td>
+          <td className="right"><span className="badge danger">{formatNum(r.deficit)} uds</span></td>
+          <td className="right"><button className="btn small" onClick={() => { setSugerencia({ proveedorId: r.id, auto: true }); setNuevo(true); }}>✨ Pedir repuesto</button></td>
+        </tr>)}</tbody>
+      </table></div>
+    </div>}
+
     <div className="kpis no-print">
       <div className="kpi"><div className="label">Pedidos abiertos</div><div className="value">{formatNum(resumen.abiertos)}</div><div className="kpi-sub">sin aplicar al stock</div></div>
       <div className="kpi"><div className="label">Unidades pedidas</div><div className="value">{formatNum(resumen.unidades)}</div><div className="kpi-sub">en los pedidos listados</div></div>
       <div className="kpi"><div className="label">Importe</div><div className="value">{formatNum(resumen.importe, 2)} €</div><div className="kpi-sub">precio de catálogo</div></div>
+      <div className={"kpi" + (resumen.retrasados ? " alert" : "")}><div className="label">Pedidos retrasados</div><div className="value">{formatNum(resumen.retrasados)}</div><div className="kpi-sub">pasada la fecha prevista</div></div>
       <div className={"kpi" + (resumen.reclamaciones ? " alert" : "")}><div className="label">Líneas a reclamar</div><div className="value">{formatNum(resumen.reclamaciones)}</div><div className="kpi-sub">con diferencia al recibir</div></div>
     </div>
 
@@ -143,7 +192,7 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
         </div>
         : <div className="table-scroll"><table>
           <thead><tr>
-            <th>Pedido</th><th>Fecha</th><th>Centro</th><th>Proveedor</th>
+            <th>Pedido</th><th>Fecha</th><th>Prevista</th><th>Centro</th><th>Proveedor</th>
             <th className="right">Líneas</th><th className="right">Unidades</th><th className="right">Importe (€)</th>
             <th>Estado</th><th>Albarán</th><th className="right">Acciones</th>
           </tr></thead>
@@ -152,6 +201,7 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
             return <tr key={String(p.id)}>
               <td><strong>{String(p.numero ?? "—")}</strong>{reclamaciones > 0 && <div><span className="badge danger">⚠️ {reclamaciones} a reclamar</span></div>}</td>
               <td>{formatFecha(p.fecha)}</td>
+              <td>{p.fecha_prevista ? <>{formatFecha(p.fecha_prevista)}{Number(p.retrasado) === 1 && <div><span className="badge danger">⏰ {formatNum(p.dias_retraso)} d. tarde</span></div>}</> : "—"}</td>
               <td>{String(p.centro_nombre ?? "—")}</td>
               <td>{String(p.proveedor_codigo ?? "")}{p.proveedor_codigo ? " · " : ""}{String(p.proveedor_nombre ?? "—")}</td>
               <td className="right">{formatNum(p.lineas)}</td>
@@ -171,10 +221,27 @@ export function PedidosPage({ user }: { user: { rol: string } }) {
       {formatNum(total)} pedidos · Cada centro genera su pedido, que se manda a un proveedor. Al recibirlo se apunta el <strong>número de albarán</strong> y se cuenta lo que ha llegado; después se suma al stock.
     </p>
 
+    {resumenCentros.length > 1 && <div className="card card-pad no-print" style={{ marginTop: 12 }}>
+      <div className="section-head"><h3>💶 Presupuesto y desviación por centro</h3>
+        <span style={{ color: "var(--muted)", fontSize: 12.5 }}>Importes del año en curso y pendiente de recibir</span></div>
+      <div className="table-scroll"><table>
+        <thead><tr><th>Centro</th><th className="right">Pedidos (año)</th><th className="right">Importe (año)</th><th className="right">Pendiente de recibir</th><th className="right">Retrasados</th></tr></thead>
+        <tbody>{resumenCentros.map((r) => <tr key={r.id}>
+          <td>{r.nombre}</td>
+          <td className="right">{formatNum(r.pedidos_anio)}</td>
+          <td className="right">{formatNum(r.importe_anio, 2)} €</td>
+          <td className="right">{formatNum(r.importe_pendiente, 2)} €</td>
+          <td className="right">{Number(r.retrasados) ? <span className="badge danger">{formatNum(r.retrasados)}</span> : "—"}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </div>}
+
     {nuevo && opciones && <NuevoPedidoModal
       opciones={opciones}
-      onClose={() => setNuevo(false)}
-      onCreado={(mensaje) => { setNuevo(false); setAviso({ message: mensaje, kind: "ok" }); void cargar(); }}
+      proveedorInicial={sugerencia?.proveedorId}
+      autoSugerir={sugerencia?.auto}
+      onClose={() => { setNuevo(false); setSugerencia(null); }}
+      onCreado={(mensaje) => { setNuevo(false); setSugerencia(null); setAviso({ message: mensaje, kind: "ok" }); void cargar(); }}
     />}
 
     {detalleId !== null && <PedidoDetalleModal
@@ -200,13 +267,15 @@ async function abrirYDescargar(id: number, onAviso: (a: Aviso) => void): Promise
 }
 
 // ─────────────────────────────── Nuevo pedido ───────────────────────────────
-function NuevoPedidoModal({ opciones, onClose, onCreado }: {
+function NuevoPedidoModal({ opciones, proveedorInicial, autoSugerir, onClose, onCreado }: {
   opciones: Opciones;
+  proveedorInicial?: string;
+  autoSugerir?: boolean;
   onClose: () => void;
   onCreado: (mensaje: string) => void;
 }) {
   const [centroId, setCentroId] = useState(String(opciones.centros[0]?.id ?? ""));
-  const [proveedorId, setProveedorId] = useState(String(opciones.proveedores[0]?.id ?? ""));
+  const [proveedorId, setProveedorId] = useState(String(proveedorInicial ?? opciones.proveedores[0]?.id ?? ""));
   const [notas, setNotas] = useState("");
   const [q, setQ] = useState("");
   // Origen de las líneas del pedido (fábrica o empresa gestora).
@@ -218,6 +287,14 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
 
   // Solo los productos del proveedor elegido: un pedido va a un proveedor.
   const productosProveedor = useMemo(() => opciones.productos.filter((p) => String(p.proveedor_id ?? "") === proveedorId), [opciones.productos, proveedorId]);
+  // Pedido lanzado desde «Reposición pendiente»: se rellenan solas las
+  // cantidades que faltan hasta el mínimo de cada producto.
+  const [auto, setAuto] = useState(Boolean(autoSugerir));
+  useEffect(() => {
+    if (!auto) return;
+    setCantidades((prev) => ({ ...sugerenciasReposicion(productosProveedor), ...prev }));
+    setAuto(false);
+  }, [auto, productosProveedor]);
 
   const filtrados = useMemo(() => {
     const n = q.trim().toLowerCase();
@@ -330,14 +407,17 @@ function NuevoPedidoModal({ opciones, onClose, onCreado }: {
       ? <div className="banner warn">Este proveedor no tiene productos: crea los suyos en «Productos disponibles» para poder pedirlos.</div>
       : <div className="table-scroll" style={{ maxHeight: 320, border: "1px solid var(--border)", borderRadius: 10 }}>
         <table className="tabla-frec">
-          <thead><tr><th>Código</th><th>Producto</th><th className="right">Precio (€)</th><th className="right">En almacén</th><th className="right">Mínimo</th><th style={{ width: 110 }}>Cantidad</th></tr></thead>
+          <thead><tr><th>Código</th><th>Producto</th><th className="right">Precio (€)</th><th className="right">En almacén</th><th className="right">Reservado</th><th className="right">Disponible</th><th className="right">Mínimo</th><th style={{ width: 110 }}>Cantidad</th></tr></thead>
           <tbody>{filtrados.map((p) => {
             const falta = faltanteHastaMinimo(p.unidades_almacen, p.stock_minimo);
+            const disponible = Math.max(0, Number(p.unidades_almacen ?? 0) - Number(p.unidades_reservadas ?? 0));
             return <tr key={String(p.id)}>
             <td><strong>{String(p.codigo ?? "—")}</strong></td>
             <td style={{ whiteSpace: "normal" }}>{String(p.producto ?? "—")}</td>
-            <td className="right">{p.precio == null || p.precio === "" ? "—" : formatNum(p.precio, 2)}</td>
+            <td className="right">{p.precio == null || p.precio === "" ? "—" : formatNum(p.precio, 2)}{p.ultimo_precio != null && Number(p.ultimo_precio) !== Number(p.precio) && <div><small style={{ color: "var(--muted)" }}>últ. {formatNum(p.ultimo_precio, 2)} €</small></div>}</td>
             <td className="right">{formatNum(p.unidades_almacen)}{falta > 0 && <div><span className="badge danger" title={`Faltan ${falta} para el mínimo`}>⚠️ reponer</span></div>}</td>
+            <td className="right">{Number(p.unidades_reservadas ?? 0) > 0 ? <span className="badge warn">{formatNum(p.unidades_reservadas)}</span> : "—"}</td>
+            <td className="right">{Number(p.unidades_reservadas ?? 0) > 0 ? <span className={disponible <= 0 ? "badge danger" : "badge ok"}>{formatNum(disponible)}</span> : formatNum(p.unidades_almacen)}</td>
             <td className="right">{Number(p.stock_minimo ?? 0) > 0 ? formatNum(p.stock_minimo) : "—"}</td>
             <td>
               <input
@@ -512,6 +592,33 @@ function PedidoDetalleModal({ id, productos, onClose, onAviso, onCambio }: {
     void ejecutar(async () => { await api.del(`/api/pedidos/${id}`); onClose(); }, "Pedido eliminado");
   };
 
+  const duplicar = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ numero?: string }>(`/api/pedidos/${id}/duplicar`, {});
+      onAviso({ message: `Pedido ${r.numero ?? ""} creado como borrador`, kind: "ok" });
+      onClose();
+      onCambio();
+    } catch (e) {
+      onAviso({ message: e instanceof Error ? e.message : "No se pudo duplicar el pedido", kind: "error" });
+    } finally { setBusy(false); }
+  };
+
+  const enviarEmail = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ enviado?: boolean; simulado?: boolean; to?: string }>(`/api/pedidos/${id}/enviar-email`, {});
+      onAviso({
+        message: r.enviado ? `Pedido enviado a ${r.to ?? "el proveedor"}`
+          : r.simulado ? "Correo simulado: configura SENDGRID_API_KEY para enviarlo de verdad"
+          : "Pedido preparado para enviar",
+        kind: "ok",
+      });
+    } catch (e) {
+      onAviso({ message: e instanceof Error ? e.message : "No se pudo enviar el pedido", kind: "error" });
+    } finally { setBusy(false); }
+  };
+
   const totalPedido = lineas.reduce((n, l) => n + Number(l.cantidad ?? 0), 0);
   const totalRecibido = lineas.reduce((n, l) => n + Number(l.cantidad_recibida ?? 0), 0);
   const diferencias = lineas.filter((l) => l.cantidad_recibida != null && Number(l.cantidad_recibida) !== Number(l.cantidad));
@@ -539,6 +646,9 @@ function PedidoDetalleModal({ id, productos, onClose, onAviso, onCambio }: {
             <span><strong>{formatNum(lineas.length)}</strong> líneas</span>
             <span><strong>{formatNum(totalPedido)}</strong> pedidas</span>
             {estado !== "borrador" && <span><strong>{formatNum(totalRecibido)}</strong> recibidas</span>}
+            {pedido.fecha_prevista ? <span>Entrega prevista <strong>{formatFecha(pedido.fecha_prevista)}</strong>
+              {String(pedido.fecha_prevista) < new Date().toISOString().slice(0, 10) && estado !== "aplicado" && <span className="badge danger" style={{ marginLeft: 6 }}>⏰ retrasado</span>}
+            </span> : null}
             {pedido.albaran ? <span>Albarán <strong>{String(pedido.albaran)}</strong></span> : null}
             {pedido.notas ? <span className="muted">{String(pedido.notas)}</span> : null}
           </div>
@@ -673,6 +783,8 @@ function PedidoDetalleModal({ id, productos, onClose, onAviso, onCambio }: {
           {estado === "borrador" && gestionable && <button type="button" className="btn danger" onClick={borrarPedido} disabled={busy}>🗑️ Eliminar pedido</button>}
           <div className="pedido-acciones">
             <button type="button" className="btn secondary" onClick={() => descargarPedido(pedido, lineas)}>⬇️ Descargar Excel</button>
+            {gestionable && <button type="button" className="btn secondary" onClick={() => void duplicar()} disabled={busy}>📄 Duplicar</button>}
+            {gestionable && <button type="button" className="btn secondary" onClick={() => void enviarEmail()} disabled={busy}>✉️ Enviar al proveedor</button>}
             {estado === "borrador" && gestionable && <button type="button" className="btn" onClick={enviar} disabled={busy || !lineas.length}>📤 Marcar enviado</button>}
             {estado === "aplicado" && <span className="badge ok">✅ Sumado al stock</span>}
           </div>

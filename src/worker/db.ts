@@ -54,7 +54,7 @@ const SCHEMA: string[] = [
   // Catálogo de productos que se pueden pedir (proveedor, código, producto y
   // precio). Su código lo relaciona con `material_limpieza` (unidades en
   // almacén) y alimenta la pestaña «Productos disponibles».
-  `CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS productos_disponibles (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), proveedor_alternativo_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL UNIQUE, producto TEXT NOT NULL, precio REAL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Líneas del pedido de material antiguo (se mantiene por compatibilidad; el
   // pedido vivo es `pedidos` + `pedido_lineas`).
   `CREATE TABLE IF NOT EXISTS pedidos_material (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER REFERENCES proveedores(id), codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, precio REAL, origen TEXT NOT NULL DEFAULT 'fabrica', aplicado INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
@@ -65,16 +65,24 @@ const SCHEMA: string[] = [
   // Formación/carnet/revisión de un operario: fecha de realización y caducidad
   // calculada. Se guarda el centro donde se registró y las notas.
   `CREATE TABLE IF NOT EXISTS operario_formaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, formacion_id INTEGER NOT NULL REFERENCES formaciones(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, fecha TEXT NOT NULL, caducidad TEXT, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
-  // Proveedores a los que se manda cada pedido. El código es la referencia
-  // corta que se usa en el catálogo y en la hoja de pedido.
-  `CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, direccion TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Proveedores a los que se manda cada pedido. El ID de proveedor lo asigna
+  // el usuario (no es autonumérico) y es la referencia corta que se usa en el
+  // catálogo y en la hoja de pedido; `codigo` se conserva sincronizado por
+  // compatibilidad con los registros y consultas anteriores.
+  `CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, id_proveedor TEXT NOT NULL UNIQUE, codigo TEXT NOT NULL UNIQUE, nombre TEXT NOT NULL, contacto TEXT, email TEXT, telefono TEXT, direccion TEXT, notas TEXT, activo INTEGER NOT NULL DEFAULT 1, dias_entrega INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Histórico de errores de la aplicación (validaciones, importaciones y
+  // fallos del servidor). Alimenta la pestaña «Errores» de Gestión de informes.
+  `CREATE TABLE IF NOT EXISTS errores (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL DEFAULT (datetime('now')), nivel TEXT NOT NULL DEFAULT 'error', origen TEXT NOT NULL DEFAULT 'servidor', metodo TEXT, ruta TEXT, mensaje TEXT NOT NULL, detalle TEXT, usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, usuario TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   // Pedido de consumibles de un centro: nace en borrador, se manda al proveedor
   // (enviado), se recepciona con el número de albarán y el recuento real
   // (recibido) y, por último, suma al stock (aplicado).
-  `CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT NOT NULL UNIQUE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL, estado TEXT NOT NULL DEFAULT 'borrador', fecha TEXT NOT NULL DEFAULT (date('now')), fecha_envio TEXT, fecha_recepcion TEXT, albaran TEXT, notas TEXT, reclamacion TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT NOT NULL UNIQUE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL, estado TEXT NOT NULL DEFAULT 'borrador', fecha TEXT NOT NULL DEFAULT (date('now')), fecha_envio TEXT, fecha_prevista TEXT, fecha_recepcion TEXT, albaran TEXT, notas TEXT, reclamacion TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Una línea por producto pedido: lo pedido, lo contado al recibir (NULL si
   // todavía no se ha contado) y si hay que reclamar la diferencia.
   `CREATE TABLE IF NOT EXISTS pedido_lineas (id INTEGER PRIMARY KEY AUTOINCREMENT, pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE, codigo TEXT NOT NULL, producto TEXT NOT NULL, cantidad INTEGER NOT NULL DEFAULT 0, cantidad_recibida INTEGER, precio REAL, origen TEXT NOT NULL DEFAULT 'empresa', reclamar INTEGER NOT NULL DEFAULT 0, motivo TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Órdenes de trabajo: tareas de limpieza, mantenimiento o incidencias de un
+  // centro con su zona, operario asignado, prioridad, fechas y horas.
+  `CREATE TABLE IF NOT EXISTS trabajos (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, zona_id INTEGER REFERENCES zonas(id) ON DELETE SET NULL, subzona_id INTEGER REFERENCES subzonas(id) ON DELETE SET NULL, titulo TEXT NOT NULL, descripcion TEXT, tipo TEXT NOT NULL DEFAULT 'limpieza', prioridad TEXT NOT NULL DEFAULT 'normal', estado TEXT NOT NULL DEFAULT 'abierto', operario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, fecha_apertura TEXT NOT NULL DEFAULT (date('now')), fecha_prevista TEXT, fecha_cierre TEXT, horas REAL, material TEXT, notas TEXT, creado_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   // Recuentos de inventario de químicos: una fila por recuento validado y una
   // por cada lote del listado (litros del sistema frente a los litros reales
   // contados). Es la «hoja de inventario» que deja por escrito qué lotes se
@@ -142,10 +150,17 @@ const ALTERS: Array<[string, string]> = [
   ["proveedores", "telefono TEXT"], ["proveedores", "notas TEXT"],
   ["proveedores", "activo INTEGER NOT NULL DEFAULT 1"],
   ["proveedores", "codigo TEXT"], ["proveedores", "direccion TEXT"],
+  // Identificador manual del proveedor (no autonumérico).
+  ["proveedores", "id_proveedor TEXT"],
   // Cada producto del catálogo se pide a un único proveedor.
   ["productos_disponibles", "proveedor_id INTEGER REFERENCES proveedores(id)"],
+  // Proveedor de respaldo para cuando el principal no puede servir.
+  ["productos_disponibles", "proveedor_alternativo_id INTEGER REFERENCES proveedores(id)"],
   ["pedidos_material", "proveedor_id INTEGER REFERENCES proveedores(id)"],
   ["pedidos", "reclamacion TEXT"],
+  // Plazo de entrega del proveedor y fecha prevista de recepción del pedido.
+  ["proveedores", "dias_entrega INTEGER NOT NULL DEFAULT 0"],
+  ["pedidos", "fecha_prevista TEXT"],
   // Datos personales del operario que faltaban en su ficha.
   ["usuarios", "telefono TEXT"], ["usuarios", "puesto TEXT"],
 ];
@@ -299,6 +314,11 @@ export async function bootstrap(db: D1Database): Promise<void> {
     }
     await db.prepare("UPDATE proveedores SET codigo = ? WHERE id = ?").bind(codigo, Number(p.id)).run();
   }
+  // El ID de proveedor es manual: los proveedores anteriores toman su código
+  // como ID para que el catálogo y los pedidos lo muestren sin cambios.
+  await db.prepare(
+    "UPDATE proveedores SET id_proveedor = codigo WHERE id_proveedor IS NULL OR TRIM(id_proveedor) = ''",
+  ).run();
   // Productos y líneas antiguas sin proveedor: se asignan a un proveedor
   // general para que ningún producto quede huérfano. Si no hay ninguno, se crea.
   const sinProveedor = await db.prepare(
@@ -307,7 +327,7 @@ export async function bootstrap(db: D1Database): Promise<void> {
   if (sinProveedor && Number(sinProveedor.n) > 0) {
     let prov = await db.prepare("SELECT id FROM proveedores WHERE codigo = 'GEN'").first();
     if (!prov) {
-      await db.prepare("INSERT INTO proveedores (codigo, nombre, notas) VALUES ('GEN', 'Proveedor general', 'Asignado automáticamente a los productos y pedidos anteriores a la gestión de proveedores')").run();
+      await db.prepare("INSERT INTO proveedores (id_proveedor, codigo, nombre, notas) VALUES ('GEN', 'GEN', 'Proveedor general', 'Asignado automáticamente a los productos y pedidos anteriores a la gestión de proveedores')").run();
       prov = await db.prepare("SELECT id FROM proveedores WHERE codigo = 'GEN'").first();
     }
     if (prov) {
@@ -406,12 +426,20 @@ export async function bootstrap(db: D1Database): Promise<void> {
     // y estado, y el detalle carga las líneas del pedido).
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_nombre ON proveedores(nombre)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_codigo ON proveedores(codigo)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_proveedores_id ON proveedores(id_proveedor)",
+    // Histórico de errores: se consulta por fecha y se filtra por nivel/origen.
+    "CREATE INDEX IF NOT EXISTS idx_errores_fecha ON errores(fecha)",
+    "CREATE INDEX IF NOT EXISTS idx_errores_nivel ON errores(nivel, origen)",
     "CREATE INDEX IF NOT EXISTS idx_productos_proveedor ON productos_disponibles(proveedor_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedidos_material_proveedor ON pedidos_material(proveedor_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedidos_centro ON pedidos(centro_id, estado)",
     "CREATE INDEX IF NOT EXISTS idx_pedidos_proveedor ON pedidos(proveedor_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_pedido ON pedido_lineas(pedido_id)",
     "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_codigo ON pedido_lineas(codigo)",
+    // Trabajos: listado por centro/estado y vencimientos por fecha prevista.
+    "CREATE INDEX IF NOT EXISTS idx_trabajos_centro ON trabajos(centro_id, estado)",
+    "CREATE INDEX IF NOT EXISTS idx_trabajos_fecha ON trabajos(fecha_prevista)",
+    "CREATE INDEX IF NOT EXISTS idx_trabajos_operario ON trabajos(operario_id)",
     // Formaciones: catálogo por tipo y caducidades por operario (la matriz de
     // un centro y los avisos de los próximos 30 días).
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_formaciones_nombre ON formaciones(nombre)",

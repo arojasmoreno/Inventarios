@@ -497,16 +497,18 @@ export const consumiblesTipos = createCrud(consumiblesTiposSpec);
 // código en esa tabla (`unidades_almacen`).
 export const productosDisponiblesSpec: CrudSpec = {
   table: "productos_disponibles", orderBy: "producto", refProveedor: true,
+  extraSearchCols: ["p.codigo", "p.nombre"],
   extraSelect: [
     `(SELECT COALESCE(SUM(ml.cantidad), 0) FROM material_limpieza ml
       WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(t.codigo))) AS unidades_almacen`,
     `EXISTS (SELECT 1 FROM material_limpieza ml2
       WHERE ml2.codigo IS NOT NULL AND TRIM(UPPER(ml2.codigo)) = TRIM(UPPER(t.codigo))) AS en_almacen`,
+    `(SELECT pa.nombre FROM proveedores pa WHERE pa.id = t.proveedor_alternativo_id) AS proveedor_alternativo_nombre`,
   ],
-  extraSearchCols: ["p.codigo", "p.nombre"],
   read: "all", create: "admin", update: "admin", delete: "admin",
   fields: [
     { name: "proveedor_id", label: "Proveedor", type: "integer", required: true, min: 1 },
+    { name: "proveedor_alternativo_id", label: "Proveedor alternativo", type: "integer", required: false, min: 1 },
     { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
     { name: "producto", label: "Producto", type: "text", required: true, maxLength: 200 },
     { name: "precio", label: "Precio (€)", type: "number", required: false, min: 0, placeholder: "Opcional" },
@@ -516,6 +518,14 @@ export const productosDisponiblesSpec: CrudSpec = {
     if (proveedorId !== undefined && proveedorId !== null) {
       const p = await db.prepare("SELECT id FROM proveedores WHERE id = ?").bind(Number(proveedorId)).first();
       if (!p) throw new ValidationError("El proveedor seleccionado no existe");
+    }
+    const alternativo = data.proveedor_alternativo_id;
+    if (alternativo !== undefined && alternativo !== null) {
+      const p = await db.prepare("SELECT id FROM proveedores WHERE id = ?").bind(Number(alternativo)).first();
+      if (!p) throw new ValidationError("El proveedor alternativo no existe");
+      if (proveedorId !== undefined && Number(proveedorId) === Number(alternativo)) {
+        throw new ValidationError("El proveedor alternativo debe ser distinto del principal");
+      }
     }
     return data;
   },
@@ -543,7 +553,9 @@ export const formacionesSpec: CrudSpec = {
 };
 export const formaciones = createCrud(formacionesSpec);
 // ---- Proveedores de los pedidos ----
-// El código identifica al proveedor y se muestra en el catálogo y en el pedido.
+// El ID de proveedor lo asigna el usuario (no es autonumérico) y se muestra en
+// el catálogo y en el pedido. `codigo` se conserva sincronizado con el ID por
+// compatibilidad con los datos y consultas anteriores.
 // No se puede borrar mientras tenga productos o pedidos asociados.
 export const proveedoresSpec: CrudSpec = {
   table: "proveedores", orderBy: "nombre",
@@ -559,7 +571,10 @@ export const proveedoresSpec: CrudSpec = {
   ],
   read: "centros", create: "admin", update: "admin", delete: "admin",
   fields: [
-    { name: "codigo", label: "Código de proveedor", type: "text", required: true, unique: true, maxLength: 40, placeholder: "Ej. PROV-001" },
+    // El ID se teclea a mano: nunca se genera con el autonumérico de la tabla.
+    { name: "id_proveedor", label: "ID de proveedor", type: "text", required: false, unique: true, maxLength: 40, placeholder: "Ej. PROV-001" },
+    // Compatibilidad: los clientes antiguos siguen enviando «codigo».
+    { name: "codigo", label: "Código", type: "text", required: false, unique: true, maxLength: 40 },
     { name: "nombre", label: "Nombre", type: "text", required: true, unique: true, maxLength: 160 },
     { name: "contacto", label: "Persona de contacto", type: "text", required: false, maxLength: 160 },
     { name: "email", label: "Correo electrónico", type: "text", required: false, maxLength: 160 },
@@ -567,8 +582,23 @@ export const proveedoresSpec: CrudSpec = {
     { name: "direccion", label: "Dirección", type: "text", required: false, maxLength: 200 },
     { name: "notas", label: "Notas", type: "textarea", required: false },
     { name: "activo", label: "Activo", type: "boolean", required: false },
+    // Plazo medio de entrega: se usa para calcular la fecha prevista del pedido.
+    { name: "dias_entrega", label: "Plazo de entrega (días)", type: "integer", required: false, min: 0 },
   ],
-  beforeWrite: async (_db, data, mode) => {
+  beforeWrite: async (db, data, mode, existing) => {
+    // El ID de proveedor es manual: si llega solo «codigo» se usa como ID y
+    // ambos campos quedan siempre iguales.
+    const bruto = data.id_proveedor ?? data.codigo;
+    const idProv = typeof bruto === "string" ? bruto.trim() : "";
+    if (mode === "insert" && !idProv) throw new ValidationError("El ID de proveedor es obligatorio");
+    if (idProv) {
+      const dup = await db.prepare(
+        "SELECT id FROM proveedores WHERE (TRIM(UPPER(id_proveedor)) = TRIM(UPPER(?)) OR TRIM(UPPER(codigo)) = TRIM(UPPER(?))) AND id != ?",
+      ).bind(idProv, idProv, Number(existing?.id ?? 0)).first();
+      if (dup) throw new ValidationError(`Ya existe un proveedor con ID ${idProv}`);
+      data.id_proveedor = idProv;
+      data.codigo = idProv;
+    }
     if (mode === "insert" && (data.activo === undefined || data.activo === null)) data.activo = 1;
     return data;
   },

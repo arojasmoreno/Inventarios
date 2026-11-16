@@ -22,6 +22,11 @@ interface PanelData {
   revisiones_epis: Row[];
   formaciones_proximas: Row[];
   formaciones_caducan30: number;
+  pedidos?: { total: number; pendientes: number; retrasados: number };
+  trabajos?: { abiertos: number; en_curso: number; vencidos: number };
+  errores_24h?: number;
+  valor_stock?: { quimicos: number; material: number; epis: number; ropa: number; total: number };
+  rotacion_90d?: { unidades: number; stock: number; indice: number };
 }
 
 interface EnvioResumen { ok: boolean; enviado: boolean; enviados?: number; destinatarios?: number; message?: string; }
@@ -80,6 +85,17 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
         <div className={"kpi-sub" + (data.sin_consumo.length ? " up" : "")}>estaciones activas paradas</div></a>
       <div className={"kpi" + (alertas > 0 ? " alert" : "")}><div className="label">Alertas</div><div className="value">{formatNum(alertas)}</div>
         <div className="kpi-sub">stock {formatNum(data.stock_bajo.length)} · revisiones {formatNum(data.revisiones_epis.length)} · formaciones {formatNum(data.formaciones_proximas.length)} · máquinas {formatNum(data.maquinas_no_operativas.length)}</div></div>
+      <a className="kpi" href="#/pedidos" style={{ textDecoration: "none", color: "inherit" }}>
+        <div className="label">Pedidos pendientes</div><div className="value">{formatNum(data.pedidos?.pendientes ?? 0)}</div>
+        <div className={"kpi-sub" + (Number(data.pedidos?.retrasados) ? " up" : "")}>{formatNum(data.pedidos?.retrasados ?? 0)} retrasados · ver pedidos</div></a>
+      <a className="kpi" href="#/trabajos" style={{ textDecoration: "none", color: "inherit" }}>
+        <div className="label">Trabajos abiertos</div><div className="value">{formatNum(data.trabajos?.abiertos ?? 0)}</div>
+        <div className={"kpi-sub" + (Number(data.trabajos?.vencidos) ? " up" : "")}>{formatNum(data.trabajos?.en_curso ?? 0)} en curso · {formatNum(data.trabajos?.vencidos ?? 0)} vencidos</div></a>
+      <div className="kpi"><div className="label">Valor del almacén</div><div className="value">{formatNum(data.valor_stock?.total ?? 0, 2)} €</div>
+        <div className="kpi-sub">rotación 90 d: {formatNum(data.rotacion_90d?.indice ?? 0, 2)} · consumo {formatNum(data.rotacion_90d?.unidades ?? 0)} ud.</div></div>
+      <a className={"kpi" + (Number(data.errores_24h) ? " alert" : "")} href="#/gestion-informes" style={{ textDecoration: "none", color: "inherit" }}>
+        <div className="label">Errores (24 h)</div><div className="value">{formatNum(data.errores_24h ?? 0)}</div>
+        <div className="kpi-sub">revisar en Gestión de informes → Errores</div></a>
     </div>
 
     <div className="card card-pad">
