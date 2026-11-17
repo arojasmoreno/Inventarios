@@ -503,6 +503,13 @@ export const productosDisponiblesSpec: CrudSpec = {
       WHERE ml.codigo IS NOT NULL AND TRIM(UPPER(ml.codigo)) = TRIM(UPPER(t.codigo))) AS unidades_almacen`,
     `EXISTS (SELECT 1 FROM material_limpieza ml2
       WHERE ml2.codigo IS NOT NULL AND TRIM(UPPER(ml2.codigo)) = TRIM(UPPER(t.codigo))) AS en_almacen`,
+    // Reservado: lo pedido en pedidos aún sin aplicar al stock.
+    `(SELECT COALESCE(SUM(pl.cantidad), 0) FROM pedido_lineas pl JOIN pedidos pe ON pe.id = pl.pedido_id
+      WHERE pe.estado <> 'aplicado' AND TRIM(UPPER(pl.codigo)) = TRIM(UPPER(t.codigo))) AS unidades_reservadas`,
+    // Último precio pagado por este producto en un pedido (histórico).
+    `(SELECT pl.precio FROM pedido_lineas pl JOIN pedidos pe ON pe.id = pl.pedido_id
+      WHERE pl.precio IS NOT NULL AND TRIM(UPPER(pl.codigo)) = TRIM(UPPER(t.codigo))
+      ORDER BY pe.fecha DESC, pl.id DESC LIMIT 1) AS ultimo_precio`,
     `(SELECT pa.nombre FROM proveedores pa WHERE pa.id = t.proveedor_alternativo_id) AS proveedor_alternativo_nombre`,
   ],
   read: "all", create: "admin", update: "admin", delete: "admin",
@@ -596,8 +603,12 @@ export const proveedoresSpec: CrudSpec = {
         "SELECT id FROM proveedores WHERE (TRIM(UPPER(id_proveedor)) = TRIM(UPPER(?)) OR TRIM(UPPER(codigo)) = TRIM(UPPER(?))) AND id != ?",
       ).bind(idProv, idProv, Number(existing?.id ?? 0)).first();
       if (dup) throw new ValidationError(`Ya existe un proveedor con ID ${idProv}`);
-      data.id_proveedor = idProv;
-      data.codigo = idProv;
+      // Si solo cambia la caja respecto al código guardado se conserva el
+      // original: importar «pr-001» no renombra el proveedor «PR-001».
+      const guardado = String(existing?.id_proveedor ?? existing?.codigo ?? "").trim();
+      const canonico = guardado && guardado.toUpperCase() === idProv.toUpperCase() ? guardado : idProv;
+      data.id_proveedor = canonico;
+      data.codigo = canonico;
     }
     if (mode === "insert" && (data.activo === undefined || data.activo === null)) data.activo = 1;
     return data;

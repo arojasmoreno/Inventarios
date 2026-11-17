@@ -120,10 +120,17 @@ export function validate(spec: CrudSpec, body: Record<string, unknown>, mode: "i
   if (mode === "insert") for (const f of spec.fields) if (f.required && f.type !== "password" && (data[f.name] === undefined || data[f.name] === null)) throw new ValidationError(`${f.label} es obligatorio`);
   return data;
 }
+// Los campos de texto únicos (códigos y nombres) se comparan sin distinguir
+// mayúsculas ni espacios sobrantes: «M-004» y «m-004» son el mismo producto.
+export function claveUnica(f: FieldSpec, valor: unknown): string {
+  return f.type === "text" ? String(valor).trim().toUpperCase() : String(valor);
+}
 export async function checkUnique(db: D1Database, spec: CrudSpec, data: Record<string, unknown>, excludeId: number | null): Promise<void> {
   for (const f of spec.fields) {
     if (!f.unique || data[f.name] === undefined || data[f.name] === null) continue;
-    const row = await db.prepare(`SELECT id FROM ${spec.table} WHERE ${f.name} = ?${excludeId ? " AND id != ?" : ""}`).bind(...(excludeId ? [data[f.name], excludeId] : [data[f.name]])).first();
+    const columna = f.type === "text" ? `TRIM(UPPER(${f.name}))` : f.name;
+    const valor = f.type === "text" ? String(data[f.name]).trim().toUpperCase() : data[f.name];
+    const row = await db.prepare(`SELECT id FROM ${spec.table} WHERE ${columna} = ?${excludeId ? " AND id != ?" : ""}`).bind(...(excludeId ? [valor, excludeId] : [valor])).first();
     if (row) throw new ValidationError(`Ya existe un registro con ${f.label} = ${String(data[f.name])}`);
   }
 }
@@ -207,11 +214,24 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
     if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
     if (body.rows.length > 500) return c.json({ error: "Máximo 500 registros por importación" }, 400);
-    const uniqueField = spec.fields.find(f => f.unique);
-    const existingByCode = new Map<string, Record<string, unknown>>();
-    if (uniqueField) {
-      const rows = (await c.env.DB.prepare(`SELECT id, ${uniqueField.name} FROM ${spec.table} WHERE ${uniqueField.name} IS NOT NULL`).all()).results as Record<string, unknown>[];
-      for (const r of rows) existingByCode.set(String(r[uniqueField.name]), r);
+    // Índice de los registros existentes por CADA campo único: una fila puede
+    // identificar el registro por cualquiera de ellos (p. ej. un proveedor por
+    // su «codigo» aunque el ID sea otro), y el cotejo de texto ignora caja.
+    const unicos = spec.fields.filter(f => f.unique);
+    const uniqueField = unicos[0];
+    const existentesPor = new Map<string, Map<string, Record<string, unknown>>>();
+    if (unicos.length) {
+      const columnas = unicos.map(f => f.name).join(", ");
+      const rows = (await c.env.DB.prepare(`SELECT id, ${columnas} FROM ${spec.table}`).all()).results as Record<string, unknown>[];
+      for (const f of unicos) {
+        const indice = new Map<string, Record<string, unknown>>();
+        for (const r of rows) {
+          const valor = r[f.name];
+          if (valor === null || valor === undefined || String(valor).trim() === "") continue;
+          indice.set(claveUnica(f, valor), r);
+        }
+        existentesPor.set(f.name, indice);
+      }
     }
     let creados = 0, actualizados = 0;
     const errores: string[] = [];
@@ -226,12 +246,14 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
         let data = validate(spec, raw as Record<string, unknown>, "insert");
         let mode: "insert" | "update" = "insert";
         let existing: Record<string, unknown> | undefined;
-        if (uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
-          const found = existingByCode.get(String(data[uniqueField.name]));
-          if (found) {
-            mode = "update";
-            existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
-          }
+        for (const f of unicos) {
+          const valor = data[f.name];
+          if (valor === undefined || valor === null || String(valor).trim() === "") continue;
+          const found = existentesPor.get(f.name)?.get(claveUnica(f, valor));
+          if (!found) continue;
+          mode = "update";
+          existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
+          break;
         }
         if (spec.table === "centros" && mode === "update") {
           const err = await centroScope(c, c.get("user"), Number(existing?.id), "update");
@@ -257,8 +279,15 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
           await c.env.DB.prepare("INSERT OR IGNORE INTO usuario_centros (usuario_id, centro_id) VALUES (?, ?)").bind(c.get("user").id, rowId).run();
         }
         await audit(c, spec, mode === "insert" ? "alta" : "edicion", row ?? { ...data, id: rowId }, mode === "update" ? existing : undefined);
-        if (mode === "insert" && uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
-          existingByCode.set(String(data[uniqueField.name]), { id: rowId, [uniqueField.name]: data[uniqueField.name] });
+        // El registro recién creado se añade a los índices para que las filas
+        // siguientes del mismo archivo lo actualicen en vez de duplicarlo.
+        if (mode === "insert") {
+          const registro = row ?? { ...data, id: rowId };
+          for (const f of unicos) {
+            const valor = registro[f.name];
+            if (valor === null || valor === undefined || String(valor).trim() === "") continue;
+            existentesPor.get(f.name)?.set(claveUnica(f, valor), registro);
+          }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "registro no válido";

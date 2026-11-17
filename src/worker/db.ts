@@ -295,8 +295,17 @@ async function seed(db: D1Database): Promise<void> {
 }
 
 let ready = false;
+// Bases ya inicializadas en este proceso: el esquema se crea una vez por base
+// (los tests crean una base en memoria por archivo) y el resto de arranques de
+// la misma base solo pagan una consulta de comprobación.
+const listas = new WeakSet<object>();
 export async function bootstrap(db: D1Database): Promise<void> {
-  if (ready) return;
+  const marca = db as unknown as object;
+  if (listas.has(marca)) return;
+  if (ready) {
+    const existe = await db.prepare("SELECT 1 AS x FROM usuarios LIMIT 1").first().catch(() => null);
+    if (existe) { listas.add(marca); return; }
+  }
   for (const sql of SCHEMA) await db.prepare(sql).run();
   await migrate(db);
   const count = await db.prepare("SELECT COUNT(*) AS n FROM usuarios").first();
@@ -462,4 +471,5 @@ export async function bootstrap(db: D1Database): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_limpieza_faenas_origen ON limpieza_faenas(plan_id)",
   ] as const) await db.prepare(idx).run();
   ready = true;
+  listas.add(marca);
 }
