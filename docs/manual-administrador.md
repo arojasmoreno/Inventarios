@@ -128,9 +128,19 @@ En el modo estación puedes restar unidades con los botones grandes, escanear ot
 
 ![Listado de maquinaria](img/admin-maquinaria.png)
 
-Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**.
+Pestañas: **Maquinaria · Uso y registro · Histórico · Situaciones · Tipos de máquina**.
 
-- **Maquinaria**: ficha de cada máquina (marca, modelo, nº de serie, tipo y ubicación). La tabla **ya no tiene columna de estado**: el estado vive en el **Histórico** y cada fila ofrece la acción **🕘 Histórico**, que abre el registro de esa máquina ya filtrado.
+- **Maquinaria**: ficha de cada máquina (marca, modelo, nº de serie, tipo y ubicación). La tabla **ya no tiene columna de estado**: el estado vive en el **Histórico** y cada fila ofrece la acción **🕘 Histórico**, que abre el registro de esa máquina ya filtrado. La columna **Uso** dice quién la tiene cogida ahora mismo (**Libre** o **🔧 nombre**).
+- **🔧 Uso y registro**: cada vez que alguien coge una máquina queda apuntado **quién la coge, cuándo y cómo la recoge**; al devolverla se responde el mismo cuestionario con **cómo la deja**. Es el libro de uso de la maquinaria y sirve para saber en todo momento a quién hay que preguntar por una máquina.
+
+### Uso y registro de maquinaria
+
+- **＋ Recoger máquina** (todos los perfiles): eliges la máquina, respondes su **cuestionario de recogida** y, si quieres, dejas unas notas. El registro se abre con tu nombre y la fecha y hora, y la máquina aparece como **En uso**.
+- **✅ Devolver** (quien la cogió, o un responsable en su nombre): responde el **cuestionario de devolución** con cómo la deja. El registro se cierra y queda la fecha de devolución.
+- **Una máquina solo puede estar en manos de una persona**: al intentar cogerla otra vez la aplicación avisa de quién la tiene y desde cuándo.
+- **Cada máquina tiene su cuestionario**: sale uno por defecto (batería o combustible, depósitos y limpieza, accesorios y cables, y estado general de 1 a 5) y los responsables lo cambian desde **⚙️ Editar cuestionario** (en la ventana de recogida). Las preguntas son de **Sí/No** o de **puntuación 1-5**.
+- La tabla muestra **Máquina, Usuario, Recogida, Devolución, Estado y Cuestionario** (respuestas correctas y avisos: un «No» o una puntuación de 1-2 se marcan en rojo). **👁️ Ver** abre el detalle con las dos tandas de respuestas y las notas.
+- Arriba, un aviso amarillo resume cuántas máquinas están en uso y cuáles están en tu poder. Se filtra por texto, estado (**En uso / Devueltas**) y centro, y se exporta a **⬇️ CSV**, una fila por uso con las respuestas y las notas.
 - **Histórico**: historial por máquina con **fecha, estado y notas** (además de marca, modelo y centro). Se filtra por máquina, **centro**, estado y periodo, se busca por texto y se exporta a **⬇️ CSV**. Desde aquí se crean y borran registros.
 
 ![Histórico de situaciones](img/admin-historial.png)
@@ -254,6 +264,8 @@ Descarga la información introducida **hoja por hoja**, filtrada por centro:
 2. Sube el archivo y revisa la vista previa.
 3. Confirma la importación. Los errores se señalan fila a fila antes de guardar nada.
 
+Plantillas disponibles: centros, zonas, subzonas, proveedores, productos, pedidos, trabajos, químicos (lotes), material de limpieza, **maquinaria**, tipos de maquinaria, situaciones, **cuestionario de máquinas**, ropa, EPIs, tallas, tipos de equipo, formaciones, tipos de documento, soportes y tipos de consumible. La de **Cuestionario de máquinas** lleva `maquina`, `texto`, `tipo` (`booleano` o `escala`) y `orden`: la primera fila de cada máquina **sustituye** su cuestionario y las siguientes añaden preguntas.
+
 ---
 
 ## 10. Búsqueda global
@@ -276,12 +288,16 @@ Escribe en **🔎 Buscar en todo…** (cabecera) al menos 2 letras. Los resultad
 | Sección / acción | Administrador | Administrador de centros | Usuario |
 |---|:-:|:-:|:-:|
 | Consultar sus secciones (estaciones, entradas y salidas, maquinaria, documentación, informes y manuales) | ✅ | ✅ | ✅ |
-| Dar de alta / editar / borrar registros (químicos, material, maquinaria, EPIs, ropa…) | ✅ | — | — |
+| Dar de alta / editar / borrar registros (químicos, material, maquinaria, EPIs, ropa…) | ✅ | ✅ (sus centros) | — |
 | Registrar situaciones de maquinaria | ✅ | — | — |
-| Gestionar zonas y estaciones | ✅ | — | — |
-| Crear/editar usuarios, tipos, tallas e importar CSV | ✅ | — | — |
+| Gestionar zonas, subzonas y estaciones | ✅ | ✅ (sus centros) | — |
+| Ver y editar tallas de operarios | ✅ | ✅ (sus centros) | — |
+| Crear/editar usuarios, tipos de máquina, situaciones y tipos de documento | ✅ | — | — |
+| Importar CSV | ✅ | — | — |
 | Centros, documentación y entregas de equipación | ✅ | ✅ (sus centros) | solo lectura |
-| Entradas y salidas de stock | ✅ (registro) | solo lectura | solo lectura |
+| Entradas y salidas de stock | ✅ (registro) | ✅ (sus centros) | solo lectura |
+| Recoger y devolver máquinas con su cuestionario | ✅ | ✅ | ✅ |
+| Cambiar el cuestionario de una máquina | ✅ | ✅ (sus centros) | — |
 | Inventario de químicos (entradas, salidas y recuento) | ✅ | solo lectura (puede consultar y imprimir la hoja) | solo lectura (puede consultar e imprimir la hoja) |
 | Consumir en modo estación (QR) | ✅ | ✅ | ✅ |
 | Descargar CSV / Imprimir PDF de listados e informes | ✅ | ✅ | ❌ |
@@ -297,10 +313,10 @@ Escribe en **🔎 Buscar en todo…** (cabecera) al menos 2 letras. Los resultad
 La sección **Ayuda › Manuales y ayuda** reúne la documentación de la aplicación:
 
 - **📖 Ver en la web**: los dos manuales se leen directamente en el navegador, con índice de apartados para saltar a cada tema.
-- **⬇️ Descargar PDF** (solo administradores): el mismo manual en PDF para guardarlo o imprimirlo.
+- **🖨️ Imprimir / PDF** (solo administradores): imprime el manual que estás leyendo o guárdalo como PDF desde el diálogo del navegador. Así el PDF siempre coincide con la versión web, sin pasos de compilación.
 - **💡 Ayuda rápida**: los errores más frecuentes («Failed to fetch», campos en rojo, contraseñas olvidadas…).
 
-Los manuales viven en `docs/manual-administrador.md` y `docs/manual-usuario.md`. Al modificarlos, regenera los PDF con `node make-pdf.mjs` para que la descarga de Ayuda refleje los cambios.
+Los manuales viven en `docs/manual-administrador.md` y `docs/manual-usuario.md` y la sección Ayuda los lee directamente: cualquier cambio se ve al recargar. Si necesitas un PDF archivado aparte, imprime desde la propia sección. (Los PDF antiguos de `src/web/public/docs/` se pueden regenerar con `node make-pdf.mjs`, que requiere Playwright y un navegador instalado.)
 
 ---
 

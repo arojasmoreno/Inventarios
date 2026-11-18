@@ -151,6 +151,16 @@ export const maquinariaSpec: CrudSpec = {
     "sb.nombre AS subzona_nombre",
     `COALESCE((SELECT st.nombre FROM maquinaria_historial h JOIN situaciones st ON st.id = h.situacion_id
       WHERE h.maquina_id = t.id ORDER BY h.fecha DESC, h.id DESC LIMIT 1), t.estado) AS estado`,
+    // Quién la tiene ahora mismo (registro de uso abierto), si es que la tiene
+    // alguien: alimenta el aviso «en uso» y el botón de devolver.
+    `(SELECT us.nombre FROM maquinaria_usos mu JOIN usuarios us ON us.id = mu.usuario_id
+      WHERE mu.maquina_id = t.id AND mu.estado = 'en_uso' ORDER BY mu.id DESC LIMIT 1) AS en_uso_por`,
+    `(SELECT mu.usuario_id FROM maquinaria_usos mu
+      WHERE mu.maquina_id = t.id AND mu.estado = 'en_uso' ORDER BY mu.id DESC LIMIT 1) AS uso_usuario_id`,
+    `(SELECT mu.id FROM maquinaria_usos mu
+      WHERE mu.maquina_id = t.id AND mu.estado = 'en_uso' ORDER BY mu.id DESC LIMIT 1) AS uso_abierto_id`,
+    `(SELECT mu.fecha_recogida FROM maquinaria_usos mu
+      WHERE mu.maquina_id = t.id AND mu.estado = 'en_uso' ORDER BY mu.id DESC LIMIT 1) AS uso_desde`,
   ],
   extraSearchCols: ["z.nombre", "sb.nombre"],
   read: "all", create: "centros", update: "centros", delete: "centros",

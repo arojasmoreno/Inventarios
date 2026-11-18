@@ -58,7 +58,7 @@ export function AyudaPage({ user }: { user: { rol: string } }) {
             <a key={m.manual.titulo} className="card" href="" onClick={(e) => { e.preventDefault(); setAbierto(i); }}>
               <span className="card-icon">{m.manual.icono}</span>
               <h3>{m.manual.titulo}</h3>
-              <p>Ver en la web · {m.apartados.length} apartados · PDF</p>
+              <p>Ver en la web · {m.apartados.length} apartados · imprimible en PDF</p>
             </a>
           ))}
         </div>
@@ -78,7 +78,7 @@ function ManualWeb({ manual, onVolver, puedePdf }: { manual: ManualWeb; onVolver
           {manual.apartados.map((a) => <li key={a}><a href={`#${ancla(a)}`}>{a}</a></li>)}
         </ul>
         <div className="chips" style={{ marginTop: 12 }}>
-          {puedePdf && <a className="btn secondary small" href={manual.manual.pdf} download>⬇️ PDF</a>}
+          {puedePdf && <button className="btn secondary small" onClick={() => window.print()} title="Imprime el manual tal y como está ahora o guárdalo como PDF">🖨️ Imprimir / PDF</button>}
           <button className="btn secondary small" onClick={onVolver}>← Volver</button>
         </div>
       </aside>

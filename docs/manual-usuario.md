@@ -64,10 +64,10 @@ Cuando un dato no es válido, la aplicación muestra el mensaje de error **y pin
 - **🚻 Estaciones de consumo** (pantalla inicial): la lista de estaciones con su stock; el botón **➖ −1 ud** de la primera columna descuenta una unidad al instante y **▶ Consumir** abre el modo estación.
 - **🔄 Entradas y salidas**: registro de movimientos de stock **en solo lectura** (los administradores son quienes registran entradas y salidas).
 - **📦 Inventario de químicos**: consulta del stock agrupado por producto, con sus avisos de stock y la hoja de recuento imprimible.
-- **🧭 Control de maquinaria**: máquinas y su histórico, con fecha, estado y notas de cada cambio.
+- **🧭 Control de maquinaria**: máquinas y su histórico, con fecha, estado y notas de cada cambio, y la pestaña **🔧 Uso y registro** para apuntar cuándo coges una máquina y cuándo la devuelves.
 - **📚 Documentación**: fichas y documentos de seguridad y técnicas.
 - **📈 Gestión de informes**: dashboard, informes y auditoría **para consultar**; los botones de descarga (CSV / PDF) no aparecen en tu perfil.
-- **🛟 Manuales y ayuda**: esta misma guía en formato web (y en PDF para administradores).
+- **🛟 Manuales y ayuda**: esta misma guía en formato web (los responsables también pueden imprimirla o guardarla en PDF).
 
 ---
 
@@ -97,7 +97,20 @@ Consulta agrupada de todo el stock de químicos: una fila por producto con sus *
 
 ![Maquinaria](img/usuario-maquinaria.png)
 
-Pestañas: **Maquinaria · Histórico · Situaciones · Tipos de máquina**. La tabla de máquinas **ya no muestra la columna de estado**: el estado de cada máquina es su último registro del histórico (Operativa, En reparación, Averiada…). El histórico se filtra por máquina, **centro**, estado y periodo, y cada registro indica **fecha, estado y notas**.
+Pestañas: **Maquinaria · Uso y registro · Histórico · Situaciones · Tipos de máquina**. La tabla de máquinas **ya no muestra la columna de estado**: el estado de cada máquina es su último registro del histórico (Operativa, En reparación, Averiada…). El histórico se filtra por máquina, **centro**, estado y periodo, y cada registro indica **fecha, estado y notas**.
+
+La columna **Uso** de la tabla de máquinas dice quién la tiene cogida ahora mismo (**Libre** o **🔧 nombre**).
+
+### Apuntar el uso de una máquina
+
+Cada vez que coges una máquina tienes que dejarlo apuntado, y al devolverla decir cómo la dejas:
+
+1. Entra en **🧭 Control de maquinaria → 🔧 Uso y registro** y pulsa **＋ Recoger máquina**.
+2. Elige la máquina y responde su **cuestionario de recogida** (preguntas de **Sí/No** o de puntuación **1-5**, según la máquina). Añade notas si ves algo raro.
+3. Pulsa **Recoger y abrir registro**: queda guardado **tu nombre, la fecha y la hora**, y la máquina aparece como **En uso**.
+4. Cuando termines, pulsa **✅ Devolver** en la fila de esa máquina y responde el **cuestionario de devolución** con cómo la dejas. Si tienes varias en tu poder, arriba te avisa de cuántas llevas.
+
+Un compañero no puede coger una máquina que ya está en uso: la aplicación le dice **quién la tiene y desde cuándo**. En **👁️ Ver** de cada fila quedan las dos tandas de respuestas y las notas, también para el responsable del centro.
 
 ### Documentación
 

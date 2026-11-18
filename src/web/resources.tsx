@@ -186,6 +186,12 @@ export const MAQUINARIA: ResourceConfig = {
     centerCol,
     { key: "zona_nombre", label: "Zona", render: r => String(r.zona_nombre ?? "—") },
     { key: "subzona_nombre", label: "Subzona", render: r => String(r.subzona_nombre ?? "—") },
+    {
+      key: "en_uso_por", label: "Uso",
+      render: r => r.en_uso_por
+        ? <span className="badge warn" title="Máquina cogida: el registro está abierto">🔧 {String(r.en_uso_por)}</span>
+        : <span className="badge muted">Libre</span>,
+    },
     fotoCol("/api/maquinaria"),
   ],
   // «Histórico» por máquina: abre la pestaña del histórico filtrada por esa

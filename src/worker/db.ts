@@ -1,5 +1,6 @@
 import type { D1Database } from "./d1";
 import { hashPassword, toHex } from "./auth";
+import { CHECKLIST_DEFECTO } from "./maquinaria-usos";
 
 const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS centros (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, direccion TEXT, ciudad TEXT, responsable TEXT, telefono TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
@@ -34,6 +35,15 @@ const SCHEMA: string[] = [
   // Histórico de máquinas: fecha + situación (estado) con la marca, modelo,
   // centro y notas del momento de registrarla.
   `CREATE TABLE IF NOT EXISTS maquinaria_historial (id INTEGER PRIMARY KEY AUTOINCREMENT, maquina_id INTEGER NOT NULL REFERENCES maquinaria(id) ON DELETE CASCADE, fecha TEXT NOT NULL DEFAULT (date('now')), situacion_id INTEGER NOT NULL REFERENCES situaciones(id), marca TEXT, modelo TEXT, centro_id INTEGER REFERENCES centros(id), notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Cuestionario de uso de cada máquina: sus propias preguntas (sí/no o
+  // puntuación 1-5) para revisarla al cogerla y al devolverla. Cada máquina
+  // nace con el cuestionario por defecto y puede personalizarlo.
+  `CREATE TABLE IF NOT EXISTS maquinaria_check_items (id INTEGER PRIMARY KEY AUTOINCREMENT, maquina_id INTEGER NOT NULL REFERENCES maquinaria(id) ON DELETE CASCADE, texto TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT 'booleano', orden INTEGER NOT NULL DEFAULT 0, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  // Registro de uso: quién coge cada máquina, cuándo, cómo la recoge y cómo la
+  // deja. Las respuestas se guardan como foto del cuestionario del momento
+  // ([{item_id, texto, tipo, valor}]) para que el histórico siga siendo
+  // legible aunque después cambien las preguntas de la máquina.
+  `CREATE TABLE IF NOT EXISTS maquinaria_usos (id INTEGER PRIMARY KEY AUTOINCREMENT, maquina_id INTEGER NOT NULL REFERENCES maquinaria(id) ON DELETE CASCADE, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER REFERENCES centros(id) ON DELETE SET NULL, fecha_recogida TEXT NOT NULL DEFAULT (datetime('now')), respuestas_recogida TEXT, notas_recogida TEXT, fecha_devolucion TEXT, respuestas_devolucion TEXT, notas_devolucion TEXT, estado TEXT NOT NULL DEFAULT 'en_uso', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS zonas (id INTEGER PRIMARY KEY AUTOINCREMENT, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, nombre TEXT NOT NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT, UNIQUE(centro_id, nombre))`,
   `CREATE TABLE IF NOT EXISTS subzonas (id INTEGER PRIMARY KEY AUTOINCREMENT, zona_id INTEGER NOT NULL REFERENCES zonas(id) ON DELETE CASCADE, nombre TEXT NOT NULL, notas TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT, UNIQUE(zona_id, nombre))`,
   `CREATE TABLE IF NOT EXISTS usuario_centros (usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, centro_id INTEGER NOT NULL REFERENCES centros(id) ON DELETE CASCADE, PRIMARY KEY (usuario_id, centro_id))`,
@@ -524,6 +534,18 @@ export async function bootstrap(db: D1Database): Promise<void> {
        WHERE h.maquina_id = maquinaria.id ORDER BY h.fecha DESC, h.id DESC LIMIT 1)
      WHERE EXISTS (SELECT 1 FROM maquinaria_historial h2 WHERE h2.maquina_id = maquinaria.id)`,
   ).run();
+  // Cuestionario de uso: las máquinas que todavía no tienen preguntas reciben
+  // el cuestionario por defecto (las nuevas lo reciben al darse de alta).
+  const sinCheck = await db.prepare(
+    `SELECT m.id FROM maquinaria m
+     WHERE NOT EXISTS (SELECT 1 FROM maquinaria_check_items ci WHERE ci.maquina_id = m.id)`,
+  ).all();
+  const insCheck = db.prepare("INSERT INTO maquinaria_check_items (maquina_id, texto, tipo, orden) VALUES (?, ?, ?, ?)");
+  for (const m of sinCheck.results) {
+    for (const [i, it] of CHECKLIST_DEFECTO.entries()) {
+      await insCheck.bind(Number(m.id), it.texto, it.tipo, i + 1).run();
+    }
+  }
   // Estaciones migradas desde los antiguos puntos pueden quedar sin tipo.
   await db.prepare("UPDATE estaciones SET tipo_consumible_id = (SELECT ct.id FROM consumibles_tipos ct WHERE ct.articulo_tipo = estaciones.articulo_tipo ORDER BY ct.id LIMIT 1) WHERE tipo_consumible_id IS NULL").run();
   // Índices para las consultas calientes (auditoría, panel, entregas, histórico).
@@ -535,6 +557,12 @@ export async function bootstrap(db: D1Database): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_entregas_centro ON ropa_entregas(centro_id)",
     "CREATE INDEX IF NOT EXISTS idx_hist_maquina ON maquinaria_historial(maquina_id, fecha)",
     "CREATE INDEX IF NOT EXISTS idx_hist_situacion ON maquinaria_historial(situacion_id)",
+    // Uso de máquinas: el listado busca por máquina/estado y la ficha de la
+    // máquina muestra quién la tiene ahora mismo.
+    "CREATE INDEX IF NOT EXISTS idx_check_maquina ON maquinaria_check_items(maquina_id, orden)",
+    "CREATE INDEX IF NOT EXISTS idx_usos_maquina ON maquinaria_usos(maquina_id, estado)",
+    "CREATE INDEX IF NOT EXISTS idx_usos_usuario ON maquinaria_usos(usuario_id, estado)",
+    "CREATE INDEX IF NOT EXISTS idx_usos_centro ON maquinaria_usos(centro_id, fecha_recogida)",
     "CREATE INDEX IF NOT EXISTS idx_quim_caducidad ON quimicos(fecha_caducidad)",
     "CREATE INDEX IF NOT EXISTS idx_epis_revision ON epis(fecha_revision)",
     "CREATE INDEX IF NOT EXISTS idx_tallas_usuario ON tallas_operarios(usuario_id)",

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Modal, Toast, camposConError, downloadCsv, formatFecha } from "./ui";
 import { MAQUINARIA, ResourcePage, SITUACIONES, TIPOS } from "./resources";
+import { UsosMaquinaria } from "./maquinaria-usos";
 
 type Row = Record<string, unknown>;
-type Tab = "maquinaria" | "historial" | "situaciones" | "tipos";
+type Tab = "maquinaria" | "usos" | "historial" | "situaciones" | "tipos";
 
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "maquinaria", label: "Maquinaria", icon: "🧭" },
+  { id: "usos", label: "Uso y registro", icon: "🔧" },
   { id: "historial", label: "Histórico", icon: "🕘" },
   { id: "situaciones", label: "Situaciones", icon: "🧾" },
   { id: "tipos", label: "Tipos de máquina", icon: "🧩" },
@@ -26,13 +28,16 @@ const sitBadge = (nombre: unknown) => {
  *  ubicación), el histórico por máquina (fecha, estado y notas de cada cambio,
  *  filtrable por máquina, centro, estado y periodo; de ahí sale el estado
  *  actual) y el catálogo de situaciones. */
-export function MaquinariaPage({ user }: { user: { rol: string; centro_id: number | null } }) {
+export function MaquinariaPage({ user }: { user: { id: number; rol: string; nombre?: string; centro_id: number | null } }) {
   const hash = typeof window !== "undefined" ? window.location.hash : "";
   // «#/maquinaria?tab=historial&maquina=ID»: enlace directo al histórico de una
   // máquina (acción «Histórico» de la tabla de maquinaria).
   const params = new URLSearchParams(hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "");
   const maquinaEnlace = params.get("maquina") ?? "";
-  const [tab, setTab] = useState<Tab>(params.get("tab") === "historial" ? "historial" : hash === "#/tipos" ? "tipos" : "maquinaria");
+  const tabInicial = params.get("tab");
+  const [tab, setTab] = useState<Tab>(
+    tabInicial === "historial" || tabInicial === "usos" ? tabInicial : hash === "#/tipos" ? "tipos" : "maquinaria",
+  );
 
   return <>
     <div className="toolbar no-print" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -43,10 +48,11 @@ export function MaquinariaPage({ user }: { user: { rol: string; centro_id: numbe
       ))}
       <div className="spacer" />
       <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
-        El estado de cada máquina es su último registro del histórico
+        El estado de cada máquina es su último registro del histórico · «Uso y registro» apunta quién la coge y cómo la deja
       </span>
     </div>
     {tab === "maquinaria" && <ResourcePage key="maquinaria" config={MAQUINARIA} user={user} />}
+    {tab === "usos" && <UsosMaquinaria key="usos" user={user} />}
     {tab === "historial" && <HistorialMaquinaria key={`historial-${maquinaEnlace}`} user={user} maquinaEnlace={maquinaEnlace} />}
     {tab === "situaciones" && <ResourcePage key="situaciones" config={SITUACIONES} user={user} />}
     {tab === "tipos" && <ResourcePage key="tipos" config={TIPOS} user={user} />}

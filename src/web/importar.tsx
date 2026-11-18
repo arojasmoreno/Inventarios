@@ -6,7 +6,7 @@ type Row = Record<string, unknown>;
 
 const MAX_ROWS = 500;
 
-type Catalogo = "centros" | "proveedores" | "zonas" | "subzonas" | "usuarios" | "documento_tipos";
+type Catalogo = "centros" | "proveedores" | "zonas" | "subzonas" | "usuarios" | "documento_tipos" | "maquinaria";
 
 interface Recurso {
   key: string;
@@ -92,6 +92,12 @@ const RECURSOS: Recurso[] = [
     columns: ["nombre"], obligatorios: ["nombre"], ejemplo: ["Operativo"],
   },
   {
+    key: "maquinaria_checklist", endpoint: "/api/maquinaria-usos", label: "Cuestionario de máquinas", grupo: "Maquinaria",
+    columns: ["maquina", "texto", "tipo", "orden"], obligatorios: ["maquina", "texto"],
+    ejemplo: ["Fregadora Aquamatic", "Batería o combustible suficiente", "booleano", "1"],
+    needs: ["maquinaria"],
+  },
+  {
     key: "ropa_trabajo", endpoint: "/api/ropa-trabajo", label: "Ropa de trabajo", grupo: "Equipación",
     columns: ["codigo", "prenda", "marca", "fabricante", "modelo", "talla", "alta_visibilidad", "manga_larga", "descripcion", "color", "stock", "stock_minimo", "centro"],
     obligatorios: ["codigo", "prenda"],
@@ -136,8 +142,10 @@ const RECURSOS: Recurso[] = [
 
 const GRUPOS = [...new Set(RECURSOS.map((r) => r.grupo))];
 
-interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; subzonas: Row[]; usuarios: Row[]; documento_tipos: Row[]; }
+interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; subzonas: Row[]; usuarios: Row[]; documento_tipos: Row[]; maquinaria: Row[]; }
 
+// El cuestionario de cada máquina: la primera fila de una máquina sustituye su
+// cuestionario anterior y el resto añade preguntas.
 const norm = (v: string): string =>
   String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s_-]+/g, " ");
 
@@ -383,6 +391,21 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       if (!articulo) return fallo(fila, "el tipo de artículo debe ser quimicos, material_limpieza o maquinaria");
       return { nombre, articulo_tipo: articulo };
     }
+    case "maquinaria_checklist": {
+      const mq = g("maquina") ?? g("maquina_id") ?? g("numero_serie");
+      const texto = g("texto") ?? g("pregunta");
+      if (!mq) return fallo(fila, "falta la columna 'maquina'");
+      if (!texto) return fallo(fila, "falta la columna 'texto'");
+      const maquina = resolver(mq, cat.maquinaria, ["nombre", "numero_serie", "id"]);
+      if (!maquina) return fallo(fila, `la máquina «${mq}» no existe`);
+      const t = (g("tipo") ?? "booleano").toLowerCase();
+      const orden = toNumber(g("orden"));
+      return {
+        maquina_id: Number(maquina.id), texto,
+        tipo: t.startsWith("esc") || t.startsWith("punt") || t === "1-5" ? "escala" : "booleano",
+        orden: orden ?? 0,
+      };
+    }
     case "tipos_maquinaria": {
       const nombre = g("nombre"); if (!nombre) return fallo(fila, "falta la columna 'nombre'");
       return { nombre, notas: g("notas") ?? null };
@@ -405,7 +428,7 @@ export function ImportarPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cat, setCat] = useState<Catalogos>({ centros: [], proveedores: [], zonas: [], subzonas: [], usuarios: [], documento_tipos: [] });
+  const [cat, setCat] = useState<Catalogos>({ centros: [], proveedores: [], zonas: [], subzonas: [], usuarios: [], documento_tipos: [], maquinaria: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
 
@@ -423,6 +446,7 @@ export function ImportarPage() {
     await cargar("subzonas", "/api/subzonas");
     await cargar("usuarios", "/api/usuarios");
     await cargar("documento_tipos", "/api/documentos-tipos");
+    await cargar("maquinaria", "/api/maquinaria");
     setCat(next);
     return next;
   }, [cat, cfg.needs]);
