@@ -131,11 +131,13 @@ export function PlanHigieneModal({ centro, anio, mes, mesTexto, centros, onClose
     <section className="plan-step">
       <h3>1. Cargar el plan desde Excel</h3>
       <p className="plan-help">
-        Una fila por tarea. Columnas: <code>cliente</code> (centro), <code>tipo de limpieza</code>,
-        <code>centro</code> (zona), <code>zona</code> (subzona), <code>tipo de zona</code>, <code>elemento</code>,
-        <code>frecuencia_calculo</code>, <code>frecuencia_informativa</code>, <code>tiempo</code>, <code>factor</code>,
-        <code>horas semana</code>, <code>turno</code>, <code>auditable</code>, <code>fecha inicio</code>,
-        <code>fecha última realización</code> y <code>fecha proxima_fecha</code>.
+        Una fila por tarea. Columnas: <code>CLIENTE</code>, <code>CENTRO</code>, <code>ORDEN</code>, <code>TIPO</code>,
+        <code>ZONA</code>, <code>SUBZONA</code>, <code>ELEMENTO</code>, <code>TIPO_ZONA</code>,
+        <code>FRECUENCIA_CALCULO</code>, <code>FRECUENCIA_INFORMATIVA</code>, <code>TIEMPO</code>, <code>FACTOR</code>,
+        <code>HORAS_SEM</code>, <code>TURNO</code>, <code>AUDITABLE</code>, <code>FECHA_INICIO</code>,
+        <code>FECHA_ULTIMA</code> y <code>PROXIMA_FECHA</code>. El centro se localiza con{" "}
+        <strong>CLIENTE + CENTRO</strong> (p. ej. «Mondelez» + «Granollers» → «Mondelez Granollers») y la fila
+        <code>ORDEN</code> manda en la importación.
         La próxima fecha se calcula como <strong>última realización + frecuencia de cálculo</strong>.
       </p>
       <div className="plan-actions">
