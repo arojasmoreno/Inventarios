@@ -71,7 +71,7 @@ export function UsosMaquinaria({ user }: { user: { id: number; rol: string; nomb
   const [recoger, setRecoger] = useState<{ maquinaId: string; items: Item[]; respuestas: Record<number, boolean | number>; notas: string; error: string | null } | null>(null);
   const [devolver, setDevolver] = useState<{ uso: Row; items: Item[]; respuestas: Record<number, boolean | number>; notas: string; error: string | null } | null>(null);
   const [detalle, setDetalle] = useState<Row | null>(null);
-  const [cuestionario, setCuestionario] = useState<{ maquinaId: number; nombre: string; items: Array<{ texto: string; tipo: "booleano" | "escala" }>; error: string | null } | null>(null);
+  const [cuestionario, setCuestionario] = useState<{ maquinaId: number; nombre: string; items: Array<{ texto: string; tipo: "booleano" | "escala" }>; error: string | null; volverARecoger: boolean } | null>(null);
   const [cargandoModal, setCargandoModal] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -109,7 +109,9 @@ export function UsosMaquinaria({ user }: { user: { id: number; rol: string; nomb
 
   const abiertos = usos.filter(r => r.estado === "en_uso");
   const mias = abiertos.filter(r => Number(r.usuario_id) === user.id);
-  const disponibles = maquinas.filter(m => !m.en_uso_por || Number(m.uso_usuario_id) === user.id);
+  // Solo se ofrecen máquinas libres: las que están en uso (tuyas o de otro)
+  // se devuelven desde su fila o desde el aviso de arriba.
+  const disponibles = maquinas.filter(m => !m.en_uso_por);
 
   const pedirChecklist = async (maquinaId: number): Promise<Item[]> => {
     const r = await api.get<{ items: Item[] }>(`/api/maquinaria-usos/checklist/${maquinaId}`);
@@ -148,11 +150,11 @@ export function UsosMaquinaria({ user }: { user: { id: number; rol: string; nomb
     } finally { setCargandoModal(false); }
   };
 
-  const abrirCuestionario = async (maquinaId: number, nombre: string) => {
+  const abrirCuestionario = async (maquinaId: number, nombre: string, volverARecoger = false) => {
     setCargandoModal(true);
     try {
       const items = await pedirChecklist(maquinaId);
-      setCuestionario({ maquinaId, nombre, items: items.map(i => ({ texto: i.texto, tipo: i.tipo })), error: null });
+      setCuestionario({ maquinaId, nombre, items: items.map(i => ({ texto: i.texto, tipo: i.tipo })), error: null, volverARecoger });
     } catch (e) {
       setToast({ message: e instanceof Error ? e.message : "No se pudo cargar el cuestionario", kind: "error" });
     } finally { setCargandoModal(false); }
@@ -199,8 +201,12 @@ export function UsosMaquinaria({ user }: { user: { id: number; rol: string; nomb
     setBusy(true);
     try {
       await api.put(`/api/maquinaria-usos/checklist/${cuestionario.maquinaId}`, { items: cuestionario.items });
+      const { maquinaId, volverARecoger } = cuestionario;
       setCuestionario(null);
       setToast({ message: "Cuestionario actualizado", kind: "ok" });
+      // Si se editó desde la ventana de recogida, se vuelve a abrir con las
+      // preguntas nuevas ya cargadas.
+      if (volverARecoger) await abrirRecoger(String(maquinaId));
     } catch (e) {
       setCuestionario({ ...cuestionario, error: e instanceof Error ? e.message : "No se pudo guardar el cuestionario" });
     } finally { setBusy(false); }
@@ -235,13 +241,22 @@ export function UsosMaquinaria({ user }: { user: { id: number; rol: string; nomb
       </select>}
       <div className="spacer" />
       {puedeGestionar && <button className="btn secondary" onClick={exportCsv} disabled={!filtrados.length}>⬇️ CSV</button>}
-      <button className="btn" onClick={() => void abrirRecoger()} disabled={cargandoModal || !disponibles.length}>＋ Recoger máquina</button>
+      <button className="btn" onClick={() => void abrirRecoger()} disabled={cargandoModal || !disponibles.length}
+        title={!disponibles.length ? "No tienes máquinas libres: devuelve la que tengas en uso" : "Apunta que coges una máquina"}>＋ Recoger máquina</button>
     </div>
 
     {abiertos.length > 0 && <div className="banner" style={{ marginBottom: 12, background: "#fef3c7", color: "#92400e" }}>
-      🔧 <strong>{abiertos.length}</strong> máquina{abiertos.length === 1 ? "" : "s"} en uso
-      {abiertos.length <= 3 && <>: {abiertos.map(r => `${String(r.maquina_nombre)} (${String(r.usuario_nombre)})`).join(" · ")}</>}
-      {mias.length > 0 && <> · tienes <strong>{mias.length}</strong> en tu poder</>}
+      <div>
+        🔧 <strong>{abiertos.length}</strong> máquina{abiertos.length === 1 ? "" : "s"} en uso
+        {abiertos.length <= 3 && <>: {abiertos.map(r => `${String(r.maquina_nombre)} (${String(r.usuario_nombre)})`).join(" · ")}</>}
+        {mias.length > 0 && <> · tienes <strong>{mias.length}</strong> en tu poder</>}
+      </div>
+      {mias.length > 0 && <div className="chips" style={{ margin: "8px 0 0" }}>
+        {mias.map(r => <button key={String(r.id)} className="btn small" onClick={() => void abrirDevolver(r)} disabled={cargandoModal}
+          title={`La cogiste el ${fechaHora(r.fecha_recogida)}`}>
+          ✅ Devolver {String(r.maquina_nombre)}
+        </button>)}
+      </div>}
     </div>}
 
     <div className="card">
@@ -285,15 +300,17 @@ export function UsosMaquinaria({ user }: { user: { id: number; rol: string; nomb
               {String(m.nombre)}{m.numero_serie ? ` · ${String(m.numero_serie)}` : ""}{Number(m.uso_usuario_id) === user.id ? " (en tu poder)" : ""}
             </option>)}
           </select>
-          {!disponibles.length && <p style={{ color: "var(--muted)", margin: "6px 0 0" }}>Todas tus máquinas están en uso por otras personas.</p>}
+          {!disponibles.length && <p style={{ color: "var(--muted)", margin: "6px 0 0" }}>Ahora mismo no tienes máquinas libres: devuelve la que tengas en uso para poder coger otra.</p>}
         </div>
       </div>
       {recoger.maquinaId && (cargandoModal ? <div className="loading">Cargando cuestionario…</div> : <>
         <div className="section-head" style={{ marginTop: 8 }}><h3 style={{ fontSize: 14 }}>Cuestionario de recogida</h3>
           {puedeGestionar && <button className="btn secondary small" onClick={() => {
             const m = maquinas.find(x => String(x.id) === recoger.maquinaId);
+            const maquinaId = Number(recoger.maquinaId);
+            const nombre = String(m?.nombre ?? "Máquina");
             setRecoger(null);
-            void abrirCuestionario(Number(recoger.maquinaId), String(m?.nombre ?? "Máquina"));
+            void abrirCuestionario(maquinaId, nombre, true);
           }}>⚙️ Editar cuestionario</button>}
         </div>
         <Preguntas items={recoger.items} valores={recoger.respuestas}

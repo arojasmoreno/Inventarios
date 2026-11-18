@@ -135,8 +135,8 @@ Pestañas: **Maquinaria · Uso y registro · Histórico · Situaciones · Tipos 
 
 ### Uso y registro de maquinaria
 
-- **＋ Recoger máquina** (todos los perfiles): eliges la máquina, respondes su **cuestionario de recogida** y, si quieres, dejas unas notas. El registro se abre con tu nombre y la fecha y hora, y la máquina aparece como **En uso**.
-- **✅ Devolver** (quien la cogió, o un responsable en su nombre): responde el **cuestionario de devolución** con cómo la deja. El registro se cierra y queda la fecha de devolución.
+- **＋ Recoger máquina** (todos los perfiles): eliges una máquina **libre** (las que están en uso no aparecen), respondes su **cuestionario de recogida** y, si quieres, dejas unas notas. El registro se abre con tu nombre y la fecha y hora, y la máquina aparece como **En uso**.
+- **✅ Devolver** (quien la cogió, o un responsable en su nombre): responde el **cuestionario de devolución** con cómo la deja. El registro se cierra y queda la fecha de devolución. El aviso amarillo de arriba lista **las máquinas que tienes en tu poder** con su botón de devolver, para no tener que buscarlas en la tabla.
 - **Una máquina solo puede estar en manos de una persona**: al intentar cogerla otra vez la aplicación avisa de quién la tiene y desde cuándo.
 - **Cada máquina tiene su cuestionario**: sale uno por defecto (batería o combustible, depósitos y limpieza, accesorios y cables, y estado general de 1 a 5) y los responsables lo cambian desde **⚙️ Editar cuestionario** (en la ventana de recogida). Las preguntas son de **Sí/No** o de **puntuación 1-5**.
 - La tabla muestra **Máquina, Usuario, Recogida, Devolución, Estado y Cuestionario** (respuestas correctas y avisos: un «No» o una puntuación de 1-2 se marcan en rojo). **👁️ Ver** abre el detalle con las dos tandas de respuestas y las notas.
@@ -264,7 +264,7 @@ Descarga la información introducida **hoja por hoja**, filtrada por centro:
 2. Sube el archivo y revisa la vista previa.
 3. Confirma la importación. Los errores se señalan fila a fila antes de guardar nada.
 
-Plantillas disponibles: centros, zonas, subzonas, proveedores, productos, pedidos, trabajos, químicos (lotes), material de limpieza, **maquinaria**, tipos de maquinaria, situaciones, **cuestionario de máquinas**, ropa, EPIs, tallas, tipos de equipo, formaciones, tipos de documento, soportes y tipos de consumible. La de **Cuestionario de máquinas** lleva `maquina`, `texto`, `tipo` (`booleano` o `escala`) y `orden`: la primera fila de cada máquina **sustituye** su cuestionario y las siguientes añaden preguntas.
+Plantillas disponibles: centros, zonas, subzonas, proveedores, productos, pedidos, trabajos, químicos (lotes), material de limpieza, **maquinaria**, tipos de maquinaria, situaciones, **cuestionario de máquinas**, ropa, EPIs, tallas, tipos de equipo, formaciones, tipos de documento, soportes y tipos de consumible. La de **Cuestionario de máquinas** lleva `maquina`, `texto`, `tipo` (`booleano` o `escala`) y `orden`: la primera fila de cada máquina **sustituye** su cuestionario y las siguientes añaden preguntas. En la columna `maquina` vale el nombre, el id o el **nº de serie**; si hay varias máquinas con el mismo nombre, la importación avisa y pide el nº de serie para no aplicar el cuestionario a la máquina equivocada.
 
 ---
 

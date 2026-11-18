@@ -106,9 +106,9 @@ La columna **Uso** de la tabla de máquinas dice quién la tiene cogida ahora mi
 Cada vez que coges una máquina tienes que dejarlo apuntado, y al devolverla decir cómo la dejas:
 
 1. Entra en **🧭 Control de maquinaria → 🔧 Uso y registro** y pulsa **＋ Recoger máquina**.
-2. Elige la máquina y responde su **cuestionario de recogida** (preguntas de **Sí/No** o de puntuación **1-5**, según la máquina). Añade notas si ves algo raro.
+2. Elige la máquina (**solo salen las que están libres**; las que están en uso no aparecen) y responde su **cuestionario de recogida** (preguntas de **Sí/No** o de puntuación **1-5**, según la máquina). Añade notas si ves algo raro.
 3. Pulsa **Recoger y abrir registro**: queda guardado **tu nombre, la fecha y la hora**, y la máquina aparece como **En uso**.
-4. Cuando termines, pulsa **✅ Devolver** en la fila de esa máquina y responde el **cuestionario de devolución** con cómo la dejas. Si tienes varias en tu poder, arriba te avisa de cuántas llevas.
+4. Cuando termines, pulsa **✅ Devolver** en la fila de esa máquina y responde el **cuestionario de devolución** con cómo la dejas. Si tienes varias en tu poder, el aviso amarillo de arriba te las lista con su botón para devolverlas.
 
 Un compañero no puede coger una máquina que ya está en uso: la aplicación le dice **quién la tiene y desde cuándo**. En **👁️ Ver** de cada fila quedan las dos tandas de respuestas y las notas, también para el responsable del centro.
 

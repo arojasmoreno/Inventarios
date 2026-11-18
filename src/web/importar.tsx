@@ -142,7 +142,7 @@ const RECURSOS: Recurso[] = [
 
 const GRUPOS = [...new Set(RECURSOS.map((r) => r.grupo))];
 
-interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; subzonas: Row[]; usuarios: Row[]; documento_tipos: Row[]; maquinaria: Row[]; }
+export interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; subzonas: Row[]; usuarios: Row[]; documento_tipos: Row[]; maquinaria: Row[]; }
 
 // El cuestionario de cada máquina: la primera fila de una máquina sustituye su
 // cuestionario anterior y el resto añade preguntas.
@@ -181,9 +181,23 @@ function resolver(valor: string, filas: Row[], claves: string[]): Row | undefine
 }
 const fallo = (fila: number, msg: string): string => `Fila ${fila}: ${msg}`;
 
+/** Máquina por id, nº de serie o nombre. Si el nombre está repetido devuelve
+ *  «ambigua» en vez de elegir una al azar: el cuestionario no puede acabar en
+ *  la máquina equivocada. */
+function maquinaPor(valor: string, maquinas: Row[]): Row | "ambigua" | undefined {
+  const v = norm(valor);
+  const porId = maquinas.filter((m) => String(m.id) === valor.trim());
+  if (porId.length === 1) return porId[0];
+  const porSerie = maquinas.filter((m) => norm(String(m.numero_serie ?? "")) === v);
+  if (porSerie.length === 1) return porSerie[0];
+  const porNombre = maquinas.filter((m) => norm(String(m.nombre ?? "")) === v);
+  if (porNombre.length === 1) return porNombre[0];
+  return porNombre.length > 1 ? "ambigua" : undefined;
+}
+
 /** Traduce una fila del CSV al JSON que espera la API (resolviendo centros,
  *  proveedores, operarios, prendas y zonas por su nombre o su ID). */
-function parseRow(key: string, raw: Record<string, string>, fila: number, cat: Catalogos): Record<string, unknown> | string {
+export function parseRow(key: string, raw: Record<string, string>, fila: number, cat: Catalogos): Record<string, unknown> | string {
   const g = (k: string): string | undefined => { const v = raw[k]?.trim(); return v === "" ? undefined : v; };
   const id = (k: string): number | null => toNumber(g(k));
   const centro = (): number | null => {
@@ -396,7 +410,8 @@ function parseRow(key: string, raw: Record<string, string>, fila: number, cat: C
       const texto = g("texto") ?? g("pregunta");
       if (!mq) return fallo(fila, "falta la columna 'maquina'");
       if (!texto) return fallo(fila, "falta la columna 'texto'");
-      const maquina = resolver(mq, cat.maquinaria, ["nombre", "numero_serie", "id"]);
+      const maquina = maquinaPor(mq, cat.maquinaria);
+      if (maquina === "ambigua") return fallo(fila, `hay varias máquinas llamadas «${mq}»: pon su nº de serie`);
       if (!maquina) return fallo(fila, `la máquina «${mq}» no existe`);
       const t = (g("tipo") ?? "booleano").toLowerCase();
       const orden = toNumber(g("orden"));
