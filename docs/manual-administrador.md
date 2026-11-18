@@ -264,6 +264,10 @@ Descarga la información introducida **hoja por hoja**, filtrada por centro:
 2. Sube el archivo y revisa la vista previa.
 3. Confirma la importación. Los errores se señalan fila a fila antes de guardar nada.
 
+- Se admiten hasta **2.000 filas por archivo** (se envían en lotes de 500, así que un catálogo grande de productos entra de una vez).
+- Acepta coma, punto y coma o tabulador, y **detecta la codificación**: los CSV que guarda Excel en España (Windows-1252) se leen bien, con **acentos y ñ** intactos (**García**, **Muñoz**, **Lejía**).
+- Al buscar un proveedor, centro, zona u operario se ignoran tildes, ñ, mayúsculas y puntuación: «Suministros García, S.L.» y «suministros garcia sl» son el mismo. Con muchos proveedores es más seguro poner su **código** (por ejemplo `PROV-001`).
+
 Plantillas disponibles: centros, zonas, subzonas, proveedores, productos, pedidos, trabajos, químicos (lotes), material de limpieza, **maquinaria**, tipos de maquinaria, situaciones, **cuestionario de máquinas**, ropa, EPIs, tallas, tipos de equipo, formaciones, tipos de documento, soportes y tipos de consumible. La de **Cuestionario de máquinas** lleva `maquina`, `texto`, `tipo` (`booleano` o `escala`) y `orden`: la primera fila de cada máquina **sustituye** su cuestionario y las siguientes añaden preguntas. En la columna `maquina` vale el nombre, el id o el **nº de serie**; si hay varias máquinas con el mismo nombre, la importación avisa y pide el nº de serie para no aplicar el cuestionario a la máquina equivocada.
 
 ---

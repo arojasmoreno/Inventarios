@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, reportarError } from "./api";
 import { downloadCsv, formatNum, Toast } from "./ui";
+import { leerTextoArchivo, normalizarClave } from "./csv";
 
 type Row = Record<string, unknown>;
 
-const MAX_ROWS = 500;
+// Filas por archivo y por petición: la API admite 500 por envío, así que el
+// resto se manda por lotes (un catálogo de productos pasa de 500 fácilmente).
+const MAX_ROWS = 2000;
+const LOTE = 500;
 
 type Catalogo = "centros" | "proveedores" | "zonas" | "subzonas" | "usuarios" | "documento_tipos" | "maquinaria";
 
@@ -146,8 +150,9 @@ export interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; s
 
 // El cuestionario de cada máquina: la primera fila de una máquina sustituye su
 // cuestionario anterior y el resto añade preguntas.
-const norm = (v: string): string =>
-  String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s_-]+/g, " ");
+// Cotejo de textos: sin acentos, sin ñ, sin puntuación y sin mayúsculas, para
+// que «García, S.L.» y «GARCIA SL» sean el mismo proveedor.
+const norm = (v: string): string => normalizarClave(v);
 
 function splitCsvLine(line: string): string[] {
   const out: string[] = []; let cur = ""; let inQ = false;
@@ -164,9 +169,21 @@ function splitCsvLine(line: string): string[] {
   return out.map((s) => s.trim());
 }
 
+// Números con formato español o inglés: «4,50», «3.75», «1.234,56» y
+// «1,234.56» dan lo mismo. Un punto solo se toma como decimal salvo que sea
+// separador de miles («1.234»).
 function toNumber(v: string | undefined): number | null {
-  if (v === undefined || v === "") return null;
-  const n = Number(v.replace(/\./g, "").replace(",", "."));
+  if (v === undefined) return null;
+  let t = String(v).trim().replace(/[€$\s]/g, "");
+  if (!t) return null;
+  if (t.includes(",") && t.includes(".")) {
+    t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
+  } else if (t.includes(",")) {
+    t = t.replace(",", ".");
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(t)) {
+    t = t.replace(/\./g, "");
+  }
+  const n = Number(t);
   return Number.isFinite(n) ? n : null;
 }
 function toBool(v: string | undefined): number {
@@ -247,12 +264,12 @@ export function parseRow(key: string, raw: Record<string, string>, fila: number,
       if (!codigo) return fallo(fila, "falta la columna 'codigo'");
       if (!producto) return fallo(fila, "falta la columna 'producto'");
       const found = resolver(pv, cat.proveedores, ["id_proveedor", "codigo", "nombre", "id"]);
-      if (!found) return fallo(fila, `el proveedor «${pv}» no existe`);
+      if (!found) return fallo(fila, `el proveedor «${pv}» no existe (revisa el nombre o pon su código de proveedor)`);
       const alt = g("proveedor_alternativo");
       let alternativoId: number | null = null;
       if (alt) {
         const altProv = resolver(alt, cat.proveedores, ["id_proveedor", "codigo", "nombre", "id"]);
-        if (!altProv) return fallo(fila, `el proveedor alternativo «${alt}» no existe`);
+        if (!altProv) return fallo(fila, `el proveedor alternativo «${alt}» no existe (revisa el nombre o pon su código)`);
         if (Number(altProv.id) === Number(found.id)) return fallo(fila, "el proveedor alternativo debe ser distinto del principal");
         alternativoId = Number(altProv.id);
       }
@@ -480,7 +497,9 @@ export function ImportarPage() {
     setCabeceras([]); setLineas([]); setMapa({});
     if (!f) return;
     try {
-      const texto = await f.text();
+      // Se respeta la codificación del archivo: Excel guarda el CSV en
+      // Windows-1252 y decodificarlo como UTF-8 rompía acentos y ñ.
+      const texto = await leerTextoArchivo(f);
       const todas = texto.split(/\r?\n/).filter((l) => l.trim() !== "");
       if (todas.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
       const heads = splitCsvLine(todas[0]);
@@ -540,15 +559,23 @@ export function ImportarPage() {
     if (!rows.length) return;
     setBusy(true); setError(null); setDone(null);
     try {
-      const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows });
-      const partes = [`${r.creados ?? 0} creados`, `${r.actualizados ?? 0} actualizados`];
-      const aviso = r.errores?.length ? ` · ${r.errores.length} con error` : "";
+      let creados = 0, actualizados = 0;
+      const errores: string[] = [];
+      // La API admite 500 filas por petición: se envía por lotes.
+      for (let i = 0; i < rows.length; i += LOTE) {
+        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows: rows.slice(i, i + LOTE) });
+        creados += Number(r.creados ?? 0);
+        actualizados += Number(r.actualizados ?? 0);
+        for (const e of r.errores ?? []) errores.push(e);
+      }
+      const partes = [`${creados} creados`, `${actualizados} actualizados`];
+      const aviso = errores.length ? ` · ${errores.length} con error` : "";
       setDone(`Importados: ${partes.join(" · ")}${aviso}`);
-      if (r.errores?.length) {
-        setError(r.errores.slice(0, 4).join(" · "));
+      if (errores.length) {
+        setError(errores.slice(0, 4).join(" · "));
         reportarError(
-          `${r.errores.length} fila(s) no se pudieron importar en ${cfg.label}`,
-          { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: r.errores.slice(0, 10).join("\n") },
+          `${errores.length} fila(s) no se pudieron importar en ${cfg.label}`,
+          { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: errores.slice(0, 10).join("\n") },
         );
       }
       setRows([]); setErroresParse([]); if (inputRef.current) inputRef.current.value = "";
@@ -562,7 +589,9 @@ export function ImportarPage() {
       Sube el archivo y comprueba el <strong>mapeo de columnas</strong>: cada columna del CSV se asigna a un campo de{" "}
       <strong>{cfg.label}</strong>. Solo los campos obligatorios son necesarios. En las tablas con código o ID
       (productos, proveedores, químicos, ropa, EPIs…) ese valor es la clave: si el registro ya existe se actualiza y
-      si no se crea. Acepta separador coma, punto y coma o tabulador. En <strong>Proveedores</strong> el{" "}
+      si no se crea. Acepta separador coma, punto y coma o tabulador y hasta <strong>2.000 filas</strong>. Los CSV de
+      Excel (Windows-1252) se leen bien: <strong>acentos y ñ</strong> se conservan, y al buscar un proveedor, centro o
+      zona no importan tildes, mayúsculas ni puntuación. En <strong>Proveedores</strong> el{" "}
       <code>id_proveedor</code> lo pones tú: no es autonumérico.
     </p>
     <div className="form-grid" style={{ marginBottom: 12 }}>

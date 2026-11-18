@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { Field, Modal, Toast, camposConError, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
+import { Field, Modal, SearchSelect, Toast, camposConError, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
+import { leerTextoArchivo } from "./csv";
 
 type Row = Record<string, unknown>;
 
@@ -67,7 +68,9 @@ function parsePrecio(valor: unknown): number | null {
 /** Lee la primera hoja de un Excel o un CSV/TSV y devuelve una matriz de texto. */
 async function leerMatrizArchivo(archivo: File): Promise<string[][]> {
   const nombre = archivo.name.toLowerCase();
-  if (nombre.endsWith(".csv") || nombre.endsWith(".txt")) return parseCsv(await archivo.text());
+  // Excel en España guarda el CSV en Windows-1252: se decodifica respetando la
+  // codificación para que acentos y ñ no rompan los nombres de proveedor.
+  if (nombre.endsWith(".csv") || nombre.endsWith(".txt")) return parseCsv(await leerTextoArchivo(archivo));
   const XLSX = await import("xlsx");
   const libro = XLSX.read(new Uint8Array(await archivo.arrayBuffer()), { type: "array", cellDates: true });
   const hoja = libro.Sheets[libro.SheetNames[0] ?? ""];
@@ -174,12 +177,12 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
 
   const campos = useMemo<FieldDef[]>(() => [
     {
-      name: "proveedor_id", label: "Proveedor", type: "select", required: true,
+      name: "proveedor_id", label: "Proveedor", type: "select", required: true, searchable: true,
       options: proveedores.map(p => ({ value: Number(p.id), label: `${String(p.codigo ?? "")} · ${String(p.nombre ?? "")}` })),
-      help: "Cada producto pertenece a un único proveedor.",
+      help: "Escribe para buscar entre los proveedores. Cada producto pertenece a uno solo.",
     },
     {
-      name: "proveedor_alternativo_id", label: "Proveedor alternativo", type: "select",
+      name: "proveedor_alternativo_id", label: "Proveedor alternativo", type: "select", searchable: true,
       options: proveedores.map(p => ({ value: Number(p.id), label: `${String(p.codigo ?? "")} · ${String(p.nombre ?? "")}` })),
       help: "Opcional: proveedor de respaldo si el principal no puede servir.",
     },
@@ -413,11 +416,14 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
 
   return <>
     <div className="toolbar no-print" style={{ gap: 8 }}>
-      <select className="input" style={{ maxWidth: 300 }} value={proveedorId} onChange={e => setProveedorId(e.target.value)} aria-label="Proveedor del catálogo">
-        {proveedores.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.codigo ?? "")} · {String(p.nombre ?? "")}</option>)}
-        {huerfanos.length > 0 && <option value={SIN_PROVEEDOR}>{`⚠️ Sin proveedor (${formatNum(huerfanos.length)})`}</option>}
-        {!proveedores.length && !huerfanos.length && <option value="">Sin proveedores</option>}
-      </select>
+      <div style={{ width: 300, maxWidth: "100%" }}>
+        <SearchSelect value={proveedorId} allowEmpty={false} placeholder="Buscar proveedor…" aria-label="Proveedor del catálogo"
+          onChange={v => setProveedorId(v == null ? "" : String(v))}
+          options={[
+            ...proveedores.map(p => ({ value: String(p.id), label: `${String(p.codigo ?? "")} · ${String(p.nombre ?? "")}` })),
+            ...(huerfanos.length > 0 ? [{ value: SIN_PROVEEDOR, label: `⚠️ Sin proveedor (${formatNum(huerfanos.length)})` }] : []),
+          ]} />
+      </div>
       <input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar por código o producto…" value={q} onChange={e => setQ(e.target.value)} />
       <div className="spacer" />
       {admin && <label className={"btn secondary" + (importando ? " disabled" : "")} style={{ cursor: "pointer" }} title="Importar Excel con las columnas: código de proveedor, nombre de proveedor, código de producto, producto y precio">

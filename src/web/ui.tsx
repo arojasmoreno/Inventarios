@@ -1,8 +1,61 @@
-import { useEffect, type ReactNode } from "react";
-import { construirCsv } from "./csv";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { construirCsv, normalizarClave } from "./csv";
 export type FieldType = "text" | "textarea" | "number" | "integer" | "date" | "boolean" | "enum" | "password" | "select" | "image";
 export interface SelectOption { value: string | number; label: string; }
-export interface FieldDef { name: string; label: string; type: FieldType; required?: boolean; enumValues?: string[]; options?: SelectOption[]; placeholder?: string; help?: string; writeOnly?: boolean; hasExisting?: boolean; previewUrl?: string; }
+export interface FieldDef { name: string; label: string; type: FieldType; required?: boolean; enumValues?: string[]; options?: SelectOption[]; placeholder?: string; help?: string; writeOnly?: boolean; hasExisting?: boolean; previewUrl?: string; searchable?: boolean; }
+
+/** Selector con buscador: para listas largas (proveedores, centros…) donde un
+ *  `<select>` obliga a recorrer decenas de opciones a ojo. Se escribe para
+ *  filtrar (sin acentos ni mayúsculas) y se elige con ratón o con flechas y
+ *  Intro. */
+export function SearchSelect({ id, value, options, onChange, placeholder = "Buscar…", disabled = false, error = false, allowEmpty = true, emptyLabel = "— Sin asignar —", ariaLabel }: {
+  id?: string; value: unknown; options: SelectOption[]; onChange: (v: string | number | null) => void;
+  placeholder?: string; disabled?: boolean; error?: boolean; allowEmpty?: boolean; emptyLabel?: string; ariaLabel?: string;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [activo, setActivo] = useState(0);
+  const caja = useRef<HTMLDivElement>(null);
+  const seleccion = options.find((o) => String(o.value) === String(value ?? ""));
+  const lista = useMemo(() => {
+    const n = normalizarClave(texto);
+    if (!n) return options;
+    return options.filter((o) => normalizarClave(o.label).includes(n) || normalizarClave(String(o.value)) === n);
+  }, [options, texto]);
+  useEffect(() => {
+    if (!abierto) return;
+    const fuera = (e: MouseEvent) => { if (!caja.current?.contains(e.target as Node)) { setAbierto(false); setTexto(""); } };
+    document.addEventListener("mousedown", fuera);
+    return () => document.removeEventListener("mousedown", fuera);
+  }, [abierto]);
+  const abrir = () => { if (!disabled) { setAbierto(true); setActivo(0); } };
+  const elegir = (o: SelectOption | null) => { onChange(o ? o.value : null); setAbierto(false); setTexto(""); };
+  const teclas = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    // Escape cierra la lista (no el modal en el que esté el selector).
+    if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); setAbierto(false); setTexto(""); return; }
+    if (!abierto && (e.key === "ArrowDown" || e.key === "Enter")) { e.preventDefault(); abrir(); return; }
+    if (!abierto) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActivo((a) => Math.min(a + 1, Math.max(lista.length - 1, 0))); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActivo((a) => Math.max(a - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); const o = lista[activo]; if (o) elegir(o); }
+  };
+  const mostrado = abierto ? texto : (seleccion?.label ?? "");
+  return <div className="search-select" ref={caja}>
+    <input id={id} className={"input" + (error ? " error" : "")} role="combobox" aria-expanded={abierto} aria-autocomplete="list"
+      aria-label={ariaLabel} aria-controls={id ? `${id}-lista` : undefined} autoComplete="off" disabled={disabled} placeholder={placeholder} value={mostrado}
+      onFocus={abrir} onClick={abrir} onBlur={() => { setAbierto(false); setTexto(""); }}
+      onChange={(e) => { setTexto(e.target.value); setAbierto(true); setActivo(0); }} onKeyDown={teclas} />
+    <button type="button" className="search-select-caret" tabIndex={-1} aria-label="Abrir la lista" onMouseDown={(e) => e.preventDefault()}
+      onClick={() => (abierto ? setAbierto(false) : abrir())}>▾</button>
+    {abierto && <div className="search-select-list" id={id ? `${id}-lista` : undefined} role="listbox">
+      {allowEmpty && <button type="button" role="option" aria-selected={value == null || value === ""} className="search-select-opt" onMouseDown={(e) => e.preventDefault()} onClick={() => elegir(null)}>{emptyLabel}</button>}
+      {!lista.length && <div className="search-select-empty">{texto ? `Sin resultados para «${texto}»` : "No hay opciones"}</div>}
+      {lista.map((o, i) => <button key={String(o.value)} type="button" role="option" aria-selected={String(o.value) === String(value ?? "")}
+        className={"search-select-opt" + (i === activo ? " active" : "")} onMouseDown={(e) => e.preventDefault()}
+        onClick={() => elegir(o)} onMouseEnter={() => setActivo(i)}>{o.label}</button>)}
+    </div>}
+  </div>;
+}
 // Recimensiona en el navegador la foto elegida (máx. 900 px, JPEG) antes de
 // enviarla como base64, para no cargar fotos de varios MB en la base de datos.
 export function fileToDataUrl(file: File, max = 900, quality = 0.72): Promise<string> {
@@ -32,7 +85,9 @@ export function Field({ def, value, onChange, error = false }: { def: FieldDef; 
   if (def.type === "textarea") control = <textarea id={id} className={cls} rows={3} placeholder={def.placeholder} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />;
   else if (def.type === "enum" || def.type === "select") {
     const options = def.options ?? (def.enumValues ?? []).map((v) => ({ value: v, label: v }));
-    control = <select id={id} className={cls} value={value === null || value === undefined ? "" : String(value)} onChange={(e) => { const raw = e.target.value; if (raw === "") return onChange(null); const opt = options.find((o) => String(o.value) === raw); onChange(opt ? opt.value : raw); }}><option value="">— Sin asignar —</option>{options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}</select>;
+    control = def.searchable
+      ? <SearchSelect id={id} value={value} options={options} onChange={onChange} error={error} placeholder={def.placeholder ?? `Buscar ${def.label.toLowerCase()}…`} />
+      : <select id={id} className={cls} value={value === null || value === undefined ? "" : String(value)} onChange={(e) => { const raw = e.target.value; if (raw === "") return onChange(null); const opt = options.find((o) => String(o.value) === raw); onChange(opt ? opt.value : raw); }}><option value="">— Sin asignar —</option>{options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}</select>;
   } else if (def.type === "number" || def.type === "integer") control = <input id={id} className={cls} type="number" step={def.type === "integer" ? 1 : "any"} min={0} placeholder={def.placeholder} value={value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)} />;
   else if (def.type === "date") control = <input id={id} className={cls} type="date" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || null)} />;
   else if (def.type === "image") control = <div className="img-field">
