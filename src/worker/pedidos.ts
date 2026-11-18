@@ -426,6 +426,12 @@ pedidosRoutes.put("/:id", async (c) => {
   if (!(await puedeGestionarCentro(db, user, Number(pedido.centro_id)))) {
     return c.json({ error: "Solo los responsables del centro pueden editar el pedido" }, 403);
   }
+  // Fuera del borrador el pedido ya está enviado (o recepcionado y aplicado al
+  // stock): cambiarle el proveedor dejaría las líneas apuntando a un catálogo
+  // que no es el suyo.
+  if (pedido.estado !== "borrador") {
+    return c.json({ error: "Solo se puede modificar un pedido en borrador" }, 400);
+  }
   const body = await leerCuerpo(c);
   const proveedorId = body.proveedor_id === undefined ? pedido.proveedor_id : entero(body.proveedor_id);
   if (!proveedorId) return c.json({ error: "El pedido debe ir a un proveedor" }, 400);

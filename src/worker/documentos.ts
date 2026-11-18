@@ -70,6 +70,13 @@ async function parseFicha(c: Ctx, user: SessionUser, raw: Record<string, unknown
   const url = typeof raw.url === "string" ? raw.url.trim() : "";
   if (!URL_RE.test(url)) throw new ValidationError("La URL del documento debe empezar por http:// o https://");
   if (url.length > 500) throw new ValidationError("La URL es demasiado larga (máx. 500 caracteres)");
+  // La misma ficha (mismo tipo y misma URL) no se puede dar de alta dos veces:
+  // era la forma habitual de llenar el catálogo de documentos repetidos.
+  const repetida = await c.env.DB.prepare(
+    `SELECT id, nombre FROM documentos
+     WHERE tipo_id = ? AND TRIM(LOWER(url)) = TRIM(LOWER(?))${mode === "update" ? " AND id != ?" : ""} LIMIT 1`,
+  ).bind(...(mode === "update" ? [tipoId, url, Number(raw.id)] : [tipoId, url])).first();
+  if (repetida) throw new ValidationError(`Ya existe una ficha de ese tipo con la misma URL («${String(repetida.nombre)}»)`);
   const descripcion = typeof raw.descripcion === "string" && raw.descripcion.trim() ? raw.descripcion.trim().slice(0, 300) : null;
   const fabricante = typeof raw.fabricante === "string" && raw.fabricante.trim() ? raw.fabricante.trim().slice(0, 120) : null;
   const centros = [...new Set((Array.isArray(raw.centros) ? raw.centros : []).map((n) => Number(n)))]
@@ -135,8 +142,21 @@ export const documentos: Hono<{ Bindings: Env; Variables: Variables }> = new Hon
     return c.json({ items: res.results });
   })
   .get("/:id", async (c) => {
-    const row = await cargarFicha(c.env.DB, Number(c.req.param("id")));
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    const row = await cargarFicha(c.env.DB, id);
     if (!row) return c.json({ error: "Ficha no encontrada" }, 404);
+    // La ficha solo la ve quien tiene alguno de sus centros (los administradores,
+    // todas): el listado ya lo cumplía y el acceso directo por id no.
+    if (user.rol !== "admin") {
+      const cs = await centrosDeUsuario(c.env.DB, user.id);
+      const mios = cs.length
+        ? await c.env.DB.prepare(
+          `SELECT 1 AS x FROM documento_centros WHERE documento_id = ? AND centro_id IN (${cs.map(() => "?").join(",")}) LIMIT 1`,
+        ).bind(id, ...cs).first()
+        : null;
+      if (!mios) return c.json({ error: "Esa ficha pertenece a centros que no gestionas" }, 403);
+    }
     return c.json({ item: row });
   })
   .post("/", async (c) => {

@@ -86,6 +86,16 @@ async function validar(db: D1Database, user: SessionUser, body: Row, existente?:
     if (!zona) return { error: "La zona no pertenece al centro del trabajo" };
   }
   const subzonaId = body.subzona_id === undefined ? (existente?.subzona_id ?? null) : entero(body.subzona_id);
+  if (subzonaId) {
+    // La subzona debe colgar de la zona del trabajo (o, si no hay zona, ser del
+    // mismo centro): sin esto se podían guardar subzonas de otra planta.
+    const subzona = zonaId
+      ? await db.prepare("SELECT id FROM subzonas WHERE id = ? AND zona_id = ?").bind(subzonaId, zonaId).first()
+      : await db.prepare(
+        "SELECT s.id FROM subzonas s JOIN zonas z ON z.id = s.zona_id WHERE s.id = ? AND z.centro_id = ?",
+      ).bind(subzonaId, centroId).first();
+    if (!subzona) return { error: "La subzona no pertenece a la zona del trabajo" };
+  }
   const operarioId = body.operario_id === undefined ? (existente?.operario_id ?? null) : entero(body.operario_id);
   if (operarioId) {
     const u = await db.prepare("SELECT id FROM usuarios WHERE id = ?").bind(operarioId).first();
@@ -269,6 +279,7 @@ trabajosRoutes.post("/import", async (c) => {
   if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
   if (body.rows.length > 500) return c.json({ error: "Máximo 500 registros por importación" }, 400);
   let creados = 0;
+  let actualizados = 0;
   const errores: string[] = [];
   for (let i = 0; i < body.rows.length; i++) {
     const raw = body.rows[i];
@@ -281,16 +292,49 @@ trabajosRoutes.post("/import", async (c) => {
     if (!titulo) { if (errores.length < 8) errores.push(`Fila ${i + 1}: falta el título`); continue; }
     const fechaPrevista = texto(fila.fecha_prevista, 10);
     if (fechaPrevista && !/^\d{4}-\d{2}-\d{2}$/.test(fechaPrevista)) { if (errores.length < 8) errores.push(`Fila ${i + 1}: fecha prevista no válida`); continue; }
-    await db.prepare(
-      `INSERT INTO trabajos (centro_id, zona_id, subzona_id, titulo, descripcion, tipo, prioridad, estado,
-         operario_id, fecha_prevista, horas, material, notas, creado_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(centroId, entero(fila.zona_id), entero(fila.subzona_id), titulo, texto(fila.descripcion, 2000),
-      unoDe(TIPOS, fila.tipo, "limpieza"), unoDe(PRIORIDADES, fila.prioridad, "normal"), unoDe(ESTADOS, fila.estado, "abierto"),
-      entero(fila.operario_id), fechaPrevista, decimal(fila.horas), texto(fila.material, 500), texto(fila.notas, 2000), user.id).run();
-    creados++;
+    const zonaId = entero(fila.zona_id);
+    if (zonaId) {
+      const zona = await db.prepare("SELECT id FROM zonas WHERE id = ? AND centro_id = ?").bind(zonaId, centroId).first();
+      if (!zona) { if (errores.length < 8) errores.push(`Fila ${i + 1}: la zona no pertenece al centro`); continue; }
+    }
+    const subzonaId = entero(fila.subzona_id);
+    if (subzonaId) {
+      const subzona = zonaId
+        ? await db.prepare("SELECT id FROM subzonas WHERE id = ? AND zona_id = ?").bind(subzonaId, zonaId).first()
+        : await db.prepare(
+          "SELECT s.id FROM subzonas s JOIN zonas z ON z.id = s.zona_id WHERE s.id = ? AND z.centro_id = ?",
+        ).bind(subzonaId, centroId).first();
+      if (!subzona) { if (errores.length < 8) errores.push(`Fila ${i + 1}: la subzona no pertenece a la zona`); continue; }
+    }
+    const datos = [
+      zonaId, subzonaId, texto(fila.descripcion, 2000),
+      unoDe(TIPOS, fila.tipo, "limpieza"), unoDe(PRIORIDADES, fila.prioridad, "normal"),
+      unoDe(ESTADOS, fila.estado, "abierto"), entero(fila.operario_id), fechaPrevista,
+      decimal(fila.horas), texto(fila.material, 500), texto(fila.notas, 2000),
+    ];
+    // Reimportar el mismo listado no crea trabajos repetidos: el trabajo se
+    // identifica por centro + título (sin distinguir mayúsculas).
+    const existente = await db.prepare(
+      "SELECT id FROM trabajos WHERE centro_id = ? AND TRIM(UPPER(titulo)) = TRIM(UPPER(?)) LIMIT 1",
+    ).bind(centroId, titulo).first<{ id: number }>();
+    if (existente) {
+      await db.prepare(
+        `UPDATE trabajos SET zona_id = ?, subzona_id = ?, descripcion = ?, tipo = ?, prioridad = ?, estado = ?,
+           operario_id = ?, fecha_prevista = ?, horas = ?, material = ?, notas = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+      ).bind(...datos, Number(existente.id)).run();
+      actualizados++;
+    } else {
+      await db.prepare(
+        `INSERT INTO trabajos (zona_id, subzona_id, descripcion, tipo, prioridad, estado,
+           operario_id, fecha_prevista, horas, material, notas, centro_id, titulo, creado_por)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(...datos, centroId, titulo, user.id).run();
+      creados++;
+    }
   }
-  if (!creados && errores.length) return c.json({ error: errores[0], errores }, 400);
-  await logMovimiento(db, user, "alta", "trabajos", null, `Importación de trabajos: ${creados} registro(s)`, null, null);
-  return c.json({ creados, actualizados: 0, errores });
+  if (!creados && !actualizados && errores.length) return c.json({ error: errores[0], errores }, 400);
+  await logMovimiento(db, user, "alta", "trabajos", null,
+    `Importación de trabajos: ${creados} nuevo(s), ${actualizados} actualizado(s)`, null, null);
+  return c.json({ creados, actualizados, errores });
 });

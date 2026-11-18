@@ -159,7 +159,7 @@ export const maquinariaSpec: CrudSpec = {
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
     { name: "modelo", label: "Modelo", type: "text", required: false, maxLength: 80 },
     { name: "tipo", label: "Tipo", type: "text", required: true, maxLength: 80 },
-    { name: "numero_serie", label: "Nº de serie", type: "text", required: false, maxLength: 60 },
+    { name: "numero_serie", label: "Nº de serie", type: "text", required: false, unique: true, maxLength: 60 },
     { name: "centro_id", label: "Centro", type: "integer", required: true, min: 1 },
     { name: "zona_id", label: "Zona", type: "integer", required: true, min: 1 },
     { name: "subzona_id", label: "Subzona", type: "integer", required: false, min: 1 },

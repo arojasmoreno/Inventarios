@@ -294,6 +294,16 @@ async function seed(db: D1Database): Promise<void> {
   await rt.bind("RT-002", "Pantalón de trabajo", "Snickers Workwear", "AllroundWork", "42", 0, 0, "Ripstop con refuerzos", "Azul", 45, 2).run();
 }
 
+const INDICES_NORMALIZADOS = [
+  "CREATE UNIQUE INDEX IF NOT EXISTS ux_productos_codigo_norm ON productos_disponibles(TRIM(UPPER(codigo)))",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ux_proveedores_id_norm ON proveedores(TRIM(UPPER(id_proveedor)))",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ux_proveedores_codigo_norm ON proveedores(TRIM(UPPER(codigo)))",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ux_quimicos_lote_norm ON quimicos(TRIM(UPPER(numero_lote)))",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ux_maquinaria_serie_norm ON maquinaria(TRIM(UPPER(numero_serie)))",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ux_material_codigo_centro ON material_limpieza(TRIM(UPPER(codigo)), IFNULL(centro_id, 0))",
+  "CREATE INDEX IF NOT EXISTS idx_material_codigo_norm ON material_limpieza(TRIM(UPPER(codigo)))",
+  "CREATE INDEX IF NOT EXISTS idx_pedido_lineas_codigo_norm ON pedido_lineas(TRIM(UPPER(codigo)))",
+];
 let ready = false;
 // Bases ya inicializadas en este proceso: el esquema se crea una vez por base
 // (los tests crean una base en memoria por archivo) y el resto de arranques de
@@ -470,6 +480,15 @@ export async function bootstrap(db: D1Database): Promise<void> {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_limpieza_plan_clave ON limpieza_plan(centro_id, zona, ifnull(subzona, ''), ifnull(elemento, ''), ifnull(tipo_limpieza, ''), turno)",
     "CREATE INDEX IF NOT EXISTS idx_limpieza_faenas_origen ON limpieza_faenas(plan_id)",
   ] as const) await db.prepare(idx).run();
+  // Índices únicos normalizados: un código, lote o número de serie no puede
+  // entrar dos veces aunque cambie la caja o los espacios. Van aparte y con su
+  // propio try porque una base antigua con duplicados no debe impedir el
+  // arranque: ahí el índice no se crea y siguen valiendo las comprobaciones de
+  // la API. Los índices de búsqueda (no únicos) sirven a las consultas que
+  // cruzan el código de un pedido con el almacén.
+  for (const idx of INDICES_NORMALIZADOS) {
+    try { await db.prepare(idx).run(); } catch { /* datos antiguos con duplicados */ }
+  }
   ready = true;
   listas.add(marca);
 }

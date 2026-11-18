@@ -171,6 +171,14 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
         id = acumular;
         detalle = `${String(previo.nombre)} · lote ${String(previo.numero_lote)}`;
       } else {
+        // Un lote es único: repetir su número duplicaría el stock en el almacén.
+        // Si se trata del mismo lote que vuelve, hay que reponerlo (quimico_id).
+        const repetido = await c.env.DB.prepare(
+          "SELECT id FROM quimicos WHERE TRIM(UPPER(numero_lote)) = TRIM(UPPER(?)) AND id != ? LIMIT 1",
+        ).bind(numeroLote, 0).first<{ id: number }>();
+        if (repetido) {
+          throw new ValidationError(`Ya existe un lote con el número ${numeroLote}: selecciónalo y usa «Reponer» para sumar garrafas`);
+        }
         // Datos del producto que la ficha aporta (los copia del producto elegido).
         const data: Row = {
           codigo: texto(body.codigo, 40),

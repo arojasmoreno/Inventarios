@@ -80,6 +80,14 @@ export const movimientosRoutes: Hono<{ Bindings: Env; Variables: Variables }> = 
         return c.json({ error: "Stock insuficiente para la salida" }, 400);
       }
     }
+    // En químicos el estado sigue al stock (es lo que filtra el consumo FEFO):
+    // un ajuste o una entrada no pueden dejar «agotado» un lote con garrafas.
+    if (target.tabla === "quimicos") {
+      await c.env.DB.prepare(
+        `UPDATE quimicos SET estado = CASE WHEN num_garrafas > 0 THEN 'activo' ELSE 'agotado' END
+         WHERE id = ? AND ((num_garrafas > 0 AND estado <> 'activo') OR (num_garrafas <= 0 AND estado = 'activo'))`,
+      ).bind(id).run();
+    }
     const row = await c.env.DB.prepare(`SELECT ${target.columna} AS stock FROM ${target.tabla} WHERE id = ?`).bind(id).first();
     await logMovimiento(c.env.DB, c.get("user"), tipo, target.tabla, id, `${String(item.nombre)} (${target.nombre})`, tipo === "ajuste" ? null : cantidad, motivo, null);
     return c.json({ ok: true, stock: row?.stock ?? null, mensaje: `Movimiento registrado. Stock actual: ${Number(row?.stock ?? 0)}` });
