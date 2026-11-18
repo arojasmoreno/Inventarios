@@ -48,11 +48,21 @@ operariosRoutes.get("/", async (c) => {
   const user = c.get("user");
   const db = c.env.DB;
   if (user.rol === "usuario") {
+    // «Mi ficha»: se devuelve el perfil propio con sus centros y las
+    // formaciones vencidas, igual que la ficha que ve un administrador.
+    const propio = await c.env.DB.prepare(
+      `SELECT u.id, u.nombre, u.username, u.email, u.telefono, u.puesto, u.rol, u.activo,
+              (SELECT GROUP_CONCAT(c.nombre, ' · ') FROM usuario_centros uc JOIN centros c ON c.id = uc.centro_id
+                WHERE uc.usuario_id = u.id) AS centros_nombre,
+              (SELECT COUNT(*) FROM operario_formaciones of
+                WHERE of.usuario_id = u.id AND of.caducidad IS NOT NULL AND of.caducidad < date('now')
+                  AND NOT EXISTS (SELECT 1 FROM operario_formaciones o2
+                    WHERE o2.usuario_id = of.usuario_id AND o2.formacion_id = of.formacion_id AND o2.fecha > of.fecha)
+              ) AS formaciones_vencidas
+       FROM usuarios u WHERE u.id = ?`,
+    ).bind(user.id).first<Row>();
     return c.json({
-      items: [{
-        id: user.id, nombre: user.nombre, username: user.username,
-        rol: user.rol, activo: 1, centros_nombre: null,
-      }],
+      items: [propio ?? { id: user.id, nombre: user.nombre, username: user.username, rol: user.rol, activo: 1 }],
       solo_propia: true,
       puede_gestionar: false,
     });

@@ -13,6 +13,9 @@ export interface PlanTarea {
   elemento: string | null;
   frecuencia_calculo: string;
   frecuencia_informativa: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
   turno: string;
   auditable: number;
   fecha_inicio: string | null;

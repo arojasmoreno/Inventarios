@@ -52,7 +52,7 @@ export const estacionesSpec: CrudSpec = {
     { name: "soporte_id", label: "Soporte", type: "integer", required: false, min: 1 },
     { name: "tipo_consumible_id", label: "Tipo de consumible", type: "integer", required: true, min: 1 },
     { name: "articulo_id", label: "Artículo", type: "integer", required: true, min: 1 },
-    { name: "activo", label: "Activa", type: "boolean", required: true },
+    { name: "activo", label: "Activo", type: "boolean", required: true },
   ],
   beforeWrite: async (db, data) => {
     if (data.zona_id === undefined || data.zona_id === null) throw new ValidationError("La zona es obligatoria");

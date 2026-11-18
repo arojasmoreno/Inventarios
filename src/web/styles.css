@@ -540,3 +540,16 @@ a.hbar{text-decoration:none;color:inherit}.kpi{transition:border-color .15s}.kpi
 .provider-mini{display:inline-block;background:#eef2f7;color:#475569;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700;margin-right:4px}
 .provider-picker-label{color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
 @media(max-width:700px){.provider-summary-stats{gap:14px}.provider-summary-stats strong{font-size:17px}}
+/* Selector de columnas de la tabla del plan de higiene. */
+.plan-cols{margin:0 0 12px}
+.plan-cols>summary{list-style:none;cursor:pointer;white-space:nowrap;width:max-content}
+.plan-cols>summary::-webkit-details-marker{display:none}
+.plan-cols[open]>summary{border-color:var(--primary);color:var(--primary)}
+.plan-cols-panel{margin-top:8px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.plan-cols-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.plan-cols-head strong{margin-right:auto;font-size:12.5px}
+.plan-cols-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:4px 10px;max-height:260px;overflow:auto}
+.plan-cols-item{display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;padding:2px 0}
+.plan-cols-item input{cursor:pointer}
+.plan-cols-note{margin:8px 0 0;color:var(--muted);font-size:11px}
+@media(max-width:700px){.plan-cols-grid{grid-template-columns:1fr 1fr}}

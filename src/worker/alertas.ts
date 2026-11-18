@@ -65,7 +65,7 @@ export async function calcularAlertas(db: D1Database): Promise<{
   return { stock_bajo: stock.results, caducidades: caducidades.results, revisiones: revisiones.results, formaciones: formaciones.results, maquinas: maquinas.results };
 }
 
-async function enviarResumenDiario(env: Env): Promise<{ destinatarios: number; enviados: number; conteos: Record<string, number> }> {
+async function enviarResumenDiario(env: Env): Promise<{ destinatarios: number; enviados: number; simulados: number; conteos: Record<string, number> }> {
   const a = await calcularAlertas(env.DB);
   const conteos = { stock: a.stock_bajo.length, caducidades: a.caducidades.length, revisiones: a.revisiones.length, formaciones: a.formaciones.length, maquinas: a.maquinas.length };
   const destinatarios = await env.DB.prepare(
@@ -102,16 +102,17 @@ async function enviarResumenDiario(env: Env): Promise<{ destinatarios: number; e
     <p class="footer">Mensaje automático diario. Gestiona los avisos en Panel de control → Alertas.</p></body></html>`;
   const text = [`Resumen de alertas del ${fecha}`, "", ...(lineas.length ? lineas : ["Sin alertas: todo en orden."])].join("\n");
   let enviados = 0;
+  let simulados = 0;
   for (const d of destinatarios.results) {
     if (!total) break;
     try {
-      await sendResumen(env, String(d.email), `Inventarios · Alertas del ${fecha} (${total})`, html, text);
-      enviados++;
+      const resultado = await sendResumen(env, String(d.email), `Inventarios · Alertas del ${fecha} (${total})`, html, text);
+      if (resultado === "enviado") enviados++; else simulados++;
     } catch (err) {
       console.error("No se pudo enviar el resumen de alertas:", err);
     }
   }
-  return { destinatarios: destinatarios.results.length, enviados, conteos };
+  return { destinatarios: destinatarios.results.length, enviados, simulados, conteos };
 }
 
 export { enviarResumenDiario };
@@ -135,5 +136,12 @@ alertasRoutes.post("/enviar", async (c) => {
   const total = Object.values(r.conteos).reduce((x, n) => x + n, 0);
   if (!total) return c.json({ ok: true, enviado: false, conteos: r.conteos, message: "Sin alertas: no hay nada que enviar." });
   if (!r.destinatarios) return c.json({ error: "Ningún administrador tiene correo configurado en su usuario." }, 400);
-  return c.json({ ok: true, enviado: r.enviados > 0, destinatarios: r.destinatarios, enviados: r.enviados, conteos: r.conteos });
+  return c.json({
+    ok: true, enviado: r.enviados > 0, destinatarios: r.destinatarios, enviados: r.enviados,
+    simulados: r.simulados, conteos: r.conteos,
+    // Sin clave de SendGrid el correo no sale: se avisa en vez de dar éxito.
+    message: r.enviados === 0
+      ? "Correo desactivado: falta SENDGRID_API_KEY en el servidor. El resumen no se ha enviado."
+      : undefined,
+  });
 });

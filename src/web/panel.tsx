@@ -16,6 +16,8 @@ interface PanelData {
   por_zona: { zona_id: number | null; zona: string; centro: string; movimientos: number; unidades: number; ultimo: string }[];
   sin_consumo: Row[];
   stock_bajo: Row[];
+  reposicion: { categoria: string; seccion: string; nombre: string; codigo: string | null; stock: number; minimo: number; faltante: number }[];
+  forma_parte_sin_centros?: boolean;
   quimicos_vencidos: number;
   quimicos_caducan30: number;
   maquinas_no_operativas: Row[];
@@ -29,7 +31,7 @@ interface PanelData {
   rotacion_90d?: { unidades: number; stock: number; indice: number };
 }
 
-interface EnvioResumen { ok: boolean; enviado: boolean; enviados?: number; destinatarios?: number; message?: string; }
+interface EnvioResumen { ok: boolean; enviado: boolean; enviados?: number; simulados?: number; destinatarios?: number; message?: string; }
 
 const nombreEstacion = (e: Row): string => {
   const partes = [e.zona_nombre, e.subzona_nombre, e.soporte_nombre].filter((v): v is string => Boolean(v));
@@ -56,16 +58,27 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
     try {
       const r = await api.post<EnvioResumen>("/api/alertas/enviar", {});
       setToast({
-        message: r.enviado ? `Resumen enviado a ${formatNum(r.enviados ?? 0)} de ${formatNum(r.destinatarios ?? 0)} administradores`
+        message: r.enviado
+          ? `Resumen enviado a ${formatNum(r.enviados ?? 0)} de ${formatNum(r.destinatarios ?? 0)} administradores`
           : r.message ?? "Sin alertas: no hay nada que enviar.",
-        kind: "ok",
+        kind: r.enviado ? "ok" : "error",
       });
     } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo enviar el resumen", kind: "error" }); }
     finally { setEnviando(false); }
   };
 
   if (error) return <div className="card empty">⚠️ {error}</div>;
-  if (!data) return <div className="loading\">Cargando panel…</div>;
+  if (!data) return <div className="loading">Cargando panel…</div>;
+
+  const copiarReposicion = async () => {
+    const texto = data.reposicion
+      .map((r) => `${r.categoria} · ${r.nombre}${r.codigo ? ` (${r.codigo})` : ""}: hay ${formatNum(r.stock)}, faltan ${formatNum(r.faltante)} para el mínimo de ${formatNum(r.minimo)}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(texto);
+      setToast({ message: "Lista de reposición copiada al portapapeles", kind: "ok" });
+    } catch { setToast({ message: "No se pudo copiar la lista", kind: "error" }); }
+  };
 
   const maxDia = Math.max(1, ...data.por_dia.map((d) => Number(d.unidades)));
   const maxZona = Math.max(1, ...data.por_zona.map((z) => Number(z.unidades)));
@@ -73,6 +86,9 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
     + data.revisiones_epis.length + data.maquinas_no_operativas.length + data.formaciones_proximas.length;
 
   return <>
+    {data.forma_parte_sin_centros && <div className="banner warn">
+      No tienes ningún centro asignado, así que el panel no muestra datos. Pide a un administrador que te asigne un centro.
+    </div>}
     <div className="kpis">
       <div className="kpi"><div className="label">Consumo hoy</div><div className="value">{formatNum(data.consumo.hoy.unidades)} ud.</div>
         <div className="kpi-sub">{formatNum(data.consumo.hoy.movimientos)} movimientos registrados</div></div>
@@ -124,15 +140,20 @@ export function PanelPage({ user }: { user?: { rol: string } }) {
       </div>
       <div className="card card-pad">
         <div className="section-head"><h3>📉 Artículos bajo mínimo ({formatNum(data.stock_bajo.length)})</h3>
-          <a className="btn secondary small" href="#/informes">📈 Informes</a></div>
+          <div className="chips" style={{ margin: 0 }}>
+            {data.reposicion.length > 0 && <button className="btn secondary small" onClick={() => void copiarReposicion()}>📋 Copiar lista</button>}
+            <a className="btn secondary small" href="#/pedidos">🧾 Crear pedido</a>
+            <a className="btn secondary small" href="#/informes">📈 Informes</a>
+          </div></div>
         {data.stock_bajo.length
           ? <div className="table-scroll"><table>
-            <thead><tr><th>Categoría</th><th>Artículo</th><th className="right">Stock</th><th className="right">Mínimo</th></tr></thead>
+            <thead><tr><th>Categoría</th><th>Artículo</th><th className="right">Stock</th><th className="right">Mínimo</th><th className="right">Falta</th></tr></thead>
             <tbody>{data.stock_bajo.map((s, i) => <tr key={`${String(s.seccion)}-${String(s.id ?? i)}`}>
               <td><a href={`#/${String(s.seccion)}`} style={{ color: "var(--primary)", textDecoration: "none" }}>{String(s.categoria)}</a></td>
               <td>{String(s.nombre ?? "—")}{s.codigo ? <span style={{ color: "var(--muted)" }}> · {String(s.codigo)}</span> : null}</td>
               <td className="right"><span className="badge danger">{formatNum(s.stock)}</span></td>
               <td className="right">{formatNum(s.minimo)}</td>
+              <td className="right"><strong>{formatNum(s.faltante ?? 0)}</strong></td>
             </tr>)}</tbody></table></div>
           : <p style={{ color: "var(--muted)", margin: 0 }}>Ningún artículo por debajo del mínimo. ¡Todo surtido! </p>}
       </div>

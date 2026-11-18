@@ -5,10 +5,11 @@ import { PlanHigieneModal, type PlanTarea, type RespPlan } from "./limpieza-plan
 
 
 import { TablasMes } from "./limpieza-tablas";
+import { CumplimientoMes } from "./limpieza-cumplimiento";
 
 type Turno = "dia" | "tarde" | "noche";
 type Modo = "planificar" | "marcar";
-type Vista = "calendario" | "tablas" | "plan";
+type Vista = "calendario" | "tablas" | "cumplimiento" | "plan";
 
 interface Usuario { id: number; nombre: string; rol: string; }
 interface Centro { id: number; nombre: string; }
@@ -63,6 +64,43 @@ const fechaHoy = (): { anio: number; mes: number; dia: number; iso: string } => 
   return { anio: d.getFullYear(), mes: d.getMonth() + 1, dia: d.getDate(), iso: iso(d.getFullYear(), d.getMonth() + 1, d.getDate()) };
 };
 
+// Columnas que se pueden mostrar en la tabla del plan de higiene: cada una es
+// un campo de `limpieza_plan`, en el orden en que se pintan.
+interface ColumnaPlan { key: string; label: string; valor: (t: PlanTarea) => string }
+const COLUMNAS_PLAN: ColumnaPlan[] = [
+  { key: "zona", label: "Zona", valor: (t) => t.zona },
+  { key: "subzona", label: "Subzona", valor: (t) => t.subzona ?? "—" },
+  { key: "tipo_limpieza", label: "Tipo de limpieza", valor: (t) => t.tipo_limpieza ?? "—" },
+  { key: "tipo_zona", label: "Tipo de zona", valor: (t) => t.tipo_zona ?? "—" },
+  { key: "elemento", label: "Elemento", valor: (t) => t.elemento ?? "—" },
+  { key: "frecuencia_calculo", label: "Frecuencia de cálculo", valor: (t) => t.frecuencia_calculo },
+  { key: "frecuencia_informativa", label: "Frecuencia informativa", valor: (t) => t.frecuencia_informativa ?? "—" },
+  { key: "tiempo", label: "Tiempo", valor: (t) => (t.tiempo == null ? "—" : formatNum(t.tiempo, 2)) },
+  { key: "factor", label: "Factor", valor: (t) => (t.factor == null ? "—" : formatNum(t.factor, 2)) },
+  { key: "horas_semana", label: "Horas/semana", valor: (t) => (t.horas_semana == null ? "—" : formatNum(t.horas_semana, 2)) },
+  { key: "turno", label: "Turno", valor: (t) => capitalizar(t.turno) || "—" },
+  { key: "auditable", label: "Auditable", valor: (t) => (Number(t.auditable) === 1 ? "Sí" : "No") },
+  { key: "fecha_inicio", label: "Fecha de inicio", valor: (t) => formatFecha(t.fecha_inicio) },
+  { key: "ultima_realizacion", label: "Última realización", valor: (t) => formatFecha(t.ultima_realizacion) },
+  { key: "proxima_fecha", label: "Próxima fecha", valor: (t) => formatFecha(t.proxima_fecha) },
+];
+const COLUMNAS_PLAN_POR_DEFECTO = ["zona", "subzona", "tipo_limpieza", "frecuencia_calculo"];
+const COLUMNAS_PLAN_CLAVE = "limpieza:plan:columnas";
+
+/** Columnas guardadas por el usuario; si no hay ninguna válida, las de siempre. */
+function columnasPlanGuardadas(): string[] {
+  try {
+    const crudo = window.localStorage.getItem(COLUMNAS_PLAN_CLAVE);
+    if (!crudo) return COLUMNAS_PLAN_POR_DEFECTO;
+    const leido: unknown = JSON.parse(crudo);
+    if (!Array.isArray(leido)) return COLUMNAS_PLAN_POR_DEFECTO;
+    const validas = COLUMNAS_PLAN.filter((c) => leido.includes(c.key)).map((c) => c.key);
+    return validas.length ? validas : COLUMNAS_PLAN_POR_DEFECTO;
+  } catch {
+    return COLUMNAS_PLAN_POR_DEFECTO;
+  }
+}
+
 function recargarCentroGuardado(): number | null {
   try {
     const valor = Number(window.localStorage.getItem("limpieza:centro"));
@@ -90,6 +128,15 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const [planCargando, setPlanCargando] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planVersion, setPlanVersion] = useState(0);
+  const [columnasPlan, setColumnasPlan] = useState<string[]>(columnasPlanGuardadas);
+  const columnasVisibles = COLUMNAS_PLAN.filter((c) => columnasPlan.includes(c.key));
+  // Nunca se queda sin columnas: la tabla siempre muestra al menos una.
+  const cambiarColumnasPlan = (siguiente: string[]) => {
+    const ordenadas = COLUMNAS_PLAN.filter((c) => siguiente.includes(c.key)).map((c) => c.key);
+    if (!ordenadas.length) return;
+    setColumnasPlan(ordenadas);
+    try { window.localStorage.setItem(COLUMNAS_PLAN_CLAVE, JSON.stringify(ordenadas)); } catch { /* almacenamiento no disponible */ }
+  };
   const [cal, setCal] = useState<Calendario | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -303,6 +350,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
         <div className="cal-tabs" role="tablist" aria-label="Vista de limpieza">
           <button type="button" role="tab" aria-selected={vista === "calendario"} className={vista === "calendario" ? "active" : ""} onClick={() => setVista("calendario")}>📅 Calendario</button>
           <button type="button" role="tab" aria-selected={vista === "tablas"} className={vista === "tablas" ? "active" : ""} onClick={() => setVista("tablas")}>🗂️ Tablas del mes</button>
+          <button type="button" role="tab" aria-selected={vista === "cumplimiento"} className={vista === "cumplimiento" ? "active" : ""} onClick={() => setVista("cumplimiento")}>📈 Cumplimiento</button>
           <button type="button" role="tab" aria-selected={vista === "plan"} className={vista === "plan" ? "active" : ""} onClick={() => setVista("plan")}>📋 Plan de higiene</button>
         </div>
 
@@ -483,6 +531,10 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
       onAbrirPlan={() => setPlanModal(true)}
     />}
 
+    {vista === "cumplimiento" && centroActual && (
+      <CumplimientoMes centro={centroActual} anio={anio} mes={mes} mesTexto={capitalizar(nombreMes(anio, mes))} version={version} />
+    )}
+
     {vista === "plan" && centroActual && (
       <div className="card">
         <div className="cal-toolbar">
@@ -527,6 +579,35 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
             Limpiar filtros
           </button>
         </div>
+        {/* El panel va fuera de la barra de filtros para que se despliegue en el
+            flujo de la tarjeta y no quede recortado por su overflow. */}
+        <details className="plan-cols">
+          <summary className="btn secondary small">
+            🧩 Columnas ({formatNum(columnasVisibles.length)}/{formatNum(COLUMNAS_PLAN.length)})
+          </summary>
+          <div className="plan-cols-panel" role="group" aria-label="Columnas a mostrar del plan">
+            <div className="plan-cols-head">
+              <strong>Columnas a mostrar</strong>
+              <button type="button" className="btn secondary small"
+                onClick={() => cambiarColumnasPlan(COLUMNAS_PLAN.map((c) => c.key))}>Todas</button>
+              <button type="button" className="btn secondary small"
+                onClick={() => cambiarColumnasPlan(COLUMNAS_PLAN_POR_DEFECTO)}>Restablecer</button>
+            </div>
+            <div className="plan-cols-grid">
+              {COLUMNAS_PLAN.map((c) => <label key={c.key} className="plan-cols-item">
+                <input
+                  type="checkbox"
+                  checked={columnasPlan.includes(c.key)}
+                  onChange={(e) => cambiarColumnasPlan(e.target.checked
+                    ? [...columnasPlan, c.key]
+                    : columnasPlan.filter((k) => k !== c.key))}
+                />
+                <span>{c.label}</span>
+              </label>)}
+            </div>
+            <p className="plan-cols-note">Se guarda en este navegador.</p>
+          </div>
+        </details>
 
         {planError ? <div className="empty">⚠️ {planError}</div>
           : planCargando ? <div className="loading">Cargando el plan…</div>
@@ -539,17 +620,11 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
           : <div className="plan-table-wrap">
               <table className="plan-table">
                 <thead><tr>
-                  <th>Zona</th>
-                  <th>Subzona</th>
-                  <th>Tipo de limpieza</th>
-                  <th>Frecuencia de cálculo</th>
+                  {columnasVisibles.map((c) => <th key={c.key}>{c.label}</th>)}
                 </tr></thead>
                 <tbody>
                   {planTareas.map((t) => <tr key={t.id}>
-                    <td>{t.zona}</td>
-                    <td>{t.subzona ?? "—"}</td>
-                    <td>{t.tipo_limpieza ?? "—"}</td>
-                    <td>{t.frecuencia_calculo}</td>
+                    {columnasVisibles.map((c) => <td key={c.key}>{c.valor(t)}</td>)}
                   </tr>)}
                 </tbody>
               </table>

@@ -262,6 +262,22 @@ async function migrate(db: D1Database): Promise<void> {
   }
 }
 
+// Tipos base de consumibles y de fichas documentales. Se crean en cada arranque
+// (también en bases antiguas) y antes del seed, para que los datos de ejemplo
+// puedan referenciarlos.
+async function asegurarCatalogosBase(db: D1Database): Promise<void> {
+  const ctn = await db.prepare("SELECT COUNT(*) AS n FROM consumibles_tipos").first();
+  if (!ctn || Number(ctn.n) === 0) {
+    const ins = db.prepare("INSERT INTO consumibles_tipos (nombre, articulo_tipo) VALUES (?, ?)");
+    for (const [nombre, tipo] of [["Químicos", "quimicos"], ["Material de limpieza", "material_limpieza"], ["Maquinaria", "maquinaria"]] as Array<[string, string]>) await ins.bind(nombre, tipo).run();
+  }
+  const dtn = await db.prepare("SELECT COUNT(*) AS n FROM documento_tipos").first();
+  if (!dtn || Number(dtn.n) === 0) {
+    const ins = db.prepare("INSERT OR IGNORE INTO documento_tipos (nombre) VALUES (?)");
+    for (const t of ["Ficha de seguridad", "Ficha técnica", "Manual de maquinaria", "Instrucción de trabajo"]) await ins.bind(t).run();
+  }
+}
+
 async function seed(db: D1Database): Promise<void> {
   const adminSalt = toHex(crypto.getRandomValues(new Uint8Array(16)));
   const userSalt = toHex(crypto.getRandomValues(new Uint8Array(16)));
@@ -292,6 +308,101 @@ async function seed(db: D1Database): Promise<void> {
   const rt = db.prepare("INSERT INTO ropa_trabajo (codigo, prenda, fabricante, modelo, talla, alta_visibilidad, manga_larga, descripcion, color, stock, centro_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
   await rt.bind("RT-001", "Chaqueta alta visibilidad", "Lindström", "HV-300", "L", 1, 1, "Clase 2, con cintas reflectantes", "Amarillo", 30, 1).run();
   await rt.bind("RT-002", "Pantalón de trabajo", "Snickers Workwear", "AllroundWork", "42", 0, 0, "Ripstop con refuerzos", "Azul", 45, 2).run();
+
+  // Usuario de ejemplo con rol «administrador de centros»: solo ve y gestiona
+  // Planta Norte. Sirve para probar el alcance por centro sin tocar el admin.
+  const centrosSalt = toHex(crypto.getRandomValues(new Uint8Array(16)));
+  const centrosHash = await hashPassword("centros123", centrosSalt);
+  await db.prepare("INSERT INTO usuarios (username, nombre, email, password_hash, salt, rol, activo) VALUES (?, ?, ?, ?, ?, ?, 1)")
+    .bind("centros", "Elena Responsable", "centros@inventarios.local", centrosHash, centrosSalt, "admin_centros").run();
+  await db.prepare("INSERT INTO usuario_centros (usuario_id, centro_id) SELECT u.id, c.id FROM usuarios u, centros c WHERE u.username = 'centros' AND c.nombre = 'Planta Norte'").run();
+
+  // Zonas y subzonas de ejemplo: sin ellas no se pueden dar de alta estaciones.
+  const z = db.prepare("INSERT INTO zonas (nombre, centro_id, notas) VALUES (?, ?, ?)");
+  await z.bind("Almacén", 1, "Almacén general de consumibles").run();
+  await z.bind("Vestuarios", 1, null).run();
+  await z.bind("Producción", 1, null).run();
+  await z.bind("Almacén", 2, null).run();
+  await z.bind("Oficinas", 2, null).run();
+  const sz = db.prepare("INSERT INTO subzonas (nombre, zona_id) SELECT ?, z.id FROM zonas z WHERE z.nombre = ? AND z.centro_id = ?");
+  await sz.bind("Estantería A", "Almacén", 1).run();
+  await sz.bind("Estantería B", "Almacén", 1).run();
+  await sz.bind("Duchas", "Vestuarios", 1).run();
+  await sz.bind("Taquillas", "Vestuarios", 1).run();
+  await sz.bind("Línea 1", "Producción", 1).run();
+  await sz.bind("Estantería A", "Almacén", 2).run();
+
+  const so = db.prepare("INSERT INTO soportes (nombre) VALUES (?)");
+  for (const nombre of ["Pared", "Carro de limpieza", "Estantería"]) await so.bind(nombre).run();
+
+  // Estaciones de consumo con su QR: al escanearlas descuentan su artículo.
+  await db.prepare(
+    `INSERT INTO estaciones (centro_id, zona_id, subzona_id, soporte_id, tipo_consumible_id, articulo_tipo, articulo_id, activo)
+     SELECT q.centro_id, z.id, s.id, sp.id, ct.id, 'quimicos', q.id, 1
+     FROM quimicos q
+     JOIN zonas z ON z.nombre = 'Almacén' AND z.centro_id = q.centro_id
+     LEFT JOIN subzonas s ON s.nombre = 'Estantería A' AND s.zona_id = z.id
+     JOIN soportes sp ON sp.nombre = 'Estantería'
+     JOIN consumibles_tipos ct ON ct.articulo_tipo = 'quimicos'
+     WHERE q.numero_lote = 'L-2024-001' LIMIT 1`,
+  ).run();
+  await db.prepare(
+    `INSERT INTO estaciones (centro_id, zona_id, subzona_id, soporte_id, tipo_consumible_id, articulo_tipo, articulo_id, activo)
+     SELECT m.centro_id, z.id, s.id, sp.id, ct.id, 'material_limpieza', m.id, 1
+     FROM material_limpieza m
+     JOIN zonas z ON z.nombre = 'Vestuarios' AND z.centro_id = m.centro_id
+     JOIN subzonas s ON s.nombre = 'Duchas' AND s.zona_id = z.id
+     JOIN soportes sp ON sp.nombre = 'Pared'
+     JOIN consumibles_tipos ct ON ct.articulo_tipo = 'material_limpieza'
+     WHERE m.nombre = 'Mopa de microfibra' LIMIT 1`,
+  ).run();
+
+  // Catálogo de formaciones y una asignación vigente al operario de ejemplo.
+  await db.prepare("INSERT INTO formaciones (nombre, tipo, meses_validez, notas) VALUES (?, ?, ?, ?)")
+    .bind("Carretilla elevadora", "carnet", 36, "Renovar antes de la fecha de caducidad").run();
+  await db.prepare("INSERT INTO formaciones (nombre, tipo, meses_validez, notas) VALUES (?, ?, ?, ?)")
+    .bind("Manipulación de productos químicos", "formacion", 24, null).run();
+  await db.prepare(
+    `INSERT INTO operario_formaciones (usuario_id, formacion_id, centro_id, fecha, caducidad)
+     SELECT u.id, f.id, 1, date('now', '-2 months'), date('now', '-2 months', '+36 months')
+     FROM usuarios u JOIN formaciones f ON f.nombre = 'Carretilla elevadora'
+     WHERE u.username = 'operario' LIMIT 1`,
+  ).run();
+
+  // Documentación de ejemplo, asignada a Planta Norte.
+  await db.prepare(
+    `INSERT INTO documentos (nombre, tipo_id, url, descripcion, fabricante)
+     SELECT ?, dt.id, ?, ?, ? FROM documento_tipos dt WHERE dt.nombre = ? LIMIT 1`,
+  ).bind("FDS · Detergente alcalino Q-200", "https://example.com/fds-detergente-q200.pdf", "Ficha de datos de seguridad del detergente alcalino", "Química del Sur", "Ficha de seguridad").run();
+  await db.prepare(
+    `INSERT INTO documentos (nombre, tipo_id, url, descripcion, fabricante)
+     SELECT ?, dt.id, ?, ?, ? FROM documento_tipos dt WHERE dt.nombre = ? LIMIT 1`,
+  ).bind("Manual · Fregadora F-80", "https://example.com/manual-fregadora-f80.pdf", "Manual de uso y mantenimiento", "Nilfisk", "Manual de maquinaria").run();
+  await db.prepare(
+    `INSERT INTO documento_centros (documento_id, centro_id) SELECT d.id, 1 FROM documentos d WHERE d.url LIKE 'https://example.com/%'`,
+  ).run();
+
+  // Órdenes de trabajo de ejemplo (una abierta y otra en curso).
+  await db.prepare(
+    `INSERT INTO trabajos (centro_id, zona_id, titulo, descripcion, tipo, prioridad, estado, fecha_prevista)
+     VALUES (1, 1, 'Reponer consumibles del almacén', 'Revisar stock mínimo de químicos y material antes del viernes', 'reposicion', 'alta', 'abierto', date('now', '+3 days'))`,
+  ).run();
+  await db.prepare(
+    `INSERT INTO trabajos (centro_id, zona_id, titulo, descripcion, tipo, prioridad, estado, fecha_prevista)
+     VALUES (1, 2, 'Limpiar duchas de vestuarios', 'Desinfección completa de las duchas', 'limpieza', 'normal', 'en_curso', date('now', '+1 day'))`,
+  ).run();
+
+  // Plan de higiene de Planta Norte: base para generar el calendario del mes.
+  const plan = db.prepare(
+    `INSERT INTO limpieza_plan (centro_id, tipo_limpieza, zona, subzona, elemento, frecuencia_calculo,
+       frecuencia_informativa, tiempo, turno, auditable, fecha_inicio)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', '-1 month'))`,
+  );
+  await plan.bind(1, "Limpieza", "Almacén", "Estantería A", "Suelo", "1 día", "Diaria", 15, "dia", 1).run();
+  await plan.bind(1, "Limpieza", "Vestuarios", "Duchas", "Paredes y suelo", "1 día", "Diaria", 20, "tarde", 1).run();
+  await plan.bind(1, "Desinfección", "Vestuarios", "Taquillas", "Taquillas", "7 días", "Semanal", 30, "tarde", 1).run();
+  await plan.bind(1, "Limpieza", "Producción", "Línea 1", "Suelo", "7 días", "Semanal", 45, "noche", 0).run();
+  await plan.bind(1, "Mantenimiento", "Almacén", "Estantería B", "Estanterías", "31 días", "Mensual", 60, "dia", 0).run();
 }
 
 const INDICES_NORMALIZADOS = [
@@ -318,6 +429,7 @@ export async function bootstrap(db: D1Database): Promise<void> {
   }
   for (const sql of SCHEMA) await db.prepare(sql).run();
   await migrate(db);
+  await asegurarCatalogosBase(db);
   const count = await db.prepare("SELECT COUNT(*) AS n FROM usuarios").first();
   if (!count || Number(count.n) === 0) await seed(db);
   // Proveedores anteriores sin código: se les asigna uno estable a partir de su
@@ -412,17 +524,6 @@ export async function bootstrap(db: D1Database): Promise<void> {
        WHERE h.maquina_id = maquinaria.id ORDER BY h.fecha DESC, h.id DESC LIMIT 1)
      WHERE EXISTS (SELECT 1 FROM maquinaria_historial h2 WHERE h2.maquina_id = maquinaria.id)`,
   ).run();
-  const ctn = await db.prepare("SELECT COUNT(*) AS n FROM consumibles_tipos").first();
-  if (!ctn || Number(ctn.n) === 0) {
-    const ins = db.prepare("INSERT INTO consumibles_tipos (nombre, articulo_tipo) VALUES (?, ?)");
-    for (const [nombre, tipo] of [["Químicos", "quimicos"], ["Material de limpieza", "material_limpieza"], ["Maquinaria", "maquinaria"]] as Array<[string, string]>) await ins.bind(nombre, tipo).run();
-  }
-  // Tipos de ficha de la sección Documentación (también en bases existentes).
-  const dtn = await db.prepare("SELECT COUNT(*) AS n FROM documento_tipos").first();
-  if (!dtn || Number(dtn.n) === 0) {
-    const ins = db.prepare("INSERT OR IGNORE INTO documento_tipos (nombre) VALUES (?)");
-    for (const t of ["Ficha de seguridad", "Ficha técnica", "Manual de maquinaria", "Instrucción de trabajo"]) await ins.bind(t).run();
-  }
   // Estaciones migradas desde los antiguos puntos pueden quedar sin tipo.
   await db.prepare("UPDATE estaciones SET tipo_consumible_id = (SELECT ct.id FROM consumibles_tipos ct WHERE ct.articulo_tipo = estaciones.articulo_tipo ORDER BY ct.id LIMIT 1) WHERE tipo_consumible_id IS NULL").run();
   // Índices para las consultas calientes (auditoría, panel, entregas, histórico).

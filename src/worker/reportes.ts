@@ -3,21 +3,59 @@ import type { Env } from "./d1";
 import type { Variables } from "./types";
 import { requireAuth } from "./auth";
 import { etiquetaPeriodo, leerPeriodo } from "./periodo";
+import { centrosPermitidos, marcas } from "./alcance";
 
 type Row = Record<string, unknown>;
+
+// Informe vacío para un usuario sin centros asignados: la UI puede pintarlo
+// sin comprobar cada bloque.
+function reporteVacio() {
+  return {
+    generado: new Date().toISOString(),
+    centro: null,
+    centros: [],
+    resumen: {
+      quimicos: { registros: 0, garrafas: 0, litros: 0 },
+      material: { registros: 0, unidades: 0 },
+      maquinaria: { registros: 0, unidades: 0 },
+      epis: { registros: 0, unidades: 0 },
+      ropa: { registros: 0, unidades: 0 },
+    },
+    stock_bajo: { quimicos: 0, material: 0, epis: 0, ropa: 0, total: 0 },
+    caducidad: { vencidas: 0, en30: 0, en90: 0 },
+    quimicos: [], material: [], maquinaria: [], epis: [], ropas: [],
+    por_color: [], por_tipo: [], consumos_por_zona: [], consumos_por_subzona: [],
+    consumos_valorados: [], valor_consumido: 0,
+    entregas_por_operario: [], por_centro: [], por_origen: [],
+    desde: null, hasta: null,
+    periodo: { etiqueta: "Sin datos", movimientos: 0, consumo: 0, por_dia: [] },
+    consumo_por_dia: [], actividad: [],
+    globales: { usuarios: 0, centros: 0, zonas: 0, estaciones: 0, estaciones_activas: 0, documentos: 0, entregas: 0, maquinas_paradas: 0 },
+  };
+}
 export const reportesRoutes: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ Bindings: Env; Variables: Variables }>();
 reportesRoutes.use("*", requireAuth);
 reportesRoutes.get("/", async (c) => {
   const db = c.env.DB;
+  const permitidos = await centrosPermitidos(db, c.get("user"));
+  if (permitidos && permitidos.length === 0) return c.json(reporteVacio());
   const centroParam = c.req.query("centro_id");
   const centroId = centroParam && centroParam !== "all" ? Number(centroParam) : null;
   if (centroId !== null && (!Number.isInteger(centroId) || centroId < 1)) return c.json({ error: "centro_id no válido" }, 400);
+  // Un usuario de centro solo puede consultar los centros que tiene asignados.
+  if (centroId !== null && permitidos && !permitidos.includes(centroId)) {
+    return c.json({ error: "No tienes acceso a ese centro" }, 403);
+  }
   // Filtro de periodo (opcional): acota los consumos y los totales del panel.
   const periodo = leerPeriodo(c.req.query("desde"), c.req.query("hasta"));
   if ("error" in periodo) return c.json({ error: periodo.error }, 400);
-  const where = centroId ? " WHERE centro_id = ?" : "";
-  const bind = <T extends Row>(sql: string) => (centroId ? db.prepare(sql).bind(centroId).all<T>() : db.prepare(sql).all<T>());
-  const centrosRes = await db.prepare("SELECT id, nombre FROM centros ORDER BY nombre").all<Row>();
+  // Alcance: el centro elegido en la cabecera o, sin filtro, los centros del usuario.
+  const ids = centroId ? [centroId] : permitidos;
+  const where = ids ? ` WHERE centro_id IN (${marcas(ids.length)})` : "";
+  const bind = <T extends Row>(sql: string) => (ids ? db.prepare(sql).bind(...ids).all<T>() : db.prepare(sql).all<T>());
+  const centrosRes = ids
+    ? await db.prepare(`SELECT id, nombre FROM centros WHERE id IN (${marcas(ids.length)}) ORDER BY nombre`).bind(...ids).all<Row>()
+    : await db.prepare("SELECT id, nombre FROM centros ORDER BY nombre").all<Row>();
   const quimicosRes = await bind<Row>(`SELECT q.id, q.codigo, q.marca, q.nombre, q.numero_lote, q.litros_por_garrafa, q.num_garrafas,
     q.litros_por_garrafa * q.num_garrafas AS total_litros, q.fecha_caducidad, q.stock_minimo, q.precio, q.origen, q.centro_id, c.nombre AS centro_nombre,
     CASE WHEN q.fecha_caducidad < date('now') THEN 'vencida' WHEN q.fecha_caducidad <= date('now', '+30 day') THEN '30'
@@ -41,8 +79,8 @@ reportesRoutes.get("/", async (c) => {
   const estado = (r: Row): string => String(r.estado_caducidad);
   // Consumos de estaciones agrupados por ubicación (zona y subzona), dentro del
   // centro y del periodo elegidos.
-  const movWhere = `m.accion = 'consumo'${centroId ? " AND e.centro_id = ?" : ""}${periodo.sql}`;
-  const movBinds = [...(centroId ? [centroId] : []), ...periodo.binds];
+  const movWhere = `m.accion = 'consumo'${ids ? ` AND e.centro_id IN (${marcas(ids.length)})` : ""}${periodo.sql}`;
+  const movBinds = [...(ids ?? []), ...periodo.binds];
   const bindMov = <T extends Row>(sql: string) => db.prepare(sql).bind(...movBinds).all<T>();
   const porZonaRes = await bindMov<Row>(`SELECT COALESCE(c.nombre, '(sin centro)') AS centro, COALESCE(z.nombre, '(sin zona)') AS zona,
     COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS unidades, MAX(m.created_at) AS ultimo
@@ -58,7 +96,7 @@ reportesRoutes.get("/", async (c) => {
   const entregasRes = await bind<Row>(`SELECT u.id AS operario_id, u.nombre AS operario, u.username,
     COUNT(*) AS entregas, COALESCE(SUM(re.cantidad), 0) AS unidades, MAX(re.fecha) AS ultima
     FROM ropa_entregas re JOIN usuarios u ON u.id = re.usuario_id
-    ${centroId ? "WHERE re.centro_id = ?" : ""}
+    ${ids ? `WHERE re.centro_id IN (${marcas(ids.length)})` : ""}
     GROUP BY u.id, u.nombre, u.username ORDER BY unidades DESC, operario`);
   // ---- Datos del dashboard (pestaña «Dashboard» de Gestión de informes) ----
   // Inventario por planta: comparativa global entre centros; el filtro de la
@@ -83,7 +121,8 @@ reportesRoutes.get("/", async (c) => {
       + (SELECT COUNT(*) FROM ropa_trabajo r WHERE r.centro_id = c.id AND r.stock_minimo > 0 AND r.stock <= r.stock_minimo) AS stock_bajo,
     (SELECT COALESCE(SUM(m.cantidad), 0) FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
       WHERE m.accion = 'consumo' AND e.centro_id = c.id AND m.created_at >= datetime('now', '-30 days')) AS consumo_30d
-    FROM centros c ORDER BY c.nombre`).all<Row>();
+    FROM centros c${ids ? ` WHERE c.id IN (${marcas(ids.length)})` : ""} ORDER BY c.nombre`)
+    .bind(...(ids ?? [])).all<Row>();
   // Origen de los consumibles (fábrica / empresa) en el alcance filtrado.
   const origenQRes = await bind<Row>(`SELECT COALESCE(NULLIF(TRIM(origen), ''), 'fabrica') AS origen, COUNT(*) AS registros,
     COALESCE(SUM(num_garrafas), 0) AS garrafas, COALESCE(SUM(litros_por_garrafa * num_garrafas), 0) AS litros
@@ -110,19 +149,51 @@ reportesRoutes.get("/", async (c) => {
   // Totales del periodo aplicado, que el dashboard muestra junto al filtro.
   const periodoRes = await bindMov<Row>(`SELECT COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS consumo
     FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id WHERE ${movWhere}`);
-  // Actividad de los últimos 30 días por tipo de movimiento (alcance global).
-  const actividadRes = await db.prepare(`SELECT accion, COUNT(*) AS registros FROM movimientos
-    WHERE created_at >= datetime('now', '-30 days') GROUP BY accion ORDER BY registros DESC`).all<Row>();
-  // Cifras globales del centro de mando (usuarios, estaciones, documentación…).
-  const globalesRes = await db.prepare(`SELECT
-    (SELECT COUNT(*) FROM usuarios WHERE activo = 1) AS usuarios,
-    (SELECT COUNT(*) FROM centros) AS centros,
-    (SELECT COUNT(*) FROM zonas) AS zonas,
-    (SELECT COUNT(*) FROM estaciones) AS estaciones,
-    (SELECT COUNT(*) FROM estaciones WHERE activo = 1) AS estaciones_activas,
-    (SELECT COUNT(*) FROM documentos) AS documentos,
-    (SELECT COUNT(*) FROM ropa_entregas) AS entregas,
-    (SELECT COUNT(*) FROM maquinaria WHERE estado NOT IN ('Operativo', 'Operativa', 'Baja')) AS maquinas_paradas`).first<Row>();
+  // Actividad de los últimos 30 días por tipo de movimiento (alcance del usuario).
+  const actividadRes = await db.prepare(`SELECT m.accion, COUNT(*) AS registros FROM movimientos m
+    WHERE m.created_at >= datetime('now', '-30 days')${
+      ids ? ` AND EXISTS (SELECT 1 FROM estaciones sa WHERE sa.id = m.estacion_id AND sa.centro_id IN (${marcas(ids.length)}))` : ""
+    } GROUP BY m.accion ORDER BY registros DESC`).bind(...(ids ?? [])).all<Row>();
+  // Cifras globales del centro de mando (usuarios, estaciones, documentación…),
+  // limitadas a los centros del alcance cuando el usuario no es administrador.
+  const globalesRes = ids
+    ? await db.prepare(`SELECT
+        (SELECT COUNT(DISTINCT uc.usuario_id) FROM usuario_centros uc
+          WHERE uc.centro_id IN (${marcas(ids.length)})) AS usuarios,
+        (SELECT COUNT(*) FROM centros WHERE id IN (${marcas(ids.length)})) AS centros,
+        (SELECT COUNT(*) FROM zonas WHERE centro_id IN (${marcas(ids.length)})) AS zonas,
+        (SELECT COUNT(*) FROM estaciones WHERE centro_id IN (${marcas(ids.length)})) AS estaciones,
+        (SELECT COUNT(*) FROM estaciones WHERE activo = 1 AND centro_id IN (${marcas(ids.length)})) AS estaciones_activas,
+        (SELECT COUNT(*) FROM documentos WHERE id IN (
+          SELECT dc.documento_id FROM documento_centros dc WHERE dc.centro_id IN (${marcas(ids.length)}))) AS documentos,
+        (SELECT COUNT(*) FROM ropa_entregas WHERE centro_id IN (${marcas(ids.length)})) AS entregas,
+        (SELECT COUNT(*) FROM maquinaria WHERE estado NOT IN ('Operativo', 'Operativa', 'Baja')
+          AND centro_id IN (${marcas(ids.length)})) AS maquinas_paradas`)
+      .bind(...new Array(8).fill(0).flatMap(() => ids)).first<Row>()
+    : await db.prepare(`SELECT
+        (SELECT COUNT(*) FROM usuarios WHERE activo = 1) AS usuarios,
+        (SELECT COUNT(*) FROM centros) AS centros,
+        (SELECT COUNT(*) FROM zonas) AS zonas,
+        (SELECT COUNT(*) FROM estaciones) AS estaciones,
+        (SELECT COUNT(*) FROM estaciones WHERE activo = 1) AS estaciones_activas,
+        (SELECT COUNT(*) FROM documentos) AS documentos,
+        (SELECT COUNT(*) FROM ropa_entregas) AS entregas,
+        (SELECT COUNT(*) FROM maquinaria WHERE estado NOT IN ('Operativo', 'Operativa', 'Baja')) AS maquinas_paradas`).first<Row>();
+  // Consumo valorado: unidades consumidas por el precio del artículo, agrupado
+  // por centro y zona. Da el coste real de lo que se gasta en planta.
+  const valoradosRes = await bindMov<Row>(`SELECT COALESCE(c.nombre, '(sin centro)') AS centro,
+    COALESCE(z.nombre, '(sin zona)') AS zona,
+    COUNT(*) AS movimientos, COALESCE(SUM(m.cantidad), 0) AS unidades,
+    ROUND(SUM(m.cantidad * CASE m.tabla
+      WHEN 'quimicos' THEN COALESCE(q.precio, 0)
+      WHEN 'material_limpieza' THEN COALESCE(ml.precio, 0)
+      ELSE 0 END), 2) AS importe
+    FROM movimientos m JOIN estaciones e ON e.id = m.estacion_id
+    LEFT JOIN zonas z ON z.id = e.zona_id LEFT JOIN centros c ON c.id = e.centro_id
+    LEFT JOIN quimicos q ON m.tabla = 'quimicos' AND q.id = m.registro_id
+    LEFT JOIN material_limpieza ml ON m.tabla = 'material_limpieza' AND ml.id = m.registro_id
+    WHERE ${movWhere} GROUP BY centro, zona ORDER BY importe DESC`);
+  const valorConsumido = Number(valoradosRes.results.reduce((acc, r) => acc + Number(r.importe ?? 0), 0).toFixed(2));
   // Solo cantidades: los costes se han eliminado de los consumibles.
   const bajoDe = (rows: Row[], key: string): number => rows.filter((r) => Number(r.stock_minimo ?? 0) > 0 && Number(r[key] ?? 0) <= Number(r.stock_minimo)).length;
   // En los químicos el stock mínimo está en litros y pertenece al PRODUCTO: se
@@ -162,6 +233,8 @@ reportesRoutes.get("/", async (c) => {
     por_tipo: [...porTipo.values()].sort((a, b) => b.unidades - a.unidades),
     consumos_por_zona: porZonaRes.results,
     consumos_por_subzona: porSubzonaRes.results,
+    consumos_valorados: valoradosRes.results,
+    valor_consumido: valorConsumido,
     entregas_por_operario: entregasRes.results,
     por_centro: porCentroRes.results,
     por_origen: [...porOrigen.values()],

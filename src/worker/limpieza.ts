@@ -841,6 +841,80 @@ interface ExtraTabla {
   registro: { usuario_id: number; usuario: string; creado: string } | null;
 }
 
+// Cumplimiento del mes: días que tocaba limpiar frente a los que se han
+// marcado como hechos. Mide solo los días ya pasados (lo exigible a día de
+// hoy), que es lo que interesa en una revisión, y lo desglosa por turno, zona
+// y tarea para ver dónde se está fallando.
+limpiezaRoutes.get("/cumplimiento", async (c) => {
+  const user = c.get("user");
+  const db = c.env.DB;
+  const centroId = entero(c.req.query("centro_id"));
+  const anio = entero(c.req.query("anio"));
+  const mes = entero(c.req.query("mes"));
+  if (!centroId || !anio || !mes) return c.json({ error: "Indica centro, año y mes" }, 400);
+  if (anio < 2020 || anio > 2100 || mes < 1 || mes > 12) return c.json({ error: "El año o el mes no son válidos" }, 400);
+  const centro = await db.prepare("SELECT id, nombre FROM centros WHERE id = ?")
+    .bind(centroId).first<{ id: number; nombre: string }>();
+  if (!centro) return c.json({ error: "Centro no encontrado" }, 404);
+  if (!(await puedeVerCentro(db, user, centroId))) return c.json({ error: "No tienes acceso a este centro" }, 403);
+  const desde = fechaISO(anio, mes, 1);
+  const hasta = fechaISO(anio, mes, diasEnMes(anio, mes));
+  const hoy = hoyMadrid();
+  const filas = await db.prepare(
+    `SELECT f.id AS faena_id, f.zona, f.subzona, f.turno, f.frecuencia_informativa,
+            COUNT(d.fecha) AS programados,
+            SUM(CASE WHEN d.fecha <= ? THEN 1 ELSE 0 END) AS vencidos,
+            SUM(CASE WHEN r.fecha IS NOT NULL THEN 1 ELSE 0 END) AS hechos,
+            SUM(CASE WHEN r.fecha IS NOT NULL AND d.fecha <= ? THEN 1 ELSE 0 END) AS hechos_vencidos
+     FROM limpieza_faenas f
+     JOIN limpieza_dias d ON d.faena_id = f.id AND d.fecha BETWEEN ? AND ?
+     LEFT JOIN limpieza_registros r ON r.faena_id = d.faena_id AND r.fecha = d.fecha
+     WHERE f.centro_id = ? AND f.anio = ? AND f.mes = ?
+     GROUP BY f.id
+     ORDER BY f.turno, f.zona COLLATE NOCASE, f.subzona COLLATE NOCASE`,
+  ).bind(hoy, hoy, desde, hasta, centroId, anio, mes).all<{
+    faena_id: number; zona: string; subzona: string | null; turno: string;
+    frecuencia_informativa: string | null; programados: number; vencidos: number;
+    hechos: number; hechos_vencidos: number;
+  }>();
+  const porcentaje = (hechos: number, vencidos: number) => (vencidos > 0 ? Math.round((hechos / vencidos) * 100) : null);
+  const tareas = filas.results.map((f) => ({
+    faena_id: Number(f.faena_id), zona: String(f.zona),
+    subzona: f.subzona == null ? null : String(f.subzona),
+    turno: String(f.turno), frecuencia: f.frecuencia_informativa == null ? null : String(f.frecuencia_informativa),
+    programados: Number(f.programados), vencidos: Number(f.vencidos), hechos: Number(f.hechos),
+    hechos_vencidos: Number(f.hechos_vencidos),
+    pendientes: Math.max(0, Number(f.vencidos) - Number(f.hechos_vencidos)),
+    porcentaje: porcentaje(Number(f.hechos_vencidos), Number(f.vencidos)),
+  }));
+  const agrupar = (clave: (t: typeof tareas[number]) => string) => {
+    const mapa = new Map<string, { clave: string; programados: number; vencidos: number; hechos: number; hechos_vencidos: number }>();
+    for (const t of tareas) {
+      const k = clave(t);
+      const e = mapa.get(k) ?? { clave: k, programados: 0, vencidos: 0, hechos: 0, hechos_vencidos: 0 };
+      e.programados += t.programados; e.vencidos += t.vencidos;
+      e.hechos += t.hechos; e.hechos_vencidos += t.hechos_vencidos;
+      mapa.set(k, e);
+    }
+    return [...mapa.values()]
+      .map((e) => ({ ...e, porcentaje: porcentaje(e.hechos_vencidos, e.vencidos) }))
+      .sort((a, b) => a.clave.localeCompare(b.clave, "es"));
+  };
+  const vencidos = tareas.reduce((acc, t) => acc + t.vencidos, 0);
+  const hechos = tareas.reduce((acc, t) => acc + t.hechos_vencidos, 0);
+  return c.json({
+    centro, anio, mes, desde, hasta, fecha_hoy: hoy,
+    resumen: {
+      programados: tareas.reduce((acc, t) => acc + t.programados, 0),
+      vencidos, hechos, pendientes: Math.max(0, vencidos - hechos),
+      porcentaje: porcentaje(hechos, vencidos),
+    },
+    por_turno: agrupar((t) => t.turno),
+    por_zona: agrupar((t) => (t.subzona ? `${t.zona} / ${t.subzona}` : t.zona)),
+    tareas,
+  });
+});
+
 // Tablas del mes de un centro: todos los turnos de golpe, agrupados por
 // frecuencia, más los extras de más de 32 días.
 limpiezaRoutes.get("/tablas", async (c) => {

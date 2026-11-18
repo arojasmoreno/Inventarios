@@ -7,13 +7,15 @@ import { logMovimiento } from "./audit";
 import { leerPeriodo } from "./periodo";
 
 // Auditoría: quién consumió o ajustó qué, cuándo y con qué cantidad.
-// (Sin costes: solo interesa la cantidad de producto consumida.)
+// (Sin costes: solo interesa la cantidad de producto consumida.) El registro
+// completo es solo para administradores: incluye la actividad de todos los
+// centros y el nombre de cada usuario.
 export { logMovimiento };
 export const movimientosSpec: CrudSpec = {
   table: "movimientos", orderBy: "id", refUsuario: true, noAudit: true,
   extraSelect: ["t.accion", "t.tabla", "t.registro_id", "t.estacion_id", "t.descripcion", "t.cantidad", "t.motivo"],
   extraSearchCols: ["t.accion", "t.descripcion", "t.motivo"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  read: "admin", create: "admin", update: "admin", delete: "admin",
   fields: [],
 };
 

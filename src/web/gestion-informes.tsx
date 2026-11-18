@@ -11,7 +11,7 @@ type Tab = "dashboard" | "informes" | "auditoria" | "errores" | "descargas" | "i
 const TABS: Array<{ id: Tab; label: string; icon: string; adminOnly?: boolean }> = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
   { id: "informes", label: "Informes", icon: "📈" },
-  { id: "auditoria", label: "Auditoría", icon: "📋" },
+  { id: "auditoria", label: "Auditoría", icon: "📋", adminOnly: true },
   { id: "errores", label: "Errores", icon: "🐞", adminOnly: true },
   { id: "descargas", label: "Copias de seguridad", icon: "💾", adminOnly: true },
   { id: "importar", label: "Importar CSV", icon: "📤", adminOnly: true },

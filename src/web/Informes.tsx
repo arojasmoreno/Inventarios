@@ -25,6 +25,8 @@ interface Informe {
   por_tipo: { tipo: string; unidades: number; registros: number }[];
   consumos_por_zona: { centro: string; zona: string; movimientos: number; unidades: number; ultimo: string | null }[];
   consumos_por_subzona: { zona: string; subzona: string; movimientos: number; unidades: number; ultimo: string | null }[];
+  consumos_valorados: { centro: string; zona: string; movimientos: number; unidades: number; importe: number }[];
+  valor_consumido: number;
   entregas_por_operario: { operario_id: number; operario: string; username: string; entregas: number; unidades: number; ultima: string | null }[];
 }
 function estadoCaducidad(row: Row): { label: string; kind: string } {
@@ -211,6 +213,16 @@ export function Informes({ user }: { user: { rol: string } }) {
           <div className="chips">{data.consumos_por_subzona.map((s, i) => <span className="badge" key={`${String(s.zona)}-${String(s.subzona)}-${i}`}>🧱 {String(s.zona)} › {String(s.subzona)}: {formatNum(s.unidades)} ud.</span>)}</div>
         </div>}
       </> : <div className="empty" style={{ padding: 20 }}>Sin consumos de estaciones registrados todavía.</div>}
+    </div>
+    <div className="card"><div className="card-pad section-head"><h3>💶 Consumo valorado (unidades × precio)</h3>
+      <span className="badge">{formatNum(data.valor_consumido ?? 0, 2)} € en el periodo</span></div>
+      {data.consumos_valorados?.length ? <div className="table-scroll"><table>
+        <thead><tr><th>Centro</th><th>Zona</th><th className="right">Movimientos</th><th className="right">Unidades</th><th className="right">Importe</th></tr></thead>
+        <tbody>{data.consumos_valorados.map((v, i) => <tr key={`${v.centro}-${v.zona}-${i}`}>
+          <td>{v.centro}</td><td><strong>{v.zona}</strong></td>
+          <td className="right">{formatNum(v.movimientos)}</td><td className="right">{formatNum(v.unidades)}</td>
+          <td className="right"><strong>{formatNum(v.importe, 2)} €</strong></td></tr>)}</tbody></table></div>
+        : <div className="empty" style={{ padding: 20 }}>Sin consumos valorados: los artículos consumidos no tienen precio o no hay consumos en el periodo.</div>}
     </div>
     <div className="card"><div className="card-pad section-head"><h3>👕 Equipación: entregas por operario ({formatNum(data.entregas_por_operario.length)})</h3>{puedeDescargar && <button className="btn secondary small no-print" onClick={csvEntregas} disabled={!data.entregas_por_operario.length}>⬇️ CSV</button>}</div>
       {data.entregas_por_operario.length ? <div className="table-scroll"><table>
