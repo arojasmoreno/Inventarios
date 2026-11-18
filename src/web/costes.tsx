@@ -17,7 +17,7 @@ export function ConsumosCostesPage() {
   const [dias, setDias] = useState<number>(30);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
-    try { setMovimientos((await api.get<{ items: Row[] }>("/api/movimientos")).items); }
+    try { setMovimientos((await api.get<{ items: Row[] }>("/api/movimientos/recientes?limit=500")).items); }
     catch (e) { setError(e instanceof Error ? e.message : "Error cargando movimientos"); }
   }, []);
   useEffect(() => { void load(); }, [load]);

@@ -31,7 +31,7 @@ export function ZonasCentroPage({ user }: { user: { rol: string } }) {
   const [campoErr, setCampoErr] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
-  const canWrite = user.rol === "admin";
+  const canWrite = user.rol !== "usuario";
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);

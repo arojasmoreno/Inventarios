@@ -56,7 +56,7 @@ export function MaquinariaPage({ user }: { user: { rol: string; centro_id: numbe
 /** Histórico por máquina: fecha, estado y notas de cada cambio, con filtros
  *  por máquina, centro, estado y periodo, y borrado (recalcula el estado). */
 function HistorialMaquinaria({ user, maquinaEnlace = "" }: { user: { rol: string }; maquinaEnlace?: string }) {
-  const admin = user.rol === "admin";
+  const admin = user.rol !== "usuario";
   // Los usuarios consultan el histórico pero no lo exportan.
   const puedeDescargar = user.rol !== "usuario";
   const [items, setItems] = useState<Row[]>([]);

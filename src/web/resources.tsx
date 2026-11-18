@@ -103,7 +103,7 @@ export const QUIMICOS: ResourceConfig = {
   endpoint: "/api/quimicos", csvName: "quimicos",
   searchKeys: ["codigo", "marca", "nombre", "centro_nombre"],
   centroFilter: true, preFilter: soloFichas, historialTabla: "quimicos",
-  perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  perms: { read: "all", create: "centros", update: "centros", delete: "centros" },
   fields: [
     { name: "codigo", label: "Código de producto", type: "text", required: true, placeholder: "Ej. Q-100", help: "Identifica el producto y no puede repetirse." },
     { name: "marca", label: "Marca", type: "text", required: true, placeholder: "Ej. Proquima" },
@@ -127,7 +127,7 @@ export const QUIMICOS: ResourceConfig = {
   ],
 };
 export const MATERIAL: ResourceConfig = {
-  title: "Material de limpieza", subtitle: "Código, marca, color, tipo de consumible y origen", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["codigo", "marca", "nombre", "color", "tipo_consumible_nombre", "centro_nombre"], centroFilter: true, origenFilter: true, historialTabla: "material_limpieza", perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  title: "Material de limpieza", subtitle: "Código, marca, color, tipo de consumible y origen", endpoint: "/api/material-limpieza", csvName: "material-limpieza", searchKeys: ["codigo", "marca", "nombre", "color", "tipo_consumible_nombre", "centro_nombre"], centroFilter: true, origenFilter: true, historialTabla: "material_limpieza", perms: { read: "all", create: "centros", update: "centros", delete: "centros" },
   // El select de tipo solo ofrece tipos de consumible cuyo artículo es
   // material de limpieza (los químicos/maquinaria no aplican aquí).
   links: { tipo_consumible_id: { endpoint: "/api/consumibles-tipos", label: r => String(r.nombre), filter: r => String(r.articulo_tipo ?? "") === "material_limpieza" } },
@@ -160,7 +160,7 @@ export const MATERIAL: ResourceConfig = {
   ],
 };
 export const MAQUINARIA: ResourceConfig = {
-  title: "Maquinaria", subtitle: "Marca, modelo, nº de serie, tipo y ubicación · el estado sale del histórico", endpoint: "/api/maquinaria", csvName: "maquinaria", searchKeys: ["nombre", "marca", "modelo", "tipo", "numero_serie", "zona_nombre", "subzona_nombre", "centro_nombre"], centroFilter: true, historialTabla: "maquinaria", perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  title: "Maquinaria", subtitle: "Marca, modelo, nº de serie, tipo y ubicación · el estado sale del histórico", endpoint: "/api/maquinaria", csvName: "maquinaria", searchKeys: ["nombre", "marca", "modelo", "tipo", "numero_serie", "zona_nombre", "subzona_nombre", "centro_nombre"], centroFilter: true, historialTabla: "maquinaria", perms: { read: "all", create: "centros", update: "centros", delete: "centros" },
   links: {
     // `tipo` es texto en la base de datos: el select envía el nombre del tipo
     // (lo que valida el backend), no su id.
@@ -221,7 +221,7 @@ export const USUARIOS: ResourceConfig = {
 };
 
 export const TALLAS: ResourceConfig = {
-  title: "Tallas de operarios", subtitle: "Operario · prenda · talla · notas", endpoint: "/api/tallas", csvName: "tallas-operarios", searchKeys: ["usuario_nombre", "usuario_username", "prenda", "talla"], perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  title: "Tallas de operarios", subtitle: "Operario · prenda · talla · notas", endpoint: "/api/tallas", csvName: "tallas-operarios", searchKeys: ["usuario_nombre", "usuario_username", "prenda", "talla"], perms: { read: "centros", create: "centros", update: "centros", delete: "centros" },
   links: { usuario_id: { endpoint: "/api/usuarios", label: r => `${String(r.nombre)} (${String(r.username)})` } },
   fields: [{ name: "usuario_id", label: "Operario", type: "select", required: true, options: [] },
     { name: "prenda", label: "Prenda", type: "text", required: true },
@@ -237,7 +237,7 @@ export const TALLAS: ResourceConfig = {
   ],
 };
 export const EPIS: ResourceConfig = {
-  title: "EPIs", subtitle: "Equipos de protección individual con stock por centro", endpoint: "/api/epis", csvName: "epis", searchKeys: ["codigo", "tipo_equipo_nombre", "marca", "modelo", "talla", "color", "centro_nombre"], centroFilter: true, tipoEquipoFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  title: "EPIs", subtitle: "Equipos de protección individual con stock por centro", endpoint: "/api/epis", csvName: "epis", searchKeys: ["codigo", "tipo_equipo_nombre", "marca", "modelo", "talla", "color", "centro_nombre"], centroFilter: true, tipoEquipoFilter: true, perms: { read: "all", create: "centros", update: "centros", delete: "centros" },
   links: { tipo_equipo_id: { endpoint: "/api/tipos-equipo", label: r => String(r.nombre) } },
   fields: [
     { name: "codigo", label: "Código", type: "text", required: true },
@@ -265,7 +265,7 @@ export const EPIS: ResourceConfig = {
   ],
 };
 export const ROPA: ResourceConfig = {
-  title: "Ropa de trabajo", subtitle: "Prendas de los centros: alta visibilidad y manga larga", endpoint: "/api/ropa-trabajo", csvName: "ropa-trabajo", searchKeys: ["codigo", "prenda", "tipo_equipo_nombre", "fabricante", "modelo", "color", "centro_nombre"], centroFilter: true, tipoEquipoFilter: true, perms: { read: "all", create: "admin", update: "admin", delete: "admin" },
+  title: "Ropa de trabajo", subtitle: "Prendas de los centros: alta visibilidad y manga larga", endpoint: "/api/ropa-trabajo", csvName: "ropa-trabajo", searchKeys: ["codigo", "prenda", "tipo_equipo_nombre", "fabricante", "modelo", "color", "centro_nombre"], centroFilter: true, tipoEquipoFilter: true, perms: { read: "all", create: "centros", update: "centros", delete: "centros" },
   links: { tipo_equipo_id: { endpoint: "/api/tipos-equipo", label: r => String(r.nombre) } },
   fields: [
     { name: "codigo", label: "Código", type: "text", required: true },

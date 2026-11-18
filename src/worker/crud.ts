@@ -4,6 +4,7 @@ import type { Env, D1Database } from "./d1";
 import type { Variables } from "./types";
 import { requireAuth, hashPassword, toHex, type SessionUser } from "./auth";
 import { logMovimiento } from "./audit";
+import { centrosPermitidos, marcas } from "./alcance";
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export class ValidationError extends Error {}
 export type FieldType = "text" | "textarea" | "number" | "integer" | "date" | "boolean" | "enum" | "password";
@@ -13,6 +14,9 @@ export interface CrudSpec {
   table: string; orderBy: string; fields: FieldSpec[]; refCentro?: boolean; refUsuario?: boolean; refProveedor?: boolean; computed?: string;
   extraJoins?: string[]; extraSelect?: string[]; extraSearchCols?: string[];
   read: PermLevel; create: PermLevel; update: PermLevel; delete: PermLevel;
+  // Columna con el centro de cada fila (p. ej. «t.centro_id»). Cuando se indica,
+  // los usuarios de centro solo ven y modifican filas de sus centros.
+  scopeCentro?: string;
   // La tabla de auditoría no genera registros de auditoría (evita bucles).
   noAudit?: boolean;
   beforeWrite?: (db: D1Database, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -25,6 +29,27 @@ export function allowed(user: SessionUser, level: PermLevel): boolean {
   if (level === "admin") return user.rol === "admin";
   // Nivel «centros»: administrador o administrador de centros.
   return user.rol === "admin" || user.rol === "admin_centros";
+}
+// Centro al que pertenece una fila: la propia columna o, en las subzonas, el de
+// la zona a la que cuelgan.
+async function centroDeFila(db: D1Database, table: string, row: Record<string, unknown>): Promise<number | null> {
+  // En la propia tabla de centros el «centro» de la fila es su id.
+  if (table === "centros") return row.id == null ? null : Number(row.id);
+  if (table === "subzonas") {
+    const zona = await db.prepare("SELECT centro_id FROM zonas WHERE id = ?").bind(Number(row.zona_id)).first();
+    return zona ? Number(zona.centro_id) : null;
+  }
+  return row.centro_id == null ? null : Number(row.centro_id);
+}
+// Comprueba que el centro de una fila está entre los asignados al usuario.
+// Devuelve el error a mostrar o null si puede gestionarla.
+async function revisarCentro(db: D1Database, spec: CrudSpec, row: Record<string, unknown>, permitidos: number[] | null): Promise<string | null> {
+  if (!spec.scopeCentro || !permitidos) return null;
+  // Un centro nuevo se le asigna al administrador que lo crea (ver POST).
+  if (spec.table === "centros" && row.id == null) return null;
+  const centro = await centroDeFila(db, spec.table, row);
+  if (centro !== null && permitidos.includes(centro)) return null;
+  return "Solo puedes gestionar los datos de los centros que tienes asignados";
 }
 const TABLA_NOMBRE: Record<string, string> = {
   centros: "Centro", usuarios: "Usuario", quimicos: "Químico", material_limpieza: "Material de limpieza",
@@ -156,18 +181,33 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     if (centroId && centroId !== "all") { const id = Number(centroId); if (!Number.isInteger(id) || id < 1) return c.json({ error: "centro_id no válido" }, 400); where.push("t.centro_id = ?"); params.push(id); }
     if (spec.refProveedor && proveedorId && proveedorId !== "all") { const id = Number(proveedorId); if (!Number.isInteger(id) || id < 1) return c.json({ error: "proveedor_id no válido" }, 400); where.push("t.proveedor_id = ?"); params.push(id); }
     const q = (c.req.query("q") ?? "").trim(); if (q && searchCols.length) { where.push(`(${searchCols.map(col => `${col} LIKE ?`).join(" OR ")})`); for (let i=0;i<searchCols.length;i++) params.push(`%${q}%`); }
+    // Alcance por centro: los usuarios de centro solo ven sus propios datos.
+    const permitidos = spec.scopeCentro ? await centrosPermitidos(c.env.DB, user) : null;
+    if (spec.scopeCentro && permitidos) {
+      if (!permitidos.length) return c.json({ items: [] });
+      where.push(`${spec.scopeCentro} IN (${marcas(permitidos.length)})`); params.push(...permitidos);
+    }
     const sql = `${baseSql}${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY t.${spec.orderBy} DESC`;
     return c.json({ items: (await c.env.DB.prepare(sql).bind(...params).all()).results });
   });
   app.get("/:id", async c => {
     if (!allowed(c.get("user"), spec.read)) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(Number(c.req.param("id"))).first();
-    if (!row) return c.json({ error: "Registro no encontrado" }, 404); return c.json({ item: row });
+    if (!row) return c.json({ error: "Registro no encontrado" }, 404);
+    if (spec.scopeCentro) {
+      const err = await revisarCentro(c.env.DB, spec, row, await centrosPermitidos(c.env.DB, c.get("user")));
+      if (err) return c.json({ error: err }, 403);
+    }
+    return c.json({ item: row });
   });
   app.post("/", async c => {
     if (!allowed(c.get("user"), spec.create)) return c.json({ error: "No tienes permiso para crear registros" }, 403);
     const body = await readBody(c); let data = validate(spec, body, "insert"); await checkUnique(c.env.DB, spec, data, null);
     if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "insert");
+    if (spec.scopeCentro) {
+      const err = await revisarCentro(c.env.DB, spec, data, await centrosPermitidos(c.env.DB, c.get("user")));
+      if (err) return c.json({ error: err }, 403);
+    }
     const keys = Object.keys(data); if (!keys.length) throw new ValidationError("No hay datos que guardar");
     const result = await c.env.DB.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
     const newId = Number((result.meta as { last_row_id?: number }).last_row_id);
@@ -187,6 +227,12 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     if (spec.table === "centros") { const err = await centroScope(c, c.get("user"), id, "update"); if (err) return c.json({ error: err }, 403); }
     const body = await readBody(c); let data = validate(spec, body, "update"); await checkUnique(c.env.DB, spec, data, id);
     if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, "update", existing); const keys = Object.keys(data); if (!keys.length) return c.json({ item: existing });
+    if (spec.scopeCentro) {
+      const permitidos = await centrosPermitidos(c.env.DB, c.get("user"));
+      const err = await revisarCentro(c.env.DB, spec, existing, permitidos)
+        ?? await revisarCentro(c.env.DB, spec, { ...existing, ...data }, permitidos);
+      if (err) return c.json({ error: err }, 403);
+    }
     const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
     await c.env.DB.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), id).run();
     const updated = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(id).first();
@@ -199,6 +245,10 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     const id = Number(c.req.param("id")), row = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(id).first();
     if (!row) return c.json({ error: "Registro no encontrado" }, 404);
     if (spec.table === "centros") { const err = await centroScope(c, user, id, "delete"); if (err) return c.json({ error: err }, 403); }
+    if (spec.scopeCentro) {
+      const err = await revisarCentro(c.env.DB, spec, row, await centrosPermitidos(c.env.DB, user));
+      if (err) return c.json({ error: err }, 403);
+    }
     if (spec.beforeDelete) { const error = await spec.beforeDelete(c.env.DB, user, row); if (error) return c.json({ error }, 400); }
     await c.env.DB.prepare(`DELETE FROM ${spec.table} WHERE id = ?`).bind(id).run();
     if (spec.afterDelete) await spec.afterDelete(c.env.DB, user, row);
@@ -261,6 +311,11 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
         }
         await checkUnique(c.env.DB, spec, data, mode === "update" ? Number(existing?.id) : null);
         if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, mode, existing);
+        if (spec.scopeCentro) {
+          const permitidos = await centrosPermitidos(c.env.DB, c.get("user"));
+          const err = await revisarCentro(c.env.DB, spec, mode === "update" ? (existing ?? data) : data, permitidos);
+          if (err) { if (errores.length < 8) errores.push(`Fila ${i + 1}: ${err}`); continue; }
+        }
         const keys = Object.keys(data); if (!keys.length) { errores.push(`Fila ${i + 1}: sin datos que guardar`); continue; }
         let rowId: number;
         if (mode === "insert") {

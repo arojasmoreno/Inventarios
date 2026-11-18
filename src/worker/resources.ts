@@ -54,8 +54,8 @@ const normalizaOrigen = async (_db: unknown, data: Record<string, unknown>, mode
 };
 
 export const quimicosSpec: CrudSpec = {
-  table: "quimicos", orderBy: "id", refCentro: true, computed: "t.litros_por_garrafa * t.num_garrafas AS total_litros",
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "quimicos", orderBy: "id", refCentro: true, scopeCentro: "t.centro_id", computed: "t.litros_por_garrafa * t.num_garrafas AS total_litros",
+  read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     // ── Ficha del producto (pestaña «Químicos»): todo obligatorio salvo foto ──
     { name: "codigo", label: "Código de producto", type: "text", required: true, maxLength: 40 },
@@ -98,7 +98,7 @@ export const quimicosSpec: CrudSpec = {
   },
 };
 export const materialSpec: CrudSpec = {
-  table: "material_limpieza", orderBy: "id", refCentro: true,
+  table: "material_limpieza", orderBy: "id", refCentro: true, scopeCentro: "t.centro_id",
   // El tipo de consumible del producto (clasificación para filtrarlo en
   // «Puntos de consumo»): se muestra junto a su nombre.
   // Además del tipo de consumible, el material se enlaza con su proveedor a
@@ -112,7 +112,7 @@ export const materialSpec: CrudSpec = {
   ],
   extraSelect: ["tcon.nombre AS tipo_consumible_nombre", "pv.codigo AS proveedor_codigo", "pv.nombre AS proveedor_nombre"],
   extraSearchCols: ["tcon.nombre", "pv.codigo", "pv.nombre"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: false, unique: true, maxLength: 40 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
@@ -144,7 +144,7 @@ export const materialSpec: CrudSpec = {
 // el último registro del histórico (columna derivada `estado`, sincronizada).
 export const maquinariaSpec: CrudSpec = {
   // La tabla de máquinas se muestra ordenada por tipo (luego por nombre).
-  table: "maquinaria", orderBy: "tipo", refCentro: true,
+  table: "maquinaria", orderBy: "tipo", refCentro: true, scopeCentro: "t.centro_id",
   extraJoins: [" LEFT JOIN zonas z ON z.id = t.zona_id", " LEFT JOIN subzonas sb ON sb.id = t.subzona_id"],
   extraSelect: [
     "z.nombre AS zona_nombre",
@@ -153,7 +153,7 @@ export const maquinariaSpec: CrudSpec = {
       WHERE h.maquina_id = t.id ORDER BY h.fecha DESC, h.id DESC LIMIT 1), t.estado) AS estado`,
   ],
   extraSearchCols: ["z.nombre", "sb.nombre"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "nombre", label: "Máquina", type: "text", required: false, maxLength: 200 },
     { name: "marca", label: "Marca", type: "text", required: false, maxLength: 80 },
@@ -214,7 +214,7 @@ export const situacionesSpec: CrudSpec = {
   },
 };
 export const centrosSpec: CrudSpec = {
-  table: "centros", orderBy: "id", read: "all", create: "centros", update: "centros", delete: "centros",
+  table: "centros", orderBy: "id", scopeCentro: "t.id", read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "nombre", label: "Nombre del centro", type: "text", required: true, unique: true, maxLength: 120 },
     { name: "direccion", label: "Dirección", type: "text", required: false, maxLength: 200 },
@@ -264,11 +264,11 @@ export const usuariosSpec: CrudSpec = {
 };
 // ---- EPIs (equipos de protección individual) ----
 export const episSpec: CrudSpec = {
-  table: "epis", orderBy: "id", refCentro: true,
+  table: "epis", orderBy: "id", refCentro: true, scopeCentro: "t.centro_id",
   extraJoins: [" LEFT JOIN tipos_equipo te ON te.id = t.tipo_equipo_id"],
   extraSelect: ["te.nombre AS tipo_equipo_nombre"],
   extraSearchCols: ["te.nombre"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
     { name: "tipo_equipo_id", label: "Tipo de equipo", type: "integer", required: false, min: 1 },
@@ -294,11 +294,11 @@ export const episSpec: CrudSpec = {
 // Catálogo de prendas del almacén: código, marca, fabricante, modelo, talla,
 // A/V, manga larga, color y stock (alerta por stock mínimo).
 export const ropaSpec: CrudSpec = {
-  table: "ropa_trabajo", orderBy: "id", refCentro: true,
+  table: "ropa_trabajo", orderBy: "id", refCentro: true, scopeCentro: "t.centro_id",
   extraJoins: [" LEFT JOIN tipos_equipo te ON te.id = t.tipo_equipo_id"],
   extraSelect: ["te.nombre AS tipo_equipo_nombre"],
   extraSearchCols: ["te.nombre"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "codigo", label: "Código", type: "text", required: true, unique: true, maxLength: 40 },
     { name: "prenda", label: "Prenda", type: "text", required: true, maxLength: 120 },
@@ -392,7 +392,7 @@ export const tiposEquipoSpec: CrudSpec = {
   },
 };
 export const zonasSpec: CrudSpec = {
-  table: "zonas", orderBy: "id", refCentro: true, read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "zonas", orderBy: "id", refCentro: true, scopeCentro: "t.centro_id", read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "centro_id", label: "Centro", type: "integer", required: true, min: 1 },
     { name: "nombre", label: "Nombre de la zona", type: "text", required: true, maxLength: 80 },
@@ -414,7 +414,7 @@ export const zonasSpec: CrudSpec = {
   },
 };
 export const subzonasSpec: CrudSpec = {
-  table: "subzonas", orderBy: "id", read: "all", create: "admin", update: "admin", delete: "admin",
+  table: "subzonas", orderBy: "id", scopeCentro: "z.centro_id", read: "all", create: "centros", update: "centros", delete: "centros",
   extraJoins: [" LEFT JOIN zonas z ON z.id = t.zona_id"],
   extraSelect: ["z.nombre AS zona_nombre", "z.centro_id AS zona_centro_id", "(SELECT c.nombre FROM centros c WHERE c.id = z.centro_id) AS centro_nombre"],
   extraSearchCols: ["z.nombre"],

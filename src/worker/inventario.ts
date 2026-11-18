@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { Env, D1Database } from "./d1";
 import type { Variables } from "./types";
-import { requireAuth, requireAdmin } from "./auth";
+import { requireAuth, type SessionUser } from "./auth";
 import { logMovimiento } from "./audit";
 import { ValidationError, hoyISO } from "./crud";
+import { centrosDeUsuario } from "./alcance";
 
 // Control de lotes de los productos químicos.
 //
@@ -15,11 +16,19 @@ import { ValidationError, hoyISO } from "./crud";
 
 type Row = Record<string, unknown>;
 
+// Alcance del «administrador de centros» sobre los lotes: solo los de sus
+// centros. El administrador no tiene restricción.
+async function lotesFueraDeAlcance(db: D1Database, user: SessionUser, lotes: Lote[]): Promise<boolean> {
+  if (user.rol === "admin") return false;
+  const permitidos = await centrosDeUsuario(db, user.id);
+  return lotes.some((l) => l.centro_id == null || !permitidos.includes(l.centro_id));
+}
+
 interface Lote {
   id: number; nombre: string; marca: string | null; numero_lote: string;
   litros_por_garrafa: number; num_garrafas: number;
   fecha_caducidad: string | null; fecha_entrada: string | null; fecha_alta: string | null;
-  centro_nombre: string | null; estado: string;
+  centro_nombre: string | null; centro_id: number | null; estado: string;
 }
 
 // Redondeo a 4 decimales: evita los residuos binarios de las divisiones de
@@ -35,7 +44,7 @@ async function cargarLotes(db: D1Database, ids: number[]): Promise<Lote[]> {
   const res = await db.prepare(
     `SELECT t.id, t.nombre, t.marca, t.numero_lote, t.litros_por_garrafa, t.num_garrafas,
             t.fecha_caducidad, t.fecha_entrada, date(t.created_at) AS fecha_alta, t.estado,
-            c.nombre AS centro_nombre
+            t.centro_id, c.nombre AS centro_nombre
      FROM quimicos t LEFT JOIN centros c ON c.id = t.centro_id
      WHERE t.id IN (${placeholders(ids.length)})`,
   ).bind(...ids).all();
@@ -123,7 +132,14 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
     // El formulario de «Inventario por producto» envía el producto elegido (con
     // sus datos), el nº de lote y los LITROS recibidos. También se acepta el alta
     // por garrafas (`num_garrafas`), que es como lo hacen las importaciones.
-    .post("/entrada", requireAdmin, async (c) => {
+    .post("/entrada", async (c) => {
+      const user = c.get("user");
+      if (user.rol === "usuario") return c.json({ error: "Requiere permisos de administrador" }, 403);
+      const permitidos = user.rol === "admin" ? null : await centrosDeUsuario(c.env.DB, user.id);
+      const revisarCentro = (centroId: number | null): string | null => {
+        if (!permitidos) return null;
+        return centroId != null && permitidos.includes(centroId) ? null : "Solo puedes gestionar el stock de tus centros";
+      };
       const body = await cuerpo(c);
       const nombre = texto(body.nombre, 200);
       if (!nombre) throw new ValidationError("Producto químico: es obligatorio");
@@ -162,9 +178,11 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
       if (esAcumulo) {
         // Reposición de un lote existente: solo se suman garrafas a ese lote.
         const previo = await c.env.DB.prepare(
-          "SELECT id, nombre, numero_lote, num_garrafas FROM quimicos WHERE id = ?",
+          "SELECT id, nombre, numero_lote, num_garrafas, centro_id FROM quimicos WHERE id = ?",
         ).bind(acumular).first();
         if (!previo) return c.json({ error: "El lote seleccionado ya no existe" }, 404);
+        const fuera = revisarCentro(previo.centro_id == null ? null : Number(previo.centro_id));
+        if (fuera) return c.json({ error: fuera }, 403);
         await c.env.DB.prepare(
           "UPDATE quimicos SET num_garrafas = num_garrafas + ?, estado = 'activo', updated_at = datetime('now') WHERE id = ?",
         ).bind(garrafas, acumular).run();
@@ -199,6 +217,8 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
           centro_id: numeroOptimo(body.centro_id, "Centro"),
           notas: texto(body.notas, 2000),
         };
+        const fuera = revisarCentro(data.centro_id == null ? null : Number(data.centro_id));
+        if (fuera) return c.json({ error: fuera }, 403);
         const keys = Object.keys(data);
         const res = await c.env.DB.prepare(
           `INSERT INTO quimicos (${keys.join(", ")}) VALUES (${placeholders(keys.length)})`,
@@ -228,7 +248,9 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
     })
 
     // ── Salida: descuento por producto repartido entre sus lotes (FEFO) ─────
-    .post("/salida", requireAdmin, async (c) => {
+    .post("/salida", async (c) => {
+      const user = c.get("user");
+      if (user.rol === "usuario") return c.json({ error: "Requiere permisos de administrador" }, 403);
       const body = await cuerpo(c);
       const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(esEnteroPositivo) : [];
       if (!ids.length || ids.length > 200) return c.json({ error: "Selecciona los lotes del producto" }, 400);
@@ -243,6 +265,9 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
       const motivo = texto(body.motivo, 300);
       const lotes = await cargarLotes(c.env.DB, [...new Set(ids)]);
       if (!lotes.length) return c.json({ error: "Los lotes seleccionados ya no existen" }, 404);
+      if (await lotesFueraDeAlcance(c.env.DB, user, lotes)) {
+        return c.json({ error: "Solo puedes gestionar el stock de tus centros" }, 403);
+      }
       const { detalle, pendiente } = simularSalida(lotes, cantidad, unidad);
       if (pendiente > 0 || !detalle.length) {
         const hay = disponibles(lotes, unidad);
@@ -275,7 +300,9 @@ export const inventarioRoutes: Hono<{ Bindings: Env; Variables: Variables }> =
     })
 
     // ── Recuento: la hoja de inventario escrita en la aplicación ────────────
-    .post("/recuento", requireAdmin, async (c) => {
+    .post("/recuento", async (c) => {
+      const user = c.get("user");
+      if (user.rol !== "admin") return c.json({ error: "Requiere permisos de administrador" }, 403);
       const body = await cuerpo(c);
       const lineas = Array.isArray(body.lineas) ? body.lineas : [];
       if (!lineas.length) return c.json({ error: "El recuento no tiene ninguna línea" }, 400);

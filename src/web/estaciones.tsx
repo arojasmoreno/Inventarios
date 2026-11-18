@@ -76,7 +76,7 @@ function EstacionesLista({ user, onModo }: { user: { rol: string }; onModo: (id:
   const [editing, setEditing] = useState<Row | null | "new">(null);
   const [qrRow, setQrRow] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ message: string; kind: "ok" | "error" } | null>(null);
-  const canWrite = user.rol === "admin";
+  const canWrite = user.rol !== "usuario";
   // Los usuarios consultan las estaciones pero no exportan la tabla.
   const puedeDescargar = user.rol !== "usuario";
 

@@ -442,6 +442,9 @@ function RecuentoModal({ lotes, centroLabel, anteriores, onClose, onSaved }: {
  *  salidas FEFO y hoja de recuento imprimible. */
 export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
   const esAdmin = user.rol === "admin";
+  // El administrador de centros registra entradas y salidas de sus centros; el
+  // recuento (cierre de inventario) sigue siendo solo del administrador.
+  const puedeRegistrar = user.rol !== "usuario";
   const [items, setItems] = useState<Row[]>([]);
   const [centros, setCentros] = useState<Row[]>([]);
   const [anteriores, setAnteriores] = useState<Row[]>([]);
@@ -532,8 +535,8 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
       <div className="spacer" />
       {user.rol !== "usuario" && <button className="btn secondary" onClick={exportCsv} disabled={!filtrados.length}>⬇️ CSV</button>}
       <button className="btn secondary" onClick={() => window.print()} disabled={!paraHoja.length}>🖨️ Hoja de recuento</button>
-      {esAdmin && <button className="btn secondary" onClick={() => setModal("salida")}>↗ Salida</button>}
-      {esAdmin && <button className="btn" onClick={() => setModal("entrada")}>＋ Nueva entrada</button>}
+      {puedeRegistrar && <button className="btn secondary" onClick={() => setModal("salida")}>↗ Salida</button>}
+      {puedeRegistrar && <button className="btn" onClick={() => setModal("entrada")}>＋ Nueva entrada</button>}
       {esAdmin && <button className="btn secondary" onClick={() => setModal("recuento")} disabled={!paraHoja.length}>📋 Recuento</button>}
     </div>
 
@@ -546,7 +549,7 @@ export function InventarioQuimicosPage({ user }: { user: { rol: string } }) {
       </div>
       {loading ? <div className="loading">Cargando…</div> : error ? <div className="empty">⚠️ {error}</div> : !grupos.length
         ? <div className="empty"><span className="icon">📭</span><strong>No hay productos en el inventario</strong>
-            <p>{q || centroId !== "all" ? "Prueba con otra búsqueda u otro filtro." : esAdmin ? "Registra la primera entrada con el botón «Nueva entrada»." : "Todavía no hay stock registrado."}</p></div>
+            <p>{q || centroId !== "all" ? "Prueba con otra búsqueda u otro filtro." : puedeRegistrar ? "Registra la primera entrada con el botón «Nueva entrada»." : "Todavía no hay stock registrado."}</p></div>
         : <div className="table-scroll"><table>
           <thead><tr>
             <th>Producto</th><th>Marca</th><th className="right">Lotes en uso</th><th className="right">Garrafas</th>

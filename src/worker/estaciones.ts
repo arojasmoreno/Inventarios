@@ -13,7 +13,7 @@ const ULTIMO_CONSUMO = `(SELECT mm.id FROM movimientos mm WHERE mm.estacion_id =
 // Estaciones de consumo (antes «puntos de consumo»): centro → zona → subzona,
 // soporte, tipo de consumible y artículo que se descuenta al escanear su QR.
 export const estacionesSpec: CrudSpec = {
-  table: "estaciones", orderBy: "id", refCentro: true,
+  table: "estaciones", orderBy: "id", refCentro: true, scopeCentro: "t.centro_id",
   extraJoins: [
     " LEFT JOIN zonas z ON z.id = t.zona_id",
     " LEFT JOIN subzonas s ON s.id = t.subzona_id",
@@ -44,7 +44,7 @@ export const estacionesSpec: CrudSpec = {
     `(SELECT m.created_at FROM movimientos m WHERE m.id = ${ULTIMO_CONSUMO}) AS ultimo_consumo_fecha`,
   ],
   extraSearchCols: ["z.nombre", "s.nombre", "sp.nombre", "ct.nombre"],
-  read: "all", create: "admin", update: "admin", delete: "admin",
+  read: "all", create: "centros", update: "centros", delete: "centros",
   fields: [
     { name: "centro_id", label: "Centro", type: "integer", required: true, min: 1 },
     { name: "zona_id", label: "Zona", type: "integer", required: true, min: 1 },

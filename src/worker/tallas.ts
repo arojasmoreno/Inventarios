@@ -1,21 +1,38 @@
 import { Hono } from "hono";
 import type { Env } from "./d1";
 import type { Variables } from "./types";
-import { requireAuth } from "./auth";
+import { requireAuth, type SessionUser } from "./auth";
+import type { D1Database } from "./d1";
 import { allowed } from "./crud";
 import { logMovimiento } from "./audit";
 
 type Row = Record<string, unknown>;
 
+// El «administrador de centros» gestiona las tallas de su plantilla: solo los
+// operarios que comparten alguno de sus centros.
+async function personalEnAlcance(db: D1Database, user: SessionUser, usuarioId: number): Promise<boolean> {
+  if (user.rol === "admin") return true;
+  const row = await db.prepare(
+    `SELECT 1 AS x FROM usuario_centros uc
+     WHERE uc.usuario_id = ? AND uc.centro_id IN (SELECT centro_id FROM usuario_centros WHERE usuario_id = ?)`,
+  ).bind(usuarioId, user.id).first();
+  return Boolean(row);
+}
+
 export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ Bindings: Env; Variables: Variables }>()
   .use("*", requireAuth)
   .get("/", async (c) => {
     const user = c.get("user");
-    if (!allowed(user, "admin")) return c.json({ error: "Requiere permisos de administrador" }, 403);
+    if (!allowed(user, "centros")) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const where: string[] = [];
     const binds: unknown[] = [];
     const usuarioId = Number(c.req.query("usuario_id"));
     if (Number.isInteger(usuarioId) && usuarioId >= 1) { where.push("t.usuario_id = ?"); binds.push(usuarioId); }
+    if (user.rol !== "admin") {
+      where.push(`t.usuario_id IN (SELECT uc.usuario_id FROM usuario_centros uc
+        WHERE uc.centro_id IN (SELECT centro_id FROM usuario_centros WHERE usuario_id = ?))`);
+      binds.push(user.id);
+    }
     const rows = await c.env.DB.prepare(
       `SELECT t.id, t.usuario_id, u.nombre AS usuario_nombre, u.username AS usuario_username,
               t.prenda, t.talla, t.notas, t.fecha, t.created_at, t.updated_at
@@ -27,13 +44,17 @@ export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ 
     return c.json({ items: rows.results });
   })
   .post("/", async (c) => {
-    if (!allowed(c.get("user"), "admin")) return c.json({ error: "Requiere permisos de administrador" }, 403);
+    const user = c.get("user");
+    if (!allowed(user, "centros")) return c.json({ error: "Requiere permisos de administrador" }, 403);
     let body: Row;
     try { body = await c.req.json<Row>(); } catch { return c.json({ error: "Petición inválida" }, 400); }
     const usuarioId = Number(body.usuario_id);
     if (!Number.isInteger(usuarioId) || usuarioId < 1) return c.json({ error: "Elige un operario" }, 400);
     const persona = await c.env.DB.prepare("SELECT id, nombre FROM usuarios WHERE id = ?").bind(usuarioId).first();
     if (!persona) return c.json({ error: "El operario no existe" }, 400);
+    if (!(await personalEnAlcance(c.env.DB, user, usuarioId))) {
+      return c.json({ error: "Ese operario no pertenece a tus centros" }, 403);
+    }
     const prenda = (typeof body.prenda === "string" && body.prenda.trim()) ? body.prenda.trim() : null;
     if (!prenda) return c.json({ error: "La prenda es obligatoria" }, 400);
     const fecha = (typeof body.fecha === "string" && body.fecha.trim()) ? body.fecha.trim() : new Date().toISOString().slice(0, 10);
@@ -53,7 +74,8 @@ export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ 
   // Importación masiva desde CSV: una fila por talla de operario. Los errores
   // de una fila no detienen el resto (se devuelven acumulados).
   .post("/import", async (c) => {
-    if (!allowed(c.get("user"), "admin")) return c.json({ error: "No tienes permiso para importar registros" }, 403);
+    const user = c.get("user");
+    if (!allowed(user, "centros")) return c.json({ error: "No tienes permiso para importar registros" }, 403);
     let body: { rows?: unknown };
     try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
     if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
@@ -72,6 +94,10 @@ export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ 
       if (!talla) { if (errores.length < 8) errores.push(`Fila ${i + 1}: la talla es obligatoria`); continue; }
       const persona = await c.env.DB.prepare("SELECT id FROM usuarios WHERE id = ?").bind(usuarioId).first();
       if (!persona) { if (errores.length < 8) errores.push(`Fila ${i + 1}: el operario ${usuarioId} no existe`); continue; }
+      if (!(await personalEnAlcance(c.env.DB, user, usuarioId))) {
+        if (errores.length < 8) errores.push(`Fila ${i + 1}: el operario ${usuarioId} no pertenece a tus centros`);
+        continue;
+      }
       const hoy = new Date().toISOString().slice(0, 10);
       const fecha = typeof fila.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fila.fecha) ? fila.fecha : hoy;
       await c.env.DB.prepare("INSERT INTO tallas_operarios (usuario_id, prenda, talla, notas, fecha) VALUES (?, ?, ?, ?, ?)")
@@ -83,13 +109,17 @@ export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ 
     return c.json({ creados, actualizados: 0, errores });
   })
   .put("/:id", async (c) => {
-    if (!allowed(c.get("user"), "admin")) return c.json({ error: "Requiere permisos de administrador" }, 403);
+    const user = c.get("user");
+    if (!allowed(user, "centros")) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const id = Number(c.req.param("id"));
     if (!Number.isInteger(id) || id < 1) return c.json({ error: "Registro no válido" }, 400);
     let body: Row;
     try { body = await c.req.json<Row>(); } catch { return c.json({ error: "Petición inválida" }, 400); }
     const prev = await c.env.DB.prepare("SELECT * FROM tallas_operarios WHERE id = ?").bind(id).first();
     if (!prev) return c.json({ error: "Registro no encontrado" }, 404);
+    if (!(await personalEnAlcance(c.env.DB, user, Number(prev.usuario_id)))) {
+      return c.json({ error: "Ese operario no pertenece a tus centros" }, 403);
+    }
     const prenda = (typeof body.prenda === "string" && body.prenda.trim()) ? body.prenda.trim() : (prev.prenda == null ? null : String(prev.prenda));
     await c.env.DB.prepare(`UPDATE tallas_operarios SET usuario_id = ?, prenda = ?, talla = ?, notas = ?, fecha = ?, updated_at = datetime('now') WHERE id = ?`)
       .bind(Number(body.usuario_id) || Number(prev.usuario_id), prenda, body.talla ?? prev.talla, body.notas ?? prev.notas, body.fecha ?? prev.fecha, id).run();
@@ -97,11 +127,15 @@ export const tallas: Hono<{ Bindings: Env; Variables: Variables }> = new Hono<{ 
     return c.json({ ok: true });
   })
   .delete("/:id", async (c) => {
-    if (!allowed(c.get("user"), "admin")) return c.json({ error: "Requiere permisos de administrador" }, 403);
+    const user = c.get("user");
+    if (!allowed(user, "centros")) return c.json({ error: "Requiere permisos de administrador" }, 403);
     const id = Number(c.req.param("id"));
     if (!Number.isInteger(id) || id < 1) return c.json({ error: "Registro no válido" }, 400);
-    const row = await c.env.DB.prepare("SELECT prenda FROM tallas_operarios WHERE id = ?").bind(id).first();
+    const row = await c.env.DB.prepare("SELECT prenda, usuario_id FROM tallas_operarios WHERE id = ?").bind(id).first();
     if (!row) return c.json({ error: "Registro no encontrado" }, 404);
+    if (!(await personalEnAlcance(c.env.DB, user, Number(row.usuario_id)))) {
+      return c.json({ error: "Ese operario no pertenece a tus centros" }, 403);
+    }
     await c.env.DB.prepare("DELETE FROM tallas_operarios WHERE id = ?").bind(id).run();
     await logMovimiento(c.env.DB, c.get("user"), "borrado", "tallas_operarios", id, `Talla «${String(row.prenda)}» eliminada`, null, null);
     return c.json({ ok: true });

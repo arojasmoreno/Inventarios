@@ -9,10 +9,11 @@ const RECURSOS = [
   { key: "material_limpieza", endpoint: "/api/material-limpieza", label: "Material de limpieza", stockKey: "cantidad", unidad: "unidades" },
 ] as const;
 
-/** Entradas, salidas y ajustes de stock. Registrar movimientos es de
- *  administradores; el resto de perfiles solo consulta el listado. */
+/** Entradas, salidas y ajustes de stock. Registran movimientos el
+ *  administrador y el administrador de centros (en sus centros); el resto de
+ *  perfiles solo consulta el listado. */
 export function StockPage({ user }: { user: { rol: string } }) {
-  const puedeRegistrar = user.rol === "admin";
+  const puedeRegistrar = user.rol !== "usuario";
   const [recurso, setRecurso] = useState<string>(RECURSOS[0].key);
   const [items, setItems] = useState<Row[]>([]);
   const [movimientos, setMovimientos] = useState<Row[]>([]);
@@ -29,7 +30,7 @@ export function StockPage({ user }: { user: { rol: string } }) {
     try {
       const [l, m] = await Promise.all([
         api.get<{ items: Row[] }>(cfg.endpoint),
-        api.get<{ items: Row[] }>("/api/movimientos"),
+        api.get<{ items: Row[] }>("/api/movimientos/recientes"),
       ]);
       // En químicos solo se mueve el stock de los lotes: la ficha del producto
       // (alta en «Químicos») no tiene cantidad que ajustar.

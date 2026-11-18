@@ -9,7 +9,7 @@ const TABS: Array<{ id: Tab; label: string; icon: string; adminOnly?: boolean }>
   { id: "epis", label: "EPIs", icon: "🦺" },
   { id: "entregas", label: "Entregas", icon: "👕" },
   { id: "tipos", label: "Tipos de equipo", icon: "🧷" },
-  { id: "tallas", label: "Tallas operarios", icon: "📏", adminOnly: true },
+  { id: "tallas", label: "Tallas operarios", icon: "📏" },
 ];
 
 /** Sección «Equipación de operarios»: catálogos de ropa y EPIs con su
