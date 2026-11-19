@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "./api";
+import { SelectorColumnas, useColumnas, type Columna } from "./columnas";
 import { Modal, Toast, formatFecha, formatNum } from "./ui";
 import { PlanHigieneModal, type PlanTarea, type RespPlan } from "./limpieza-plan";
 
@@ -21,6 +22,15 @@ interface Faena {
   frecuencia_informativa: string | null;
   elemento?: string | null;
   tipo_limpieza?: string | null;
+  tipo_zona?: string | null;
+  frecuencia_calculo?: string | null;
+  tiempo?: number | null;
+  factor?: number | null;
+  horas_semana?: number | null;
+  auditable?: number;
+  fecha_inicio?: string | null;
+  ultima_realizacion?: string | null;
+  proxima_fecha?: string | null;
   dias: number[];
   registros: Registro[];
 }
@@ -87,19 +97,33 @@ const COLUMNAS_PLAN: ColumnaPlan[] = [
 const COLUMNAS_PLAN_POR_DEFECTO = ["zona", "subzona", "tipo_limpieza", "frecuencia_calculo"];
 const COLUMNAS_PLAN_CLAVE = "limpieza:plan:columnas";
 
-/** Columnas guardadas por el usuario; si no hay ninguna válida, las de siempre. */
-function columnasPlanGuardadas(): string[] {
-  try {
-    const crudo = window.localStorage.getItem(COLUMNAS_PLAN_CLAVE);
-    if (!crudo) return COLUMNAS_PLAN_POR_DEFECTO;
-    const leido: unknown = JSON.parse(crudo);
-    if (!Array.isArray(leido)) return COLUMNAS_PLAN_POR_DEFECTO;
-    const validas = COLUMNAS_PLAN.filter((c) => leido.includes(c.key)).map((c) => c.key);
-    return validas.length ? validas : COLUMNAS_PLAN_POR_DEFECTO;
-  } catch {
-    return COLUMNAS_PLAN_POR_DEFECTO;
-  }
-}
+// Columnas de la tabla del calendario. Las de los días no se eligen: son la
+// propia rejilla del mes. El ancho alimenta el `<colgroup>` y el desplazamiento
+// de las columnas fijas (sticky), así que se calcula con las que estén visibles.
+interface ColumnaCalendario extends Columna { ancho: number }
+const COLUMNAS_CALENDARIO: ColumnaCalendario[] = [
+  { key: "centro", label: "Centro", ancho: 96 },
+  { key: "zona", label: "Zona", ancho: 128 },
+  { key: "elemento", label: "Elemento", ancho: 132 },
+  { key: "subzona", label: "Subzona", ancho: 126 },
+  { key: "tipo_limpieza", label: "Tipo de limpieza", ancho: 134 },
+  { key: "tipo_zona", label: "Tipo de zona", ancho: 120 },
+  { key: "frecuencia_calculo", label: "Frecuencia de cálculo", ancho: 160 },
+  { key: "frecuencia_informativa", label: "Frecuencia informativa", ancho: 178 },
+  { key: "tiempo", label: "Tiempo", ancho: 90 },
+  { key: "factor", label: "Factor", ancho: 90 },
+  { key: "horas_semana", label: "Horas/semana", ancho: 116 },
+  { key: "turno", label: "Turno", ancho: 84 },
+  { key: "auditable", label: "Auditable", ancho: 100 },
+  { key: "fecha_inicio", label: "Fecha de inicio", ancho: 124 },
+  { key: "ultima_realizacion", label: "Última realización", ancho: 140 },
+  { key: "proxima_fecha", label: "Próxima fecha", ancho: 124 },
+  { key: "dias", label: "Días programados", ancho: 118 },
+  { key: "hechas", label: "Hechas", ancho: 84 },
+  { key: "ultima_marca", label: "Última marca", ancho: 158 },
+];
+const COLUMNAS_CALENDARIO_POR_DEFECTO = ["centro", "zona", "subzona", "frecuencia_informativa"];
+const COLUMNAS_CALENDARIO_CLAVE = "limpieza:calendario:columnas";
 
 function recargarCentroGuardado(): number | null {
   try {
@@ -128,15 +152,11 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const [planCargando, setPlanCargando] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planVersion, setPlanVersion] = useState(0);
-  const [columnasPlan, setColumnasPlan] = useState<string[]>(columnasPlanGuardadas);
-  const columnasVisibles = COLUMNAS_PLAN.filter((c) => columnasPlan.includes(c.key));
   // Nunca se queda sin columnas: la tabla siempre muestra al menos una.
-  const cambiarColumnasPlan = (siguiente: string[]) => {
-    const ordenadas = COLUMNAS_PLAN.filter((c) => siguiente.includes(c.key)).map((c) => c.key);
-    if (!ordenadas.length) return;
-    setColumnasPlan(ordenadas);
-    try { window.localStorage.setItem(COLUMNAS_PLAN_CLAVE, JSON.stringify(ordenadas)); } catch { /* almacenamiento no disponible */ }
-  };
+  const { elegidas: columnasPlan, visibles: columnasVisibles, cambiar: cambiarColumnasPlan } =
+    useColumnas(COLUMNAS_PLAN, COLUMNAS_PLAN_CLAVE, COLUMNAS_PLAN_POR_DEFECTO);
+  const { elegidas: columnasCalendario, visibles: columnasCalendarioVisibles, cambiar: cambiarColumnasCalendario } =
+    useColumnas(COLUMNAS_CALENDARIO, COLUMNAS_CALENDARIO_CLAVE, COLUMNAS_CALENDARIO_POR_DEFECTO);
   const [cal, setCal] = useState<Calendario | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -320,6 +340,87 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
   const festivos = new Set(cal?.festivos ?? []);
   const etiquetaTurno = ETIQUETA_TURNO[turno];
 
+  // Posición de cada columna fija del calendario y de la sombra del borde:
+  // sale de los anchos de las columnas que el usuario tenga visibles.
+  // Solo las dos primeras columnas visibles quedan fijas al desplazar: si se
+  // eligen muchas, fijarlas todas taparía la rejilla de días.
+  const columnasFijas = columnasCalendarioVisibles.slice(0, 2);
+  const posicionesCalendario = new Map<string, number>();
+  let anchoFijo = 0;
+  for (const col of columnasFijas) {
+    posicionesCalendario.set(col.key, anchoFijo);
+    anchoFijo += col.ancho;
+  }
+  const ultimaColumnaCalendario = columnasFijas[columnasFijas.length - 1]?.key;
+  const claseColumnaCalendario = (key: string): string =>
+    posicionesCalendario.has(key) ? "cal-sticky" + (key === ultimaColumnaCalendario ? " cal-col-last" : "") : "";
+
+  const celdaCalendario = (col: ColumnaCalendario, faena: Faena) => {
+    const estilo = posicionesCalendario.has(col.key) ? { left: posicionesCalendario.get(col.key) } : undefined;
+    const clase = claseColumnaCalendario(col.key) + (col.key === "zona" ? " cal-col-zona" : "");
+    switch (col.key) {
+      case "centro":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={cal?.centro.nombre}>{cal?.centro.nombre ?? "—"}</td>;
+      case "zona":
+        return <td key={col.key} className={clase} style={estilo}>
+          <div className="cal-zona-cell">
+            <div className="cal-zona-text">
+              <strong>{faena.zona}</strong>
+              {faena.elemento && !columnasCalendario.includes("elemento")
+                && <small className="cal-elemento" title={faena.elemento}>{faena.elemento}</small>}
+            </div>
+            {puedeGestionar && <button
+              type="button"
+              className="cal-edit"
+              title={`Editar ${faena.zona}`}
+              aria-label={`Editar ${faena.zona}`}
+              onClick={() => setFaenaModal(faena)}
+            >✎</button>}
+          </div>
+        </td>;
+      case "elemento":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={faena.elemento ?? undefined}>{faena.elemento ?? "—"}</td>;
+      case "subzona":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={faena.subzona ?? undefined}>{faena.subzona ?? "—"}</td>;
+      case "tipo_limpieza":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={faena.tipo_limpieza ?? undefined}>{faena.tipo_limpieza ?? "—"}</td>;
+      case "frecuencia_informativa":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={faena.frecuencia_informativa ?? undefined}>{faena.frecuencia_informativa ?? "—"}</td>;
+      case "tipo_zona":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={faena.tipo_zona ?? undefined}>{faena.tipo_zona ?? "—"}</td>;
+      case "frecuencia_calculo":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={faena.frecuencia_calculo ?? undefined}>{faena.frecuencia_calculo ?? "—"}</td>;
+      case "turno":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo}>{ETIQUETA_TURNO[turno]}</td>;
+      case "tiempo":
+        return <td key={col.key} className={clase + " right"} style={estilo}>{faena.tiempo == null ? "—" : formatNum(faena.tiempo, 2)}</td>;
+      case "factor":
+        return <td key={col.key} className={clase + " right"} style={estilo}>{faena.factor == null ? "—" : formatNum(faena.factor, 2)}</td>;
+      case "horas_semana":
+        return <td key={col.key} className={clase + " right"} style={estilo}>{faena.horas_semana == null ? "—" : formatNum(faena.horas_semana, 2)}</td>;
+      case "auditable":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo}>{Number(faena.auditable ?? 0) === 1 ? "Sí" : "No"}</td>;
+      case "fecha_inicio":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo}>{formatFecha(faena.fecha_inicio)}</td>;
+      case "ultima_realizacion":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo}>{formatFecha(faena.ultima_realizacion)}</td>;
+      case "proxima_fecha":
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo}>{formatFecha(faena.proxima_fecha)}</td>;
+      case "dias":
+        return <td key={col.key} className={clase + " right"} style={estilo}>{formatNum(faena.dias.length)}</td>;
+      case "hechas":
+        return <td key={col.key} className={clase + " right"} style={estilo}>{formatNum(faena.registros.length)}/{formatNum(faena.dias.length)}</td>;
+      case "ultima_marca": {
+        const ultima = [...faena.registros].sort((a, b) => String(a.creado).localeCompare(String(b.creado))).pop();
+        return <td key={col.key} className={clase + " cal-soft"} style={estilo} title={ultima ? `${ultima.usuario} · ${formatFecha(String(ultima.creado).slice(0, 10))}` : undefined}>
+          {ultima ? `${ultima.usuario} · día ${ultima.dia}` : "—"}
+        </td>;
+      }
+      default:
+        return null;
+    }
+  };
+
   return <>
     <section className={"cal-hero" + (vista === "tablas" ? " no-print" : "")}>
       <div className="cal-hero-main">
@@ -415,6 +516,16 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
         </div>
       </div>
 
+      <div className="cal-cols-bar">
+        <SelectorColumnas
+          todas={COLUMNAS_CALENDARIO}
+          elegidas={columnasCalendario}
+          porDefecto={COLUMNAS_CALENDARIO_POR_DEFECTO}
+          onChange={cambiarColumnasCalendario}
+          ariaLabel="Columnas a mostrar del calendario"
+        />
+      </div>
+
       {cargando && <div className="cal-loading-bar" role="progressbar" aria-label="Cargando calendario"><span /></div>}
 
       {error ? <div className="empty">⚠️ {error}</div>
@@ -428,18 +539,16 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
         : <div className="cal-table-wrap">
           <table className="cal-table">
             <colgroup>
-              <col style={{ width: 96 }} />
-              <col style={{ width: 128 }} />
-              <col style={{ width: 126 }} />
-              <col style={{ width: 178 }} />
+              {columnasCalendarioVisibles.map((c) => <col key={c.key} style={{ width: c.ancho }} />)}
               {numerosDia.map((dia) => <col key={dia} style={{ width: 36 }} />)}
             </colgroup>
             <thead>
               <tr>
-                <th className="cal-sticky cal-col-centro">Centro</th>
-                <th className="cal-sticky cal-col-zona">Zona</th>
-                <th className="cal-sticky cal-col-sub">Subzona</th>
-                <th className="cal-sticky cal-col-frec">Frecuencia informativa</th>
+                {columnasCalendarioVisibles.map((c) => <th
+                  key={c.key}
+                  className={claseColumnaCalendario(c.key)}
+                  style={{ left: posicionesCalendario.get(c.key) }}
+                >{c.label}</th>)}
                 {numerosDia.map((dia) => {
                   const fecha = iso(anio, mes, dia);
                   const festivo = festivos.has(fecha);
@@ -460,24 +569,7 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
               {cal.faenas.map((faena) => {
                 const registros = new Map(faena.registros.map((r) => [r.dia, r]));
                 return <tr key={faena.id}>
-                  <td className="cal-sticky cal-col-centro cal-soft" title={cal.centro.nombre}>{cal.centro.nombre}</td>
-                  <td className="cal-sticky cal-col-zona">
-                    <div className="cal-zona-cell">
-                      <div className="cal-zona-text">
-                        <strong>{faena.zona}</strong>
-                        {faena.elemento && <small className="cal-elemento" title={faena.elemento}>{faena.elemento}</small>}
-                      </div>
-                      {puedeGestionar && <button
-                        type="button"
-                        className="cal-edit"
-                        title={`Editar ${faena.zona}`}
-                        aria-label={`Editar ${faena.zona}`}
-                        onClick={() => setFaenaModal(faena)}
-                      >✎</button>}
-                    </div>
-                  </td>
-                  <td className="cal-sticky cal-col-sub cal-soft" title={faena.subzona ?? undefined}>{faena.subzona ?? "—"}</td>
-                  <td className="cal-sticky cal-col-frec cal-soft" title={faena.frecuencia_informativa ?? undefined}>{faena.frecuencia_informativa ?? "—"}</td>
+                  {columnasCalendarioVisibles.map((c) => celdaCalendario(c, faena))}
                   {numerosDia.map((dia) => {
                     const fecha = iso(anio, mes, dia);
                     const festivo = festivos.has(fecha);
@@ -581,33 +673,13 @@ export function LimpiezaPage({ user }: { user: Usuario }) {
         </div>
         {/* El panel va fuera de la barra de filtros para que se despliegue en el
             flujo de la tarjeta y no quede recortado por su overflow. */}
-        <details className="plan-cols">
-          <summary className="btn secondary small">
-            🧩 Columnas ({formatNum(columnasVisibles.length)}/{formatNum(COLUMNAS_PLAN.length)})
-          </summary>
-          <div className="plan-cols-panel" role="group" aria-label="Columnas a mostrar del plan">
-            <div className="plan-cols-head">
-              <strong>Columnas a mostrar</strong>
-              <button type="button" className="btn secondary small"
-                onClick={() => cambiarColumnasPlan(COLUMNAS_PLAN.map((c) => c.key))}>Todas</button>
-              <button type="button" className="btn secondary small"
-                onClick={() => cambiarColumnasPlan(COLUMNAS_PLAN_POR_DEFECTO)}>Restablecer</button>
-            </div>
-            <div className="plan-cols-grid">
-              {COLUMNAS_PLAN.map((c) => <label key={c.key} className="plan-cols-item">
-                <input
-                  type="checkbox"
-                  checked={columnasPlan.includes(c.key)}
-                  onChange={(e) => cambiarColumnasPlan(e.target.checked
-                    ? [...columnasPlan, c.key]
-                    : columnasPlan.filter((k) => k !== c.key))}
-                />
-                <span>{c.label}</span>
-              </label>)}
-            </div>
-            <p className="plan-cols-note">Se guarda en este navegador.</p>
-          </div>
-        </details>
+        <SelectorColumnas
+          todas={COLUMNAS_PLAN}
+          elegidas={columnasPlan}
+          porDefecto={COLUMNAS_PLAN_POR_DEFECTO}
+          onChange={cambiarColumnasPlan}
+          ariaLabel="Columnas a mostrar del plan"
+        />
 
         {planError ? <div className="empty">⚠️ {planError}</div>
           : planCargando ? <div className="loading">Cargando el plan…</div>

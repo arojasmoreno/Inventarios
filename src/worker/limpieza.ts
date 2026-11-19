@@ -33,8 +33,17 @@ interface FaenaCalendario {
   zona: string;
   subzona: string | null;
   frecuencia_informativa: string | null;
+  frecuencia_calculo: string | null;
   elemento: string | null;
   tipo_limpieza: string | null;
+  tipo_zona: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
+  auditable: number;
+  fecha_inicio: string | null;
+  ultima_realizacion: string | null;
+  proxima_fecha: string | null;
   dias: number[];
   registros: Array<{ dia: number; usuario_id: number; usuario: string; creado: string }>;
 }
@@ -175,6 +184,8 @@ limpiezaRoutes.get("/calendario", async (c) => {
   const [filas, festivos, zonas, subzonas] = await Promise.all([
     db.prepare(
       `SELECT f.id, f.zona, f.subzona, f.frecuencia_informativa, p.elemento, p.tipo_limpieza,
+              p.tipo_zona, p.frecuencia_calculo, p.tiempo, p.factor, p.horas_semana, p.auditable,
+              p.fecha_inicio, p.ultima_realizacion, p.proxima_fecha,
               d.fecha, r.usuario_id, u.nombre AS usuario, r.created_at AS creado
        FROM limpieza_faenas f
        LEFT JOIN limpieza_plan p ON p.id = f.plan_id
@@ -185,7 +196,10 @@ limpiezaRoutes.get("/calendario", async (c) => {
        ORDER BY f.zona COLLATE NOCASE, f.subzona COLLATE NOCASE, f.id, d.fecha`,
     ).bind(desde, hasta, centroId, anio, mes, turno).all<{
       id: number; zona: string; subzona: string | null; frecuencia_informativa: string | null;
-      elemento: string | null; tipo_limpieza: string | null;
+      elemento: string | null; tipo_limpieza: string | null; tipo_zona: string | null;
+      frecuencia_calculo: string | null; tiempo: number | null; factor: number | null;
+      horas_semana: number | null; auditable: number | null;
+      fecha_inicio: string | null; ultima_realizacion: string | null; proxima_fecha: string | null;
       fecha: string | null; usuario_id: number | null; usuario: string | null; creado: string | null;
     }>(),
     db.prepare("SELECT fecha FROM limpieza_festivos WHERE centro_id = ? AND fecha BETWEEN ? AND ? ORDER BY fecha")
@@ -209,8 +223,17 @@ limpiezaRoutes.get("/calendario", async (c) => {
         zona: String(fila.zona),
         subzona: fila.subzona ? String(fila.subzona) : null,
         frecuencia_informativa: fila.frecuencia_informativa ? String(fila.frecuencia_informativa) : null,
+        frecuencia_calculo: fila.frecuencia_calculo ? String(fila.frecuencia_calculo) : null,
         elemento: fila.elemento ? String(fila.elemento) : null,
         tipo_limpieza: fila.tipo_limpieza ? String(fila.tipo_limpieza) : null,
+        tipo_zona: fila.tipo_zona ? String(fila.tipo_zona) : null,
+        tiempo: fila.tiempo === null || fila.tiempo === undefined ? null : Number(fila.tiempo),
+        factor: fila.factor === null || fila.factor === undefined ? null : Number(fila.factor),
+        horas_semana: fila.horas_semana === null || fila.horas_semana === undefined ? null : Number(fila.horas_semana),
+        auditable: Number(fila.auditable ?? 0),
+        fecha_inicio: fila.fecha_inicio ? String(fila.fecha_inicio) : null,
+        ultima_realizacion: fila.ultima_realizacion ? String(fila.ultima_realizacion) : null,
+        proxima_fecha: fila.proxima_fecha ? String(fila.proxima_fecha) : null,
         dias: [],
         registros: [],
       };
@@ -820,8 +843,16 @@ interface TareaTabla {
   subzona: string | null;
   elemento: string | null;
   tipo_limpieza: string | null;
+  tipo_zona: string | null;
   frecuencia_informativa: string | null;
   frecuencia_calculo: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
+  auditable: number;
+  fecha_inicio: string | null;
+  ultima_realizacion: string | null;
+  proxima_fecha: string | null;
   dias: number[];
   registros: Array<{ dia: number; usuario_id: number; usuario: string; creado: string }>;
 }
@@ -831,8 +862,15 @@ interface ExtraTabla {
   zona: string;
   subzona: string | null;
   elemento: string | null;
+  tipo_limpieza: string | null;
+  tipo_zona: string | null;
   frecuencia_calculo: string;
   frecuencia_informativa: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
+  auditable: number;
+  fecha_inicio: string | null;
   ultima_realizacion: string | null;
   proxima_fecha: string | null;
   faena_id: number | null;
@@ -942,7 +980,9 @@ limpiezaRoutes.get("/tablas", async (c) => {
   const [filas, festivos, plan] = await Promise.all([
     db.prepare(
       `SELECT f.id, f.turno, f.zona, f.subzona, f.frecuencia_informativa,
-              p.elemento, p.tipo_limpieza, p.frecuencia_calculo,
+              p.elemento, p.tipo_limpieza, p.tipo_zona, p.frecuencia_calculo,
+              p.tiempo, p.factor, p.horas_semana, p.auditable,
+              p.fecha_inicio, p.ultima_realizacion, p.proxima_fecha,
               d.fecha, r.usuario_id, u.nombre AS usuario, r.created_at AS creado
        FROM limpieza_faenas f
        LEFT JOIN limpieza_plan p ON p.id = f.plan_id
@@ -953,13 +993,16 @@ limpiezaRoutes.get("/tablas", async (c) => {
        ORDER BY f.zona COLLATE NOCASE, f.subzona COLLATE NOCASE, f.id, d.fecha`,
     ).bind(desde, hasta, centroId, anio, mes).all<{
       id: number; turno: string; zona: string; subzona: string | null; frecuencia_informativa: string | null;
-      elemento: string | null; tipo_limpieza: string | null; frecuencia_calculo: string | null;
+      elemento: string | null; tipo_limpieza: string | null; tipo_zona: string | null; frecuencia_calculo: string | null;
+      tiempo: number | null; factor: number | null; horas_semana: number | null; auditable: number | null;
+      fecha_inicio: string | null; ultima_realizacion: string | null; proxima_fecha: string | null;
       fecha: string | null; usuario_id: number | null; usuario: string | null; creado: string | null;
     }>(),
     db.prepare("SELECT fecha FROM limpieza_festivos WHERE centro_id = ? AND fecha BETWEEN ? AND ? ORDER BY fecha")
       .bind(centroId, desde, hasta).all<{ fecha: string }>(),
     db.prepare(
       `SELECT p.id, p.turno, p.zona, p.subzona, p.elemento, p.frecuencia_calculo, p.frecuencia_informativa,
+              p.tipo_limpieza, p.tipo_zona, p.tiempo, p.factor, p.horas_semana, p.auditable, p.fecha_inicio,
               p.ultima_realizacion, p.proxima_fecha,
               f.id AS faena_id, d.fecha, r.usuario_id, u.nombre AS usuario, r.created_at AS creado
        FROM limpieza_plan p
@@ -971,6 +1014,9 @@ limpiezaRoutes.get("/tablas", async (c) => {
        ORDER BY p.zona COLLATE NOCASE, p.subzona COLLATE NOCASE, p.id`,
     ).bind(anio, mes, centroId).all<{
       id: number; turno: string; zona: string; subzona: string | null; elemento: string | null;
+      tipo_limpieza: string | null; tipo_zona: string | null;
+      tiempo: number | null; factor: number | null; horas_semana: number | null; auditable: number | null;
+      fecha_inicio: string | null;
       frecuencia_calculo: string; frecuencia_informativa: string | null;
       ultima_realizacion: string | null; proxima_fecha: string | null;
       faena_id: number | null; fecha: string | null; usuario_id: number | null;
@@ -993,8 +1039,16 @@ limpiezaRoutes.get("/tablas", async (c) => {
         subzona: fila.subzona ? String(fila.subzona) : null,
         elemento: fila.elemento ? String(fila.elemento) : null,
         tipo_limpieza: fila.tipo_limpieza ? String(fila.tipo_limpieza) : null,
+        tipo_zona: fila.tipo_zona ? String(fila.tipo_zona) : null,
         frecuencia_informativa: fila.frecuencia_informativa ? String(fila.frecuencia_informativa) : null,
         frecuencia_calculo: fila.frecuencia_calculo ? String(fila.frecuencia_calculo) : null,
+        tiempo: fila.tiempo === null || fila.tiempo === undefined ? null : Number(fila.tiempo),
+        factor: fila.factor === null || fila.factor === undefined ? null : Number(fila.factor),
+        horas_semana: fila.horas_semana === null || fila.horas_semana === undefined ? null : Number(fila.horas_semana),
+        auditable: Number(fila.auditable ?? 0),
+        fecha_inicio: fila.fecha_inicio ? String(fila.fecha_inicio) : null,
+        ultima_realizacion: fila.ultima_realizacion ? String(fila.ultima_realizacion) : null,
+        proxima_fecha: fila.proxima_fecha ? String(fila.proxima_fecha) : null,
         dias: [],
         registros: [],
       };
@@ -1027,8 +1081,15 @@ limpiezaRoutes.get("/tablas", async (c) => {
       zona: String(fila.zona),
       subzona: fila.subzona ? String(fila.subzona) : null,
       elemento: fila.elemento ? String(fila.elemento) : null,
+      tipo_limpieza: fila.tipo_limpieza ? String(fila.tipo_limpieza) : null,
+      tipo_zona: fila.tipo_zona ? String(fila.tipo_zona) : null,
       frecuencia_calculo: String(fila.frecuencia_calculo),
       frecuencia_informativa: fila.frecuencia_informativa ? String(fila.frecuencia_informativa) : null,
+      tiempo: fila.tiempo === null || fila.tiempo === undefined ? null : Number(fila.tiempo),
+      factor: fila.factor === null || fila.factor === undefined ? null : Number(fila.factor),
+      horas_semana: fila.horas_semana === null || fila.horas_semana === undefined ? null : Number(fila.horas_semana),
+      auditable: Number(fila.auditable ?? 0),
+      fecha_inicio: fila.fecha_inicio ? String(fila.fecha_inicio) : null,
       ultima_realizacion: fila.ultima_realizacion ? String(fila.ultima_realizacion) : null,
       proxima_fecha: proxima,
       faena_id: fila.faena_id === null || fila.faena_id === undefined ? null : Number(fila.faena_id),

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { SelectorColumnas, useColumnas, type Columna } from "./columnas";
 import { formatFecha, formatNum } from "./ui";
 
 type Turno = "dia" | "tarde" | "noche";
@@ -11,8 +12,16 @@ interface TareaTabla {
   subzona: string | null;
   elemento: string | null;
   tipo_limpieza: string | null;
+  tipo_zona: string | null;
   frecuencia_informativa: string | null;
   frecuencia_calculo: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
+  auditable: number;
+  fecha_inicio: string | null;
+  ultima_realizacion: string | null;
+  proxima_fecha: string | null;
   dias: number[];
   registros: Registro[];
 }
@@ -22,8 +31,15 @@ interface Extra {
   zona: string;
   subzona: string | null;
   elemento: string | null;
+  tipo_limpieza: string | null;
+  tipo_zona: string | null;
   frecuencia_calculo: string;
   frecuencia_informativa: string | null;
+  tiempo: number | null;
+  factor: number | null;
+  horas_semana: number | null;
+  auditable: number;
+  fecha_inicio: string | null;
   ultima_realizacion: string | null;
   proxima_fecha: string | null;
   faena_id: number | null;
@@ -46,11 +62,76 @@ interface Tablas {
 
 const ICONO: Record<Turno, string> = { dia: "☀️", tarde: "🌤️", noche: "🌙" };
 
+// Columnas elegibles de las tablas de frecuencia y de la tabla de extras.
+const COLUMNAS_TABLAS: Columna[] = [
+  { key: "tarea", label: "Tarea" },
+  { key: "subzona", label: "Subzona" },
+  { key: "elemento", label: "Elemento" },
+  { key: "tipo_limpieza", label: "Tipo de limpieza" },
+  { key: "tipo_zona", label: "Tipo de zona" },
+  { key: "frecuencia", label: "Frecuencia" },
+  { key: "frecuencia_calculo", label: "Frecuencia de cálculo" },
+  { key: "tiempo", label: "Tiempo" },
+  { key: "factor", label: "Factor" },
+  { key: "horas_semana", label: "Horas/semana" },
+  { key: "auditable", label: "Auditable" },
+  { key: "turno", label: "Turno" },
+  { key: "dias", label: "Días del mes" },
+  { key: "hechas", label: "Hechas" },
+];
+const COLUMNAS_TABLAS_POR_DEFECTO = ["tarea", "frecuencia", "dias", "hechas"];
+const COLUMNAS_TABLAS_CLAVE = "limpieza:tablas:columnas";
+
+const COLUMNAS_EXTRAS: Columna[] = [
+  { key: "tarea", label: "Tarea" },
+  { key: "subzona", label: "Subzona" },
+  { key: "elemento", label: "Elemento" },
+  { key: "tipo_limpieza", label: "Tipo de limpieza" },
+  { key: "tipo_zona", label: "Tipo de zona" },
+  { key: "frecuencia", label: "Frecuencia" },
+  { key: "frecuencia_calculo", label: "Frecuencia de cálculo" },
+  { key: "tiempo", label: "Tiempo" },
+  { key: "factor", label: "Factor" },
+  { key: "horas_semana", label: "Horas/semana" },
+  { key: "auditable", label: "Auditable" },
+  { key: "turno", label: "Turno" },
+  { key: "ultima", label: "Última" },
+  { key: "proxima", label: "Próxima" },
+  { key: "mes", label: "Este mes" },
+  { key: "marcar", label: "Marcar" },
+];
+const COLUMNAS_EXTRAS_POR_DEFECTO = COLUMNAS_EXTRAS.map((c) => c.key);
+const COLUMNAS_EXTRAS_CLAVE = "limpieza:tablas:extras";
+
 const pad = (n: number): string => String(n).padStart(2, "0");
 const iso = (anio: number, mes: number, dia: number): string => `${anio}-${pad(mes)}-${pad(dia)}`;
 const indiceSemana = (anio: number, mes: number, dia: number): number => (new Date(anio, mes - 1, dia).getDay() + 6) % 7;
 const esFinde = (anio: number, mes: number, dia: number): boolean => indiceSemana(anio, mes, dia) >= 5;
 const nombreTarea = (t: { zona: string; subzona: string | null }): string => (t.subzona ? `${t.zona} / ${t.subzona}` : t.zona);
+const ETIQUETA_TURNO: Record<Turno, string> = { dia: "Día", tarde: "Tarde", noche: "Noche" };
+const COLUMNAS_NUMERO = new Set(["tiempo", "factor", "horas_semana"]);
+const claseColumna = (key: string): string => "tabla-soft" + (COLUMNAS_NUMERO.has(key) ? " right" : "");
+
+/** Texto de las columnas informativas de las tablas del mes. */
+function textoColumna(key: string, t: TareaTabla | Extra, turno: Turno): string | null {
+  switch (key) {
+    case "subzona": return t.subzona ?? "—";
+    case "elemento": return t.elemento ?? "—";
+    case "tipo_limpieza": return t.tipo_limpieza ?? "—";
+    case "tipo_zona": return t.tipo_zona ?? "—";
+    case "frecuencia": return t.frecuencia_informativa ?? t.frecuencia_calculo ?? "—";
+    case "frecuencia_calculo": return t.frecuencia_calculo ?? "—";
+    case "tiempo": return t.tiempo == null ? "—" : formatNum(t.tiempo, 2);
+    case "factor": return t.factor == null ? "—" : formatNum(t.factor, 2);
+    case "horas_semana": return t.horas_semana == null ? "—" : formatNum(t.horas_semana, 2);
+    case "auditable": return Number(t.auditable ?? 0) === 1 ? "Sí" : "No";
+    case "turno": return `${ICONO[turno]} ${ETIQUETA_TURNO[turno]}`;
+    case "fecha_inicio": return t.fecha_inicio ? formatFecha(t.fecha_inicio) : "—";
+    case "ultima": return t.ultima_realizacion ? formatFecha(t.ultima_realizacion) : "—";
+    case "proxima": return t.proxima_fecha ? formatFecha(t.proxima_fecha) : "—";
+    default: return null;
+  }
+}
 
 /** Tablas del mes: tareas por turno y frecuencia, con sus extras y la marca
  *  de realización. La misma vista se imprime en horizontal. */
@@ -69,6 +150,10 @@ export function TablasMes({ centro, anio, mes, mesTexto, version, userId, onAvis
   const [error, setError] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
   const [pendiente, setPendiente] = useState<string | null>(null);
+  const { elegidas: columnasTareas, visibles: columnasTareasVisibles, cambiar: cambiarColumnasTareas } =
+    useColumnas(COLUMNAS_TABLAS, COLUMNAS_TABLAS_CLAVE, COLUMNAS_TABLAS_POR_DEFECTO);
+  const { elegidas: columnasExtras, visibles: columnasExtrasVisibles, cambiar: cambiarColumnasExtras } =
+    useColumnas(COLUMNAS_EXTRAS, COLUMNAS_EXTRAS_CLAVE, COLUMNAS_EXTRAS_POR_DEFECTO);
 
   const cargar = useCallback(() => setRecarga((n) => n + 1), []);
 
@@ -112,9 +197,27 @@ export function TablasMes({ centro, anio, mes, mesTexto, version, userId, onAvis
               marcar la tarea como realizada; los días futuros se marcarán cuando lleguen.
             </p>
           </div>
-          <button type="button" className="btn secondary" onClick={() => window.print()} disabled={!datos}>
-            🖨️ Imprimir {mesTexto}
-          </button>
+          <div className="tablas-actions">
+            <SelectorColumnas
+              todas={COLUMNAS_TABLAS}
+              elegidas={columnasTareas}
+              porDefecto={COLUMNAS_TABLAS_POR_DEFECTO}
+              onChange={cambiarColumnasTareas}
+              ariaLabel="Columnas a mostrar de las tablas del mes"
+              etiqueta="Columnas de tareas"
+            />
+            <SelectorColumnas
+              todas={COLUMNAS_EXTRAS}
+              elegidas={columnasExtras}
+              porDefecto={COLUMNAS_EXTRAS_POR_DEFECTO}
+              onChange={cambiarColumnasExtras}
+              ariaLabel="Columnas a mostrar de la tabla de extras"
+              etiqueta="Columnas de extras"
+            />
+            <button type="button" className="btn secondary" onClick={() => window.print()} disabled={!datos}>
+              🖨️ Imprimir {mesTexto}
+            </button>
+          </div>
         </div>
 
         {cargando && <div className="cal-loading-bar" role="progressbar" aria-label="Cargando tablas"><span /></div>}
@@ -158,22 +261,25 @@ export function TablasMes({ centro, anio, mes, mesTexto, version, userId, onAvis
                       <table className="tabla-frec">
                         <thead>
                           <tr>
-                            <th className="tabla-th-tarea">Tarea</th>
-                            <th>Frecuencia</th>
-                            <th>Días del mes</th>
-                            <th className="right">Hechas</th>
+                            {columnasTareasVisibles.map((c) => <th
+                              key={c.key}
+                              className={c.key === "tarea" ? "tabla-th-tarea" : c.key === "hechas" ? "right" : undefined}
+                            >{c.label}</th>)}
                           </tr>
                         </thead>
                         <tbody>
                           {bloque.tareas.map((tarea) => {
                             const registros = new Map(tarea.registros.map((r) => [r.dia, r]));
                             return <tr key={tarea.faena_id}>
-                              <td className="tabla-tarea">
-                                <strong>{nombreTarea(tarea)}</strong>
-                                {tarea.elemento && <small className="tabla-elemento">{tarea.elemento}</small>}
-                              </td>
-                              <td className="cal-soft">{tarea.frecuencia_informativa ?? "—"}</td>
-                              <td>
+                              {columnasTareasVisibles.map((c) => {
+                                if (c.key === "tarea") return <td key={c.key} className="tabla-tarea">
+                                  <strong>{nombreTarea(tarea)}</strong>
+                                  {tarea.elemento && !columnasTareas.includes("elemento")
+                                    && <small className="tabla-elemento">{tarea.elemento}</small>}
+                                </td>;
+                                if (c.key === "hechas") return <td key={c.key} className="right">{formatNum(tarea.registros.length)}/{formatNum(tarea.dias.length)}</td>;
+                                if (c.key !== "dias") return <td key={c.key} className={claseColumna(c.key)}>{textoColumna(c.key, tarea, t.turno)}</td>;
+                                return <td key={c.key}>
                                 <div className="dias-chips">
                                   {tarea.dias.map((dia) => {
                                     const fecha = iso(anio, mes, dia);
@@ -195,8 +301,8 @@ export function TablasMes({ centro, anio, mes, mesTexto, version, userId, onAvis
                                     >{registro ? "✓" : dia}</button>;
                                   })}
                                 </div>
-                              </td>
-                              <td className="right">{formatNum(tarea.registros.length)}/{formatNum(tarea.dias.length)}</td>
+                                </td>;
+                              })}
                             </tr>;
                           })}
                         </tbody>
@@ -216,12 +322,10 @@ export function TablasMes({ centro, anio, mes, mesTexto, version, userId, onAvis
                       <table className="tabla-frec tabla-extras">
                         <thead>
                           <tr>
-                            <th className="tabla-th-tarea">Tarea</th>
-                            <th>Frecuencia</th>
-                            <th>Última</th>
-                            <th>Próxima</th>
-                            <th>Este mes</th>
-                            <th className="right">Marcar</th>
+                            {columnasExtrasVisibles.map((c) => <th
+                              key={c.key}
+                              className={c.key === "tarea" ? "tabla-th-tarea" : c.key === "marcar" ? "right" : undefined}
+                            >{c.label}</th>)}
                           </tr>
                         </thead>
                         <tbody>
@@ -229,33 +333,34 @@ export function TablasMes({ centro, anio, mes, mesTexto, version, userId, onAvis
                             const registro = extra.registro;
                             const futuro = Boolean(extra.dia && iso(anio, mes, extra.dia) > hoyISO);
                             return <tr key={extra.plan_id}>
-                              <td className="tabla-tarea">
-                                <strong>{nombreTarea(extra)}</strong>
-                                {extra.elemento && <small className="tabla-elemento">{extra.elemento}</small>}
-                              </td>
-                              <td className="cal-soft">{extra.frecuencia_informativa ?? extra.frecuencia_calculo}</td>
-                              <td className="cal-soft">{extra.ultima_realizacion ? formatFecha(extra.ultima_realizacion) : "—"}</td>
-                              <td className="cal-soft">{extra.proxima_fecha ? formatFecha(extra.proxima_fecha) : "—"}</td>
-                              <td>
-                                {registro
-                                  ? <span className="badge ok">✓ día {extra.dia}</span>
-                                  : extra.faena_id && extra.dia
-                                    ? <span className="badge info">Día {extra.dia}</span>
-                                    : extra.toca_este_mes
-                                      ? <span className="badge warn">Genera el mes</span>
-                                      : <span className="badge muted">No toca</span>}
-                              </td>
-                              <td className="right">
-                                {extra.faena_id && extra.dia
-                                  ? <button
-                                    type="button"
-                                    className={"btn small " + (registro ? "secondary" : "")}
-                                    disabled={pendiente === `${extra.faena_id}-${extra.dia}` || futuro}
-                                    onClick={() => void alternar(extra.faena_id!, extra.dia!, !registro)}
-                                    title={futuro ? "Todavía no se puede marcar" : registro ? "Deshacer la marca" : "Marcar como realizada"}
-                                  >{registro ? "Desmarcar" : "Marcar"}</button>
-                                  : <span className="muted">—</span>}
-                              </td>
+                              {columnasExtrasVisibles.map((c) => {
+                                if (c.key === "tarea") return <td key={c.key} className="tabla-tarea">
+                                  <strong>{nombreTarea(extra)}</strong>
+                                  {extra.elemento && !columnasExtras.includes("elemento")
+                                    && <small className="tabla-elemento">{extra.elemento}</small>}
+                                </td>;
+                                if (c.key !== "mes" && c.key !== "marcar") return <td key={c.key} className={claseColumna(c.key)}>{textoColumna(c.key, extra, t.turno)}</td>;
+                                if (c.key === "mes") return <td key={c.key}>
+                                  {registro
+                                    ? <span className="badge ok">✓ día {extra.dia}</span>
+                                    : extra.faena_id && extra.dia
+                                      ? <span className="badge info">Día {extra.dia}</span>
+                                      : extra.toca_este_mes
+                                        ? <span className="badge warn">Genera el mes</span>
+                                        : <span className="badge muted">No toca</span>}
+                                </td>;
+                                return <td key={c.key} className="right">
+                                  {extra.faena_id && extra.dia
+                                    ? <button
+                                      type="button"
+                                      className={"btn small " + (registro ? "secondary" : "")}
+                                      disabled={pendiente === `${extra.faena_id}-${extra.dia}` || futuro}
+                                      onClick={() => void alternar(extra.faena_id!, extra.dia!, !registro)}
+                                      title={futuro ? "Todavía no se puede marcar" : registro ? "Deshacer la marca" : "Marcar como realizada"}
+                                    >{registro ? "Desmarcar" : "Marcar"}</button>
+                                    : <span className="muted">—</span>}
+                                </td>;
+                              })}
                             </tr>;
                           })}
                         </tbody>
