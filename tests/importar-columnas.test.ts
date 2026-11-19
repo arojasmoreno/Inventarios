@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mapearColumnas } from "../src/web/csv";
+import { agruparPorClave, mapearColumnas } from "../src/web/csv";
 
 // Cabeceras del catálogo de proveedor que sube el usuario.
 const CABECERAS = ["Codigo proveedor", "Nombre proveedor", "Codigo producto", "Producto", "Precio"];
@@ -36,6 +36,24 @@ describe("mapeo automático de cabeceras", () => {
     const mapa = mapearColumnas(PROVEEDORES, CABECERAS);
     expect(mapa.id_proveedor).toBe("0");
     expect(mapa.nombre).toBe("1");
+  });
+
+  test("agrupa las líneas repetidas del mismo proveedor y se queda con la última", () => {
+    const filas = [
+      { id_proveedor: "3257", nombre: "JDD MAQUINARIA" },
+      { id_proveedor: "3994", nombre: "JEN QUIMICA S.L." },
+      { id_proveedor: "3257", nombre: "JDD MAQUINARIA DE LIMPIEZA" },
+    ];
+    const { filas: salida, agrupadas } = agruparPorClave(filas, ["id_proveedor"]);
+    expect(salida).toHaveLength(2);
+    expect(agrupadas).toBe(1);
+    expect(salida[0].nombre).toBe("JDD MAQUINARIA DE LIMPIEZA");
+    expect(salida[1].nombre).toBe("JEN QUIMICA S.L.");
+  });
+
+  test("sin clave configurada no agrupa nada", () => {
+    const filas = [{ codigo: "A" }, { codigo: "A" }];
+    expect(agruparPorClave(filas, undefined)).toEqual({ filas, agrupadas: 0 });
   });
 
   test("una columna del archivo no se asigna a dos campos", () => {

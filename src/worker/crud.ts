@@ -264,7 +264,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
   // «too many API requests by single worker invocation» cortaba la importación
   // a las pocas centenas de registros). Las escrituras se acumulan y se mandan
   // con `db.batch`, que cuenta como UNA sola consulta.
-  app.post("/import", async c => {
+  const importarFilas = async (c: Ctx) => {
     if (!allowed(c.get("user"), spec.create)) return c.json({ error: "No tienes permiso para importar registros" }, 403);
     let body: { rows?: unknown };
     try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
@@ -412,6 +412,16 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     }
     if (!creados && !actualizados && errores.length) return c.json({ error: errores[0], errores }, 400);
     return c.json({ creados, actualizados, errores });
+  };
+  app.post("/import", async c => {
+    // Cualquier fallo inesperado se devuelve con su causa: «Error interno del
+    // servidor» no decía nada al importar un catálogo grande.
+    try {
+      return await importarFilas(c);
+    } catch (e) {
+      const mensaje = e instanceof Error ? e.message : "error inesperado";
+      return c.json({ error: `No se pudo importar: ${mensaje}` }, 500);
+    }
   });
   // Foto del artículo (base64) sin cargarla en el listado.
   if (spec.fields.some(f => f.name === "foto")) {

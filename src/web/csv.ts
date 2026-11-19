@@ -22,6 +22,26 @@ export function normalizarClave(valor: unknown): string {
     .trim();
 }
 
+/** Agrupa las filas que comparten clave (un catálogo de proveedor repite el
+ *  mismo proveedor en cada línea): se queda con la última lectura de cada una
+ *  y devuelve cuántas se han unido. Sin clave, no toca el archivo. */
+export function agruparPorClave<T extends Record<string, unknown>>(
+  filas: T[],
+  clave: string[] | undefined,
+): { filas: T[]; agrupadas: number } {
+  if (!clave?.length) return { filas, agrupadas: 0 };
+  const porClave = new Map<string, T>();
+  const salida: T[] = [];
+  let agrupadas = 0;
+  for (const fila of filas) {
+    const k = clave.map((c) => String(fila[c] ?? "").trim().toUpperCase()).join("\u0000");
+    const previa = porClave.get(k);
+    if (previa) { Object.assign(previa, fila); agrupadas++; }
+    else { porClave.set(k, fila); salida.push(fila); }
+  }
+  return { filas: salida, agrupadas };
+}
+
 /** Mapeo automático de las cabeceras de un archivo a los campos de una tabla:
  *  primero el nombre exacto del campo y después los nombres habituales de los
  *  catálogos de proveedor («Codigo proveedor», «Codigo producto»…). Cada

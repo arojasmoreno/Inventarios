@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, reportarError } from "./api";
 import { downloadCsv, formatNum, Toast } from "./ui";
-import { leerTextoArchivo, mapearColumnas, normalizarClave } from "./csv";
+import { agruparPorClave, leerTextoArchivo, mapearColumnas, normalizarClave } from "./csv";
 
 type Row = Record<string, unknown>;
 
@@ -26,6 +26,9 @@ interface Recurso {
   // Nombres alternativos de cada columna en los archivos de proveedor
   // («Codigo proveedor», «Codigo producto»…): sirven para el mapeo automático.
   alias?: Record<string, string[]>;
+  // Campos que identifican un registro: si el archivo repite la misma clave
+  // (un catálogo de 14.000 líneas con 300 proveedores), se envía una sola vez.
+  clave?: string[];
 }
 
 // Todas las tablas que se pueden rellenar por CSV desde Gestión de informes →
@@ -34,17 +37,18 @@ export const RECURSOS: Recurso[] = [
   {
     key: "centros", endpoint: "/api/centros", label: "Centros", grupo: "Centros y zonas",
     columns: ["nombre", "direccion", "ciudad", "responsable", "telefono"],
-    obligatorios: ["nombre"], ejemplo: ["Planta Este", "Calle Mayor 1", "Valencia", "Marta Ruiz", "960 000 333"],
+    obligatorios: ["nombre"],     ejemplo: ["Planta Este", "Calle Mayor 1", "Valencia", "Marta Ruiz", "960 000 333"],
+    clave: ["nombre"],
   },
   {
     key: "zonas", endpoint: "/api/zonas", label: "Zonas", grupo: "Centros y zonas",
     columns: ["centro", "nombre", "notas"], obligatorios: ["centro", "nombre"],
-    ejemplo: ["Planta Norte", "Lavado", ""], needs: ["centros"],
+    ejemplo: ["Planta Norte", "Lavado", ""], needs: ["centros"], clave: ["centro", "nombre"],
   },
   {
     key: "subzonas", endpoint: "/api/subzonas", label: "Subzonas", grupo: "Centros y zonas",
     columns: ["centro", "zona", "nombre", "notas"], obligatorios: ["zona", "nombre"],
-    ejemplo: ["Planta Norte", "Lavado", "Paletización", ""], needs: ["centros", "zonas"],
+    ejemplo: ["Planta Norte", "Lavado", "Paletización", ""], needs: ["centros", "zonas"], clave: ["centro", "zona", "nombre"],
   },
   {
     key: "proveedores", endpoint: "/api/proveedores", label: "Proveedores", grupo: "Proveedores y compras",
@@ -55,6 +59,7 @@ export const RECURSOS: Recurso[] = [
       id_proveedor: ["codigo proveedor", "codigo de proveedor", "cod proveedor", "id proveedor", "codigo", "proveedor"],
       nombre: ["nombre proveedor", "nombre del proveedor", "proveedor", "razon social"],
     },
+    clave: ["id_proveedor"],
   },
   {
     key: "productos_disponibles", endpoint: "/api/productos-disponibles", label: "Productos disponibles", grupo: "Proveedores y compras",
@@ -66,6 +71,7 @@ export const RECURSOS: Recurso[] = [
       producto: ["nombre producto", "nombre del producto", "descripcion", "denominacion", "articulo", "producto"],
       precio: ["precio unitario", "precio de compra", "precio sin iva", "coste", "pvp", "importe", "precio"],
     },
+    clave: ["codigo"],
   },
   {
     key: "pedidos", endpoint: "/api/pedidos", label: "Pedidos (cabecera + líneas)", grupo: "Proveedores y compras",
@@ -496,6 +502,7 @@ export function ImportarPage() {
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progreso, setProgreso] = useState<{ hechos: number; total: number; lote: number; lotes: number } | null>(null);
+  const [agrupadas, setAgrupadas] = useState(0);
   const [cat, setCat] = useState<Catalogos>({ centros: [], proveedores: [], zonas: [], subzonas: [], usuarios: [], documento_tipos: [], maquinaria: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
@@ -520,7 +527,7 @@ export function ImportarPage() {
   }, [cat, cfg.needs]);
 
   useEffect(() => {
-    setRows([]); setErroresParse([]); setError(null); setDone(null);
+    setRows([]); setErroresParse([]); setError(null); setDone(null); setAgrupadas(0);
     setCabeceras([]); setLineas([]); setMapa({});
     if (inputRef.current) inputRef.current.value = "";
   }, [recurso]);
@@ -529,7 +536,7 @@ export function ImportarPage() {
   const mapeados = useMemo(() => cfg.columns.filter((f) => mapa[f]).length, [cfg.columns, mapa]);
 
   const onFile = async (f: File | null) => {
-    setDone(null); setError(null); setRows([]); setErroresParse([]);
+    setDone(null); setError(null); setRows([]); setErroresParse([]); setAgrupadas(0);
     setCabeceras([]); setLineas([]); setMapa({});
     if (!f) return;
     try {
@@ -582,9 +589,14 @@ export function ImportarPage() {
         else parsed.push(out);
       }
       if (lineas.length > MAX_ROWS) problemas.push(`(solo se procesan los primeros ${MAX_ROWS} registros)`);
-      setRows(parsed);
+      // Un catálogo de proveedor repite la misma clave en cada línea (14.000
+      // filas para 300 proveedores): se envía una sola vez, con los últimos
+      // datos leídos, en vez de reenviar el mismo registro decenas de veces.
+      const { filas, agrupadas } = agruparPorClave(parsed, cfg.clave);
+      setAgrupadas(agrupadas);
+      setRows(filas);
       setErroresParse(problemas);
-      if (!parsed.length) setError(problemas[0] ?? "No se encontraron filas válidas.");
+      if (!filas.length) setError(problemas[0] ?? "No se encontraron filas válidas.");
       // Los problemas detectados quedan en el histórico de errores (como avisos)
       // para poder revisarlos después desde la pestaña «Errores».
       if (problemas.length) {
@@ -611,7 +623,9 @@ export function ImportarPage() {
     for (let n = 0; n < lotes; n++) {
       const desde = n * LOTE, hasta = Math.min(desde + LOTE, rows.length);
       try {
-        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows: rows.slice(desde, hasta) });
+        // Un corte puntual de red no debe perder el lote: se reintenta una vez.
+        const enviar = () => api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows: rows.slice(desde, hasta) });
+        const r = await enviar().catch(async () => { await new Promise((ok) => setTimeout(ok, 1500)); return enviar(); });
         creados += Number(r.creados ?? 0);
         actualizados += Number(r.actualizados ?? 0);
         for (const e of r.errores ?? []) errores.push(e);
@@ -689,6 +703,7 @@ export function ImportarPage() {
 
     {rows.length > 0 && <div className="banner" style={{ marginBottom: 12, background: "#dbeafe", color: "#1e40af" }}>
       ✅ <strong>{formatNum(rows.length)}</strong> filas válidas listas para importar en {cfg.label}.
+      {agrupadas > 0 && <> · {formatNum(agrupadas)} filas repetidas del mismo registro se han agrupado.</>}
       {erroresParse.length > 0 && <> ⚠️ {formatNum(erroresParse.length)} fila{erroresParse.length === 1 ? "" : "s"} con problemas no se importará{erroresParse.length === 1 ? "" : "n"}.</>}
     </div>}
     {erroresParse.length > 0 && <div className="form-error" style={{ marginBottom: 12 }}>
