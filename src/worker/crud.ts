@@ -255,15 +255,22 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     await audit(c, spec, "borrado", row);
     return c.json({ ok: true });
   });
-  // Importación masiva (CSV): upsert por el campo único (código/username).
+  // Importación masiva (CSV/Excel): upsert por el campo único (código/username).
   // Cada fila se valida con las mismas reglas que el alta individual; los fallos
   // de una fila no detienen el resto (se devuelven acumulados).
+  //
+  // D1 limita a 1.000 las consultas por invocación del Worker y un catálogo de
+  // miles de filas agotaba el cupo haciendo una consulta por fila (el error
+  // «too many API requests by single worker invocation» cortaba la importación
+  // a las pocas centenas de registros). Las escrituras se acumulan y se mandan
+  // con `db.batch`, que cuenta como UNA sola consulta.
   app.post("/import", async c => {
     if (!allowed(c.get("user"), spec.create)) return c.json({ error: "No tienes permiso para importar registros" }, 403);
     let body: { rows?: unknown };
     try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
     if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
     if (body.rows.length > 500) return c.json({ error: "Máximo 500 registros por importación" }, 400);
+    const db = c.env.DB;
     // Índice de los registros existentes por CADA campo único: una fila puede
     // identificar el registro por cualquiera de ellos (p. ej. un proveedor por
     // su «codigo» aunque el ID sea otro), y el cotejo de texto ignora caja.
@@ -272,7 +279,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     const existentesPor = new Map<string, Map<string, Record<string, unknown>>>();
     if (unicos.length) {
       const columnas = unicos.map(f => f.name).join(", ");
-      const rows = (await c.env.DB.prepare(`SELECT id, ${columnas} FROM ${spec.table}`).all()).results as Record<string, unknown>[];
+      const rows = (await db.prepare(`SELECT id, ${columnas} FROM ${spec.table}`).all()).results as Record<string, unknown>[];
       for (const f of unicos) {
         const indice = new Map<string, Record<string, unknown>>();
         for (const r of rows) {
@@ -285,9 +292,37 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     }
     let creados = 0, actualizados = 0;
     const errores: string[] = [];
+    const fallo = (fila: number, mensaje: string) => { if (errores.length < 8) errores.push(`Fila ${fila}: ${mensaje}`); };
+    // Claves ya planificadas en esta petición: dos filas con el mismo código en
+    // el mismo archivo se avisan en vez de chocar contra el índice único.
+    const planificadas = new Map<string, number>();
+    type Tarea = { sql: string; valores: unknown[]; modo: "insert" | "update"; fila: number };
+    let tareas: Tarea[] = [];
+    const TANDA = 200;
+
+    const volcar = async (): Promise<void> => {
+      if (!tareas.length) return;
+      const lote = tareas; tareas = [];
+      if (db.batch) {
+        try {
+          await db.batch(lote.map(t => db.prepare(t.sql).bind(...t.valores)));
+          for (const t of lote) { if (t.modo === "insert") creados++; else actualizados++; }
+          return;
+        } catch { /* alguna sentencia falla: se reintenta una a una para saber cuál */ }
+      }
+      for (const t of lote) {
+        try {
+          await db.prepare(t.sql).bind(...t.valores).run();
+          if (t.modo === "insert") creados++; else actualizados++;
+        } catch (e) {
+          fallo(t.fila, e instanceof Error ? e.message : "no se pudo guardar");
+        }
+      }
+    };
+
     for (let i = 0; i < body.rows.length; i++) {
       let raw = body.rows[i];
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) { errores.push(`Fila ${i + 1}: no es un registro válido`); continue; }
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) { fallo(i + 1, "no es un registro válido"); continue; }
       // Comodidad: una columna «id» de texto se interpreta como el código/clave única.
       if (uniqueField && (raw as Record<string, unknown>)[uniqueField.name] === undefined && typeof (raw as Record<string, unknown>).id === "string" && (raw as Record<string, unknown>).id !== "") {
         raw = { ...(raw as Record<string, unknown>), [uniqueField.name]: (raw as Record<string, unknown>).id };
@@ -302,52 +337,78 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
           const found = existentesPor.get(f.name)?.get(claveUnica(f, valor));
           if (!found) continue;
           mode = "update";
-          existing = await c.env.DB.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
+          // La fila completa (no solo el id) para las validaciones y el histórico.
+          existing = await db.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
           break;
         }
         if (spec.table === "centros" && mode === "update") {
           const err = await centroScope(c, c.get("user"), Number(existing?.id), "update");
-          if (err) { if (errores.length < 8) errores.push(`Fila ${i + 1}: ${err}`); continue; }
+          if (err) { fallo(i + 1, err); continue; }
         }
-        await checkUnique(c.env.DB, spec, data, mode === "update" ? Number(existing?.id) : null);
-        if (spec.beforeWrite) data = await spec.beforeWrite(c.env.DB, data, mode, existing);
+        if (spec.beforeWrite) data = await spec.beforeWrite(db, data, mode, existing);
         if (spec.scopeCentro) {
-          const permitidos = await centrosPermitidos(c.env.DB, c.get("user"));
-          const err = await revisarCentro(c.env.DB, spec, mode === "update" ? (existing ?? data) : data, permitidos);
-          if (err) { if (errores.length < 8) errores.push(`Fila ${i + 1}: ${err}`); continue; }
+          const permitidos = await centrosPermitidos(db, c.get("user"));
+          const err = await revisarCentro(db, spec, mode === "update" ? (existing ?? data) : data, permitidos);
+          if (err) { fallo(i + 1, err); continue; }
         }
-        const keys = Object.keys(data); if (!keys.length) { errores.push(`Fila ${i + 1}: sin datos que guardar`); continue; }
-        let rowId: number;
+        const keys = Object.keys(data); if (!keys.length) { fallo(i + 1, "sin datos que guardar"); continue; }
+
         if (mode === "insert") {
-          const res = await c.env.DB.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
-          rowId = Number((res.meta as { last_row_id?: number }).last_row_id);
-          creados++;
-        } else {
-          const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
-          await c.env.DB.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), Number(existing?.id)).run();
-          rowId = Number(existing?.id);
-          actualizados++;
-        }
-        const row = await c.env.DB.prepare(`${baseSql} WHERE t.id = ?`).bind(rowId).first();
-        if (spec.afterWrite) await spec.afterWrite(c.env.DB, c.get("user"), row ?? data, mode);
-        if (spec.table === "centros" && mode === "insert" && c.get("user").rol === "admin_centros") {
-          await c.env.DB.prepare("INSERT OR IGNORE INTO usuario_centros (usuario_id, centro_id) VALUES (?, ?)").bind(c.get("user").id, rowId).run();
-        }
-        await audit(c, spec, mode === "insert" ? "alta" : "edicion", row ?? { ...data, id: rowId }, mode === "update" ? existing : undefined);
-        // El registro recién creado se añade a los índices para que las filas
-        // siguientes del mismo archivo lo actualicen en vez de duplicarlo.
-        if (mode === "insert") {
-          const registro = row ?? { ...data, id: rowId };
-          for (const f of unicos) {
-            const valor = registro[f.name];
-            if (valor === null || valor === undefined || String(valor).trim() === "") continue;
-            existentesPor.get(f.name)?.set(claveUnica(f, valor), registro);
+          const repetida = uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null
+            ? planificadas.get(claveUnica(uniqueField, data[uniqueField.name]))
+            : undefined;
+          if (repetida !== undefined) {
+            fallo(i + 1, `${uniqueField.label} «${String(data[uniqueField.name])}» ya aparece en la fila ${repetida} del archivo`);
+            continue;
           }
         }
+
+        // Las tablas con afterWrite necesitan el id recién creado (p. ej. la
+        // maquinaria siembra su histórico): esas filas se guardan al momento.
+        if (spec.afterWrite) {
+          let rowId: number;
+          if (mode === "insert") {
+            const res = await db.prepare(`INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map(k => data[k])).run();
+            rowId = Number((res.meta as { last_row_id?: number }).last_row_id);
+            creados++;
+          } else {
+            const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
+            await db.prepare(`UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map(k => data[k]), Number(existing?.id)).run();
+            rowId = Number(existing?.id);
+            actualizados++;
+          }
+          const row = { ...data, id: rowId };
+          await spec.afterWrite(db, c.get("user"), row, mode);
+          await audit(c, spec, mode === "insert" ? "alta" : "edicion", row, mode === "update" ? existing : undefined);
+          if (spec.table === "centros" && mode === "insert" && c.get("user").rol === "admin_centros") {
+            await db.prepare("INSERT OR IGNORE INTO usuario_centros (usuario_id, centro_id) VALUES (?, ?)").bind(c.get("user").id, rowId).run();
+          }
+          continue;
+        }
+
+        if (mode === "insert") {
+          tareas.push({
+            sql: `INSERT INTO ${spec.table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`,
+            valores: keys.map(k => data[k]), modo: mode, fila: i + 1,
+          });
+          if (uniqueField && data[uniqueField.name] !== undefined && data[uniqueField.name] !== null) {
+            planificadas.set(claveUnica(uniqueField, data[uniqueField.name]), i + 1);
+          }
+        } else {
+          const sets = [...keys.map(k => `${k} = ?`), "updated_at = datetime('now')"];
+          tareas.push({ sql: `UPDATE ${spec.table} SET ${sets.join(", ")} WHERE id = ?`, valores: [...keys.map(k => data[k]), Number(existing?.id)], modo: mode, fila: i + 1 });
+        }
+        if (tareas.length >= TANDA) await volcar();
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "registro no válido";
-        if (errores.length < 8) errores.push(`Fila ${i + 1}: ${msg}`);
+        fallo(i + 1, e instanceof Error ? e.message : "registro no válido");
       }
+    }
+    await volcar();
+    // Un solo movimiento de auditoría por importación: 14.000 altas
+    // individuales llenaban el histórico sin aportar nada.
+    if (creados || actualizados) {
+      await logMovimiento(db, c.get("user"), "importacion", spec.table, null,
+        `Importación masiva: ${creados} creados, ${actualizados} actualizados`, null);
     }
     if (!creados && !actualizados && errores.length) return c.json({ error: errores[0], errores }, 400);
     return c.json({ creados, actualizados, errores });

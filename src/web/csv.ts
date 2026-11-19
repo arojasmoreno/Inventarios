@@ -22,6 +22,33 @@ export function normalizarClave(valor: unknown): string {
     .trim();
 }
 
+/** Mapeo automático de las cabeceras de un archivo a los campos de una tabla:
+ *  primero el nombre exacto del campo y después los nombres habituales de los
+ *  catálogos de proveedor («Codigo proveedor», «Codigo producto»…). Cada
+ *  columna del archivo se usa una sola vez. */
+export function mapearColumnas(
+  cfg: { columns: string[]; alias?: Record<string, string[]> },
+  heads: string[],
+): Record<string, string> {
+  const normalizadas = heads.map((h) => normalizarClave(h));
+  const usadas = new Set<number>();
+  const auto: Record<string, string> = {};
+  for (const campo of cfg.columns) {
+    const idx = normalizadas.findIndex((h, i) => !usadas.has(i) && h === normalizarClave(campo));
+    if (idx >= 0) { auto[campo] = String(idx); usadas.add(idx); } else auto[campo] = "";
+  }
+  for (const campo of cfg.columns) {
+    if (auto[campo] !== "") continue;
+    for (const alt of cfg.alias?.[campo] ?? []) {
+      const idx = normalizadas.findIndex((h, i) => !usadas.has(i) && h === normalizarClave(alt));
+      if (idx < 0) continue;
+      auto[campo] = String(idx); usadas.add(idx);
+      break;
+    }
+  }
+  return auto;
+}
+
 /** Lee un archivo de texto respetando su codificación. Excel en España guarda
  *  los CSV en Windows-1252: si se decodifican como UTF-8, «García» y «Muñoz»
  *  llegan rotos («GarcÃ­a», «MuÃ±oz») y dejan de coincidir con los proveedores

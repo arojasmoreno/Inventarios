@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, reportarError } from "./api";
 import { downloadCsv, formatNum, Toast } from "./ui";
-import { leerTextoArchivo, normalizarClave } from "./csv";
+import { leerTextoArchivo, mapearColumnas, normalizarClave } from "./csv";
 
 type Row = Record<string, unknown>;
 
 // Filas por archivo y por petición: la API admite 500 por envío, así que el
-// resto se manda por lotes (un catálogo de productos pasa de 500 fácilmente).
-const MAX_ROWS = 2000;
-const LOTE = 500;
+// resto se manda por lotes (un catálogo de productos pasa de 14.000 filas).
+// El lote va por debajo de 500 porque el Worker valida cada fila con una
+// consulta y D1 limita las consultas por invocación.
+const MAX_ROWS = 50000;
+const LOTE = 200;
 
 type Catalogo = "centros" | "proveedores" | "zonas" | "subzonas" | "usuarios" | "documento_tipos" | "maquinaria";
 
@@ -21,11 +23,14 @@ interface Recurso {
   obligatorios: string[];
   ejemplo: string[];
   needs?: Catalogo[];
+  // Nombres alternativos de cada columna en los archivos de proveedor
+  // («Codigo proveedor», «Codigo producto»…): sirven para el mapeo automático.
+  alias?: Record<string, string[]>;
 }
 
 // Todas las tablas que se pueden rellenar por CSV desde Gestión de informes →
 // Importar CSV, con su plantilla y su fila de ejemplo.
-const RECURSOS: Recurso[] = [
+export const RECURSOS: Recurso[] = [
   {
     key: "centros", endpoint: "/api/centros", label: "Centros", grupo: "Centros y zonas",
     columns: ["nombre", "direccion", "ciudad", "responsable", "telefono"],
@@ -46,11 +51,21 @@ const RECURSOS: Recurso[] = [
     columns: ["id_proveedor", "nombre", "contacto", "email", "telefono", "direccion", "notas", "activo"],
     obligatorios: ["id_proveedor", "nombre"],
     ejemplo: ["PROV-001", "Suministros García", "Ana López", "ana@suministros.test", "910 111 222", "Calle Industria 4", "", "1"],
+    alias: {
+      id_proveedor: ["codigo proveedor", "codigo de proveedor", "cod proveedor", "id proveedor", "codigo", "proveedor"],
+      nombre: ["nombre proveedor", "nombre del proveedor", "proveedor", "razon social"],
+    },
   },
   {
     key: "productos_disponibles", endpoint: "/api/productos-disponibles", label: "Productos disponibles", grupo: "Proveedores y compras",
     columns: ["proveedor", "proveedor_alternativo", "codigo", "producto", "precio"], obligatorios: ["proveedor", "codigo", "producto"],
     ejemplo: ["PROV-001", "PROV-002", "M-001", "Mopa de microfibra", "4,50"], needs: ["proveedores"],
+    alias: {
+      proveedor: ["codigo proveedor", "codigo de proveedor", "cod proveedor", "nombre proveedor", "nombre del proveedor", "id proveedor", "proveedor"],
+      codigo: ["codigo producto", "codigo de producto", "cod producto", "codigo articulo", "referencia", "ref", "codigo"],
+      producto: ["nombre producto", "nombre del producto", "descripcion", "denominacion", "articulo", "producto"],
+      precio: ["precio unitario", "precio de compra", "precio sin iva", "coste", "pvp", "importe", "precio"],
+    },
   },
   {
     key: "pedidos", endpoint: "/api/pedidos", label: "Pedidos (cabecera + líneas)", grupo: "Proveedores y compras",
@@ -192,9 +207,29 @@ function toBool(v: string | undefined): number {
 }
 
 /** Resuelve un identificador por id, código o nombre (insensible a mayúsculas). */
+// Índice de un catálogo por sus claves normalizadas. Se construye una vez por
+// catálogo: con 14.000 filas y 300 proveedores, normalizar el catálogo entero
+// en cada fila bloqueaba el navegador varios segundos.
+const indices = new WeakMap<Row[], Map<string, Map<string, Row>>>();
+function indiceDe(filas: Row[], claves: string[]): Map<string, Row> {
+  let porClaves = indices.get(filas);
+  if (!porClaves) { porClaves = new Map(); indices.set(filas, porClaves); }
+  const firma = claves.join("|");
+  let indice = porClaves.get(firma);
+  if (!indice) {
+    indice = new Map();
+    for (const f of filas) {
+      for (const k of claves) {
+        const v = norm(String(f[k] ?? ""));
+        if (v && !indice.has(v)) indice.set(v, f);
+      }
+    }
+    porClaves.set(firma, indice);
+  }
+  return indice;
+}
 function resolver(valor: string, filas: Row[], claves: string[]): Row | undefined {
-  const v = norm(valor);
-  return filas.find((f) => claves.some((k) => norm(String(f[k] ?? "")) === v));
+  return indiceDe(filas, claves).get(norm(valor));
 }
 const fallo = (fila: number, msg: string): string => `Fila ${fila}: ${msg}`;
 
@@ -460,6 +495,7 @@ export function ImportarPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progreso, setProgreso] = useState<{ hechos: number; total: number; lote: number; lotes: number } | null>(null);
   const [cat, setCat] = useState<Catalogos>({ centros: [], proveedores: [], zonas: [], subzonas: [], usuarios: [], documento_tipos: [], maquinaria: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
@@ -497,24 +533,32 @@ export function ImportarPage() {
     setCabeceras([]); setLineas([]); setMapa({});
     if (!f) return;
     try {
-      // Se respeta la codificación del archivo: Excel guarda el CSV en
-      // Windows-1252 y decodificarlo como UTF-8 rompía acentos y ñ.
-      const texto = await leerTextoArchivo(f);
-      const todas = texto.split(/\r?\n/).filter((l) => l.trim() !== "");
-      if (todas.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
-      const heads = splitCsvLine(todas[0]);
-      setCabeceras(heads);
-      setLineas(todas.slice(1).map(splitCsvLine));
-      // Mapeo automático: cada cabecera que coincida con un campo (sin
-      // acentos, guiones ni mayúsculas) se asigna sola; el resto lo elige el
-      // usuario en la tabla.
-      const auto: Record<string, string> = {};
-      for (const campo of cfg.columns) {
-        const idx = heads.findIndex((h) => norm(h) === norm(campo));
-        auto[campo] = idx >= 0 ? String(idx) : "";
+      let heads: string[] = [];
+      let cuerpo: string[][] = [];
+      if (/\.(xlsx|xls)$/i.test(f.name)) {
+        // Excel tal cual (sin convertirlo a CSV), que es como llegan los
+        // catálogos de proveedor.
+        const XLSX = await import("xlsx");
+        const libro = XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
+        const hoja = libro.Sheets[libro.SheetNames[0] ?? ""];
+        if (!hoja) { setError("El archivo no tiene ninguna hoja con datos."); return; }
+        const matriz = XLSX.utils.sheet_to_json<unknown[]>(hoja, { header: 1, raw: false, defval: "" });
+        if (matriz.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
+        heads = (matriz[0] ?? []).map((v) => String(v ?? "").trim());
+        cuerpo = matriz.slice(1).map((fila) => (fila ?? []).map((v) => String(v ?? "")));
+      } else {
+        // Se respeta la codificación del archivo: Excel guarda el CSV en
+        // Windows-1252 y decodificarlo como UTF-8 rompía acentos y ñ.
+        const texto = await leerTextoArchivo(f);
+        const todas = texto.split(/\r?\n/).filter((l) => l.trim() !== "");
+        if (todas.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
+        heads = splitCsvLine(todas[0]);
+        cuerpo = todas.slice(1).map(splitCsvLine);
       }
-      setMapa(auto);
-    } catch { setError("No se pudo leer el archivo."); }
+      setCabeceras(heads);
+      setLineas(cuerpo);
+      setMapa(mapearColumnas(cfg, heads));
+    } catch { setError("No se pudo leer el archivo. Si es un Excel, guárdalo como .xlsx o .csv."); }
   };
 
   const previsualizar = async () => {
@@ -558,29 +602,38 @@ export function ImportarPage() {
   const importar = async () => {
     if (!rows.length) return;
     setBusy(true); setError(null); setDone(null);
-    try {
-      let creados = 0, actualizados = 0;
-      const errores: string[] = [];
-      // La API admite 500 filas por petición: se envía por lotes.
-      for (let i = 0; i < rows.length; i += LOTE) {
-        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows: rows.slice(i, i + LOTE) });
+    let creados = 0, actualizados = 0;
+    const errores: string[] = [];
+    const lotes = Math.ceil(rows.length / LOTE);
+    setProgreso({ hechos: 0, total: rows.length, lote: 0, lotes });
+    // Un lote que falle no detiene el resto: se anota y se sigue, para que un
+    // catálogo de 14.000 filas no se quede a medias por un error puntual.
+    for (let n = 0; n < lotes; n++) {
+      const desde = n * LOTE, hasta = Math.min(desde + LOTE, rows.length);
+      try {
+        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows: rows.slice(desde, hasta) });
         creados += Number(r.creados ?? 0);
         actualizados += Number(r.actualizados ?? 0);
         for (const e of r.errores ?? []) errores.push(e);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "error de conexión";
+        errores.push(`Lote ${n + 1}/${lotes} (filas ${desde + 1}-${hasta}): ${msg}`);
       }
-      const partes = [`${creados} creados`, `${actualizados} actualizados`];
-      const aviso = errores.length ? ` · ${errores.length} con error` : "";
-      setDone(`Importados: ${partes.join(" · ")}${aviso}`);
-      if (errores.length) {
-        setError(errores.slice(0, 4).join(" · "));
-        reportarError(
-          `${errores.length} fila(s) no se pudieron importar en ${cfg.label}`,
-          { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: errores.slice(0, 10).join("\n") },
-        );
-      }
-      setRows([]); setErroresParse([]); if (inputRef.current) inputRef.current.value = "";
-    } catch (e) { setError(e instanceof Error ? e.message : "No se pudo importar"); }
-    finally { setBusy(false); }
+      setProgreso({ hechos: hasta, total: rows.length, lote: n + 1, lotes });
+    }
+    setProgreso(null);
+    const partes = [`${formatNum(creados)} creados`, `${formatNum(actualizados)} actualizados`];
+    const aviso = errores.length ? ` · ${formatNum(errores.length)} con error` : "";
+    setDone(`Importados: ${partes.join(" · ")}${aviso}`);
+    if (errores.length) {
+      setError(errores.slice(0, 4).join(" · "));
+      reportarError(
+        `${errores.length} fila(s) o lote(s) no se pudieron importar en ${cfg.label}`,
+        { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: errores.slice(0, 10).join("\n") },
+      );
+    }
+    setRows([]); setErroresParse([]); if (inputRef.current) inputRef.current.value = "";
+    setBusy(false);
   };
 
   return <div className="card card-pad" style={{ maxWidth: 900 }}>
@@ -589,9 +642,11 @@ export function ImportarPage() {
       Sube el archivo y comprueba el <strong>mapeo de columnas</strong>: cada columna del CSV se asigna a un campo de{" "}
       <strong>{cfg.label}</strong>. Solo los campos obligatorios son necesarios. En las tablas con código o ID
       (productos, proveedores, químicos, ropa, EPIs…) ese valor es la clave: si el registro ya existe se actualiza y
-      si no se crea. Acepta separador coma, punto y coma o tabulador y hasta <strong>2.000 filas</strong>. Los CSV de
-      Excel (Windows-1252) se leen bien: <strong>acentos y ñ</strong> se conservan, y al buscar un proveedor, centro o
-      zona no importan tildes, mayúsculas ni puntuación. En <strong>Proveedores</strong> el{" "}
+      si no se crea. Acepta <strong>.csv y Excel (.xlsx/.xls)</strong>, separador coma, punto y coma o tabulador y hasta{" "}
+      <strong>50.000 filas</strong>. Los CSV de Excel (Windows-1252) se leen bien: <strong>acentos y ñ</strong> se
+      conservan, y al buscar un proveedor, centro o zona no importan tildes, mayúsculas ni puntuación. Las cabeceras
+      habituales de proveedor (<code>Codigo proveedor</code>, <code>Nombre proveedor</code>, <code>Codigo producto</code>,
+      <code>Producto</code>, <code>Precio</code>) se reconocen solas. En <strong>Proveedores</strong> el{" "}
       <code>id_proveedor</code> lo pones tú: no es autonumérico.
     </p>
     <div className="form-grid" style={{ marginBottom: 12 }}>
@@ -602,7 +657,9 @@ export function ImportarPage() {
           </optgroup>)}
         </select></div></div>
       <div><div className="field"><label htmlFor="imp-file">Archivo CSV</label>
-        <input id="imp-file" ref={inputRef} className="input" type="file" accept=".csv,text/csv" onChange={(e) => void onFile(e.target.files?.[0] ?? null)} /></div></div>
+        <input id="imp-file" ref={inputRef} className="input" type="file"
+          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          onChange={(e) => void onFile(e.target.files?.[0] ?? null)} /></div></div>
     </div>
 
     {cabeceras.length > 0 && <div style={{ marginBottom: 12 }}>
@@ -643,7 +700,9 @@ export function ImportarPage() {
         <button className="btn secondary" onClick={() => descargarPlantilla(cfg)}>⬇️ Descargar plantilla</button>
         <button className="btn secondary" onClick={() => void previsualizar()} disabled={!lineas.length || faltan.length > 0}>🔍 Previsualizar</button>
       </div>
-      <button className="btn" onClick={() => void importar()} disabled={busy || !rows.length}>{busy ? "Importando…" : `Importar ${rows.length ? formatNum(rows.length) : ""}`.trim()}</button>
+      <button className="btn" onClick={() => void importar()} disabled={busy || !rows.length}>{busy
+        ? progreso ? `Importando ${formatNum(progreso.hechos)}/${formatNum(progreso.total)}…` : "Importando…"
+        : `Importar ${rows.length ? formatNum(rows.length) : ""}`.trim()}</button>
     </div>
 
     {rows.length > 0 && <div className="table-scroll" style={{ marginTop: 12 }}>
