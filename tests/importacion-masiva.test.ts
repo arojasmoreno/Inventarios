@@ -59,32 +59,40 @@ beforeAll(async () => {
 });
 
 describe("importación masiva", () => {
-  test("un lote de 500 productos se guarda sin agotar el cupo de consultas de D1", async () => {
+  test("un lote completo se guarda sin agotar el cupo de consultas de D1", async () => {
     await post("/api/proveedores/import", { rows: [{ id_proveedor: "PROV-MAS", nombre: "Proveedor Masivo" }] });
     proveedorId = Number((await d1.prepare("SELECT id FROM proveedores WHERE codigo = 'PROV-MAS'").first<{ id: number }>())?.id ?? 0);
     expect(proveedorId).toBeGreaterThan(0);
     consultas = 0;
     const r = await post("/api/productos-disponibles/import", {
-      rows: Array.from({ length: 500 }, (_, i) => fila(i + 1)),
+      rows: Array.from({ length: 200 }, (_, i) => fila(i + 1)),
     });
     expect(r.status).toBe(200);
-    expect(r.body.creados).toBe(500);
-    // El límite de D1 es 1.000 consultas por invocación; con una consulta por
-    // fila más las validaciones se superaba y la importación se cortaba.
-    expect(consultas).toBeLessThan(1000);
+    expect(r.body.creados).toBe(200);
+    // El límite de D1 es 1.000 consultas por invocación: un lote de 200 filas
+    // debe quedar muy por debajo (1 consulta de índice + 1 por lote escrito).
+    expect(consultas).toBeLessThan(300);
     const n = Number((await d1.prepare("SELECT COUNT(*) AS n FROM productos_disponibles").first<{ n: number }>())?.n ?? 0);
-    expect(n).toBe(500);
+    expect(n).toBe(200);
+  });
+
+  test("rechaza más de 200 filas por petición", async () => {
+    const r = await post("/api/productos-disponibles/import", {
+      rows: Array.from({ length: 201 }, (_, i) => fila(i + 500)),
+    });
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toContain("200");
   });
 
   test("reimportar el mismo lote actualiza en vez de duplicar", async () => {
     const r = await post("/api/productos-disponibles/import", {
-      rows: Array.from({ length: 500 }, (_, i) => ({ ...fila(i + 1), producto: `Producto actualizado ${i + 1}` })),
+      rows: Array.from({ length: 200 }, (_, i) => ({ ...fila(i + 1), producto: `Producto actualizado ${i + 1}` })),
     });
     expect(r.status).toBe(200);
     expect(r.body.creados).toBe(0);
-    expect(r.body.actualizados).toBe(500);
+    expect(r.body.actualizados).toBe(200);
     const n = Number((await d1.prepare("SELECT COUNT(*) AS n FROM productos_disponibles").first<{ n: number }>())?.n ?? 0);
-    expect(n).toBe(500);
+    expect(n).toBe(200);
     const uno = await d1.prepare("SELECT producto FROM productos_disponibles WHERE codigo = 'MAS-0001'").first<{ producto: string }>();
     expect(uno?.producto).toBe("Producto actualizado 1");
   });

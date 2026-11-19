@@ -602,17 +602,21 @@ export const proveedoresSpec: CrudSpec = {
     // Plazo medio de entrega: se usa para calcular la fecha prevista del pedido.
     { name: "dias_entrega", label: "Plazo de entrega (días)", type: "integer", required: false, min: 0 },
   ],
-  beforeWrite: async (db, data, mode, existing) => {
+  beforeWrite: async (db, data, mode, existing, opts) => {
     // El ID de proveedor es manual: si llega solo «codigo» se usa como ID y
     // ambos campos quedan siempre iguales.
     const bruto = data.id_proveedor ?? data.codigo;
     const idProv = typeof bruto === "string" ? bruto.trim() : "";
     if (mode === "insert" && !idProv) throw new ValidationError("El ID de proveedor es obligatorio");
     if (idProv) {
-      const dup = await db.prepare(
-        "SELECT id FROM proveedores WHERE (TRIM(UPPER(id_proveedor)) = TRIM(UPPER(?)) OR TRIM(UPPER(codigo)) = TRIM(UPPER(?))) AND id != ?",
-      ).bind(idProv, idProv, Number(existing?.id ?? 0)).first();
-      if (dup) throw new ValidationError(`Ya existe un proveedor con ID ${idProv}`);
+      // En una importación masiva el duplicado ya se ha descartado con el
+      // índice en memoria (ignora mayúsculas); no hace falta otra consulta.
+      if (!opts?.importando) {
+        const dup = await db.prepare(
+          "SELECT id FROM proveedores WHERE (TRIM(UPPER(id_proveedor)) = TRIM(UPPER(?)) OR TRIM(UPPER(codigo)) = TRIM(UPPER(?))) AND id != ?",
+        ).bind(idProv, idProv, Number(existing?.id ?? 0)).first();
+        if (dup) throw new ValidationError(`Ya existe un proveedor con ID ${idProv}`);
+      }
       // Si solo cambia la caja respecto al código guardado se conserva el
       // original: importar «pr-001» no renombra el proveedor «PR-001».
       const guardado = String(existing?.id_proveedor ?? existing?.codigo ?? "").trim();

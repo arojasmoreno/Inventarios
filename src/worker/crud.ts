@@ -19,7 +19,10 @@ export interface CrudSpec {
   scopeCentro?: string;
   // La tabla de auditoría no genera registros de auditoría (evita bucles).
   noAudit?: boolean;
-  beforeWrite?: (db: D1Database, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  // `opts.importando` avisa de que la fila viene de una importación masiva:
+  // las comprobaciones de unicidad ya las hace el índice en memoria, así que
+  // no hace falta una consulta por fila (D1 limita las consultas por petición).
+  beforeWrite?: (db: D1Database, data: Record<string, unknown>, mode: "insert" | "update", existing?: Record<string, unknown>, opts?: { importando?: boolean }) => Promise<Record<string, unknown>>;
   beforeDelete?: (db: D1Database, user: SessionUser, row: Record<string, unknown>) => Promise<string | null>;
   afterWrite?: (db: D1Database, user: SessionUser, row: Record<string, unknown>, mode: "insert" | "update") => Promise<void>;
   afterDelete?: (db: D1Database, user: SessionUser, row: Record<string, unknown>) => Promise<void>;
@@ -269,7 +272,9 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     let body: { rows?: unknown };
     try { body = await c.req.json(); } catch { return c.json({ error: "Petición inválida" }, 400); }
     if (!Array.isArray(body.rows)) return c.json({ error: "Falta la lista de filas" }, 400);
-    if (body.rows.length > 500) return c.json({ error: "Máximo 500 registros por importación" }, 400);
+    // Tope por petición: cada fila cuesta al menos una consulta y D1 corta a
+    // las 1.000 por invocación del Worker.
+    if (body.rows.length > 200) return c.json({ error: "Máximo 200 registros por importación" }, 400);
     const db = c.env.DB;
     // Índice de los registros existentes por CADA campo único: una fila puede
     // identificar el registro por cualquiera de ellos (p. ej. un proveedor por
@@ -278,8 +283,9 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
     const uniqueField = unicos[0];
     const existentesPor = new Map<string, Map<string, Record<string, unknown>>>();
     if (unicos.length) {
-      const columnas = unicos.map(f => f.name).join(", ");
-      const rows = (await db.prepare(`SELECT id, ${columnas} FROM ${spec.table}`).all()).results as Record<string, unknown>[];
+      // Se traen las filas completas: así las validaciones de cada fila no
+      // necesitan ir a la base de datos otra vez (1 consulta en total).
+      const rows = (await db.prepare(`SELECT * FROM ${spec.table}`).all()).results as Record<string, unknown>[];
       for (const f of unicos) {
         const indice = new Map<string, Record<string, unknown>>();
         for (const r of rows) {
@@ -337,15 +343,15 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
           const found = existentesPor.get(f.name)?.get(claveUnica(f, valor));
           if (!found) continue;
           mode = "update";
-          // La fila completa (no solo el id) para las validaciones y el histórico.
-          existing = await db.prepare(`SELECT * FROM ${spec.table} WHERE id = ?`).bind(Number(found.id)).first() ?? found;
+          // La fila completa ya viene del índice (SELECT *), sin consulta extra.
+          existing = found;
           break;
         }
         if (spec.table === "centros" && mode === "update") {
           const err = await centroScope(c, c.get("user"), Number(existing?.id), "update");
           if (err) { fallo(i + 1, err); continue; }
         }
-        if (spec.beforeWrite) data = await spec.beforeWrite(db, data, mode, existing);
+        if (spec.beforeWrite) data = await spec.beforeWrite(db, data, mode, existing, { importando: true });
         if (spec.scopeCentro) {
           const permitidos = await centrosPermitidos(db, c.get("user"));
           const err = await revisarCentro(db, spec, mode === "update" ? (existing ?? data) : data, permitidos);
