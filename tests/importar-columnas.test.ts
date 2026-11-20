@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agruparPorClave, mapearColumnas } from "../src/web/csv";
+import { agruparPorClave, detectarSeparador, dividirFilaCsv, mapearColumnas } from "../src/web/csv";
 
 // Cabeceras del catálogo de proveedor que sube el usuario.
 const CABECERAS = ["Codigo proveedor", "Nombre proveedor", "Codigo producto", "Producto", "Precio"];
@@ -36,6 +36,30 @@ describe("mapeo automático de cabeceras", () => {
     const mapa = mapearColumnas(PROVEEDORES, CABECERAS);
     expect(mapa.id_proveedor).toBe("0");
     expect(mapa.nombre).toBe("1");
+  });
+
+  test("detecta el separador «;» del CSV español", () => {
+    expect(detectarSeparador("Codigo proveedor;Nombre proveedor;Codigo producto;Producto;Precio")).toBe(";");
+    expect(detectarSeparador("Codigo proveedor,Nombre proveedor,Codigo producto")).toBe(",");
+  });
+
+  test("no parte por las comas de los nombres ni de los precios", () => {
+    const celdas = dividirFilaCsv("3257;JDD MAQUINARIA, S.A.;702233_CON_AL;ACEITE HIDRAULICO;4,50", ";");
+    expect(celdas).toEqual(["3257", "JDD MAQUINARIA, S.A.", "702233_CON_AL", "ACEITE HIDRAULICO", "4,50"]);
+  });
+
+  test("respeta las comillas y las comillas dobles", () => {
+    expect(dividirFilaCsv('"PROV;1";"Mopa ""grande""";M-1;Mopa;3,25', ";"))
+      .toEqual(["PROV;1", 'Mopa "grande"', "M-1", "Mopa", "3,25"]);
+  });
+
+  test("un CSV con comas sigue funcionando", () => {
+    expect(dividirFilaCsv("3257,ACEITE,702233,4.50", ",")).toEqual(["3257", "ACEITE", "702233", "4.50"]);
+  });
+
+  test("no agrupa filas cuando la clave viene vacía", () => {
+    const filas = [{ codigo: "" }, { codigo: "" }];
+    expect(agruparPorClave(filas, ["codigo"])).toEqual({ filas, agrupadas: 0 });
   });
 
   test("agrupa las líneas repetidas del mismo proveedor y se queda con la última", () => {

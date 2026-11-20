@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, reportarError } from "./api";
 import { downloadCsv, formatNum, Toast } from "./ui";
-import { agruparPorClave, leerTextoArchivo, mapearColumnas, normalizarClave } from "./csv";
+import { agruparPorClave, detectarSeparador, dividirFilaCsv, leerTextoArchivo, mapearColumnas, normalizarClave } from "./csv";
 
 type Row = Record<string, unknown>;
 
@@ -174,21 +174,6 @@ export interface Catalogos { centros: Row[]; proveedores: Row[]; zonas: Row[]; s
 // Cotejo de textos: sin acentos, sin ñ, sin puntuación y sin mayúsculas, para
 // que «García, S.L.» y «GARCIA SL» sean el mismo proveedor.
 const norm = (v: string): string => normalizarClave(v);
-
-function splitCsvLine(line: string): string[] {
-  const out: string[] = []; let cur = ""; let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQ) {
-      if (ch === "\"" && line[i + 1] === "\"") { cur += "\""; i++; }
-      else if (ch === "\"") inQ = false;
-      else cur += ch;
-    } else if (ch === "," || ch === ";" || ch === "\t") { out.push(cur); cur = ""; }
-    else cur += ch;
-  }
-  out.push(cur);
-  return out.map((s) => s.trim());
-}
 
 // Números con formato español o inglés: «4,50», «3.75», «1.234,56» y
 // «1,234.56» dan lo mismo. Un punto solo se toma como decimal salvo que sea
@@ -559,8 +544,12 @@ export function ImportarPage() {
         const texto = await leerTextoArchivo(f);
         const todas = texto.split(/\r?\n/).filter((l) => l.trim() !== "");
         if (todas.length < 2) { setError("El archivo necesita una fila de cabeceras y al menos un dato."); return; }
-        heads = splitCsvLine(todas[0]);
-        cuerpo = todas.slice(1).map(splitCsvLine);
+        // El separador se decide con la cabecera y se respeta en todas las
+        // filas: en un CSV español con «;», las comas de los nombres y de los
+        // precios («4,50») no son separadores.
+        const sep = detectarSeparador(todas[0]);
+        heads = dividirFilaCsv(todas[0], sep);
+        cuerpo = todas.slice(1).map((l) => dividirFilaCsv(l, sep));
       }
       setCabeceras(heads);
       setLineas(cuerpo);

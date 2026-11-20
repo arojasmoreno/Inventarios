@@ -22,6 +22,42 @@ export function normalizarClave(valor: unknown): string {
     .trim();
 }
 
+/** Separador del archivo: el que más aparece fuera de comillas en la cabecera.
+ *  Excel en España guarda los CSV con «;» y deja las comas dentro de los
+ *  nombres («JDD MAQUINARIA, S.A.») y de los precios («4,50»); partir también
+ *  por comas desplazaba todas las columnas de la fila. */
+export function detectarSeparador(encabezado: string): string {
+  const cuenta: Record<string, number> = { ";": 0, ",": 0, "\t": 0 };
+  let entreComillas = false;
+  for (const ch of encabezado) {
+    if (ch === '"') { entreComillas = !entreComillas; continue; }
+    if (!entreComillas && ch in cuenta) cuenta[ch]++;
+  }
+  let mejor = ",";
+  for (const sep of Object.keys(cuenta)) if (cuenta[sep] > cuenta[mejor]) mejor = sep;
+  return cuenta[mejor] > 0 ? mejor : ",";
+}
+
+/** Divide una línea de CSV por su separador, respetando comillas y comillas
+ *  dobles ("" dentro de un campo). */
+export function dividirFilaCsv(linea: string, separador: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let entreComillas = false;
+  for (let i = 0; i < linea.length; i++) {
+    const ch = linea[i];
+    if (entreComillas) {
+      if (ch === '"' && linea[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') entreComillas = false;
+      else cur += ch;
+    } else if (ch === '"') entreComillas = true;
+    else if (ch === separador) { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
 /** Agrupa las filas que comparten clave (un catálogo de proveedor repite el
  *  mismo proveedor en cada línea): se queda con la última lectura de cada una
  *  y devuelve cuántas se han unido. Sin clave, no toca el archivo. */
@@ -34,10 +70,13 @@ export function agruparPorClave<T extends Record<string, unknown>>(
   const salida: T[] = [];
   let agrupadas = 0;
   for (const fila of filas) {
-    const k = clave.map((c) => String(fila[c] ?? "").trim().toUpperCase()).join("\u0000");
-    const previa = porClave.get(k);
+    const partes = clave.map((c) => String(fila[c] ?? "").trim().toUpperCase());
+    // Sin clave no se agrupa: si el archivo no trae el código, unir todas las
+    // filas en una sola perdería el catálogo entero.
+    if (partes.some((v) => v === "")) { salida.push(fila); continue; }
+    const previa = porClave.get(partes.join("\u0000"));
     if (previa) { Object.assign(previa, fila); agrupadas++; }
-    else { porClave.set(k, fila); salida.push(fila); }
+    else { porClave.set(partes.join("\u0000"), fila); salida.push(fila); }
   }
   return { filas: salida, agrupadas };
 }
