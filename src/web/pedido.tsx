@@ -371,10 +371,38 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
 
       let provCreados = 0, provActualizados = 0, prodCreados = 0, prodActualizados = 0;
       const errores: string[] = [];
-      for (const lote of enLotes([...filasProveedor.values()])) {
-        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>("/api/proveedores/import", { rows: lote });
-        provCreados += Number(r.creados ?? 0); provActualizados += Number(r.actualizados ?? 0);
+      const acumulado = (r: { creados?: number; actualizados?: number; errores?: string[] }) => {
+        provCreados += Number(r.creados ?? 0);
+        provActualizados += Number(r.actualizados ?? 0);
         for (const e of r.errores ?? []) if (errores.length < 8) errores.push(e);
+      };
+      const acumuladoProd = (r: { creados?: number; actualizados?: number; errores?: string[] }) => {
+        prodCreados += Number(r.creados ?? 0);
+        prodActualizados += Number(r.actualizados ?? 0);
+        for (const e of r.errores ?? []) if (errores.length < 8) errores.push(e);
+      };
+      // Proveedores: subida por lotes con reintentos suaves (datos pequeños,
+      // pero útil si algún lote coincide con el momento en que el Worker está
+      // recargando su índice tras la importación de productos).
+      for (const lote of enLotes([...filasProveedor.values()])) {
+        let intentos = 0;
+        while (intentos < 3) {
+          try {
+            const r = await api.post<{ status?: number; creados?: number; actualizados?: number; errores?: string[]; error?: string }>("/api/proveedores/import", { rows: lote });
+            if (r.status === 200) { acumulado(r as unknown as { creados?: number; actualizados?: number; errores?: string[] }); break; }
+            if (r.status != null && String(r.status).startsWith("5")) {
+              intentos++;
+              if (intentos < 3) await new Promise(r => setTimeout(r, 400));
+              continue;
+            }
+            errores.push(`Proveedores lote: ${String((r as unknown as Record<string, unknown>).error ?? "error del servidor")?.slice(0, 160)}`);
+            break;
+          } catch (e) {
+            intentos++;
+            if (intentos < 3) await new Promise(r => setTimeout(r, 500));
+            continue;
+          }
+        }
       }
 
       // Recargar proveedores para traducir cada código a su id real.
@@ -387,10 +415,33 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
         if (!proveedorId) { sinProveedor++; continue; }
         productos.push({ proveedor_id: proveedorId, codigo: fila.codigo, producto: fila.producto, precio: fila.precio });
       }
-      for (const lote of enLotes(productos)) {
-        const r = await api.post<{ creados?: number; actualizados?: number; errores?: string[] }>("/api/productos-disponibles/import", { rows: lote });
-        prodCreados += Number(r.creados ?? 0); prodActualizados += Number(r.actualizados ?? 0);
-        for (const e of r.errores ?? []) if (errores.length < 8) errores.push(e);
+      // Productos: lotes de 200 con reintentos y detección de lote fallido para
+      // poder reanudar a partir de él si el Worker devolviera 503 tras muchos.
+      const lotesProd = enLotes(productos);
+      for (let i = 0; i < lotesProd.length; i++) {
+        const lote = lotesProd[i];
+        let intentos = 0;
+        while (intentos < 3) {
+          try {
+            const r = await api.post<{ status?: number; creados?: number; actualizados?: number; errores?: string[]; error?: string }>("/api/productos-disponibles/import", { rows: lote });
+            if (r.status === 200) { acumuladoProd(r as unknown as { creados?: number; actualizados?: number; errores?: string[] }); break; }
+            if (r.status != null && String(r.status).startsWith("5")) {
+              intentos++;
+              if (intentos < 3) await new Promise(r => setTimeout(r, 500));
+              continue;
+            }
+            errores.push(`Productos lote ${i + 1}: ${String((r as unknown as Record<string, unknown>).error ?? "error del servidor")?.slice(0, 160)}`);
+            break;
+          } catch (e) {
+            intentos++;
+            if (intentos < 3) await new Promise(r => setTimeout(r, 600));
+            continue;
+          }
+        }
+        if (intentos >= 3) {
+          errores.push(`No se pudieron cargar los productos desde el lote ${i + 1} (aprox. ${lote.length} artículos). Reintenta importando solo los pendientes.`);
+          break;
+        }
       }
 
       const primerProveedor = [...filasProveedor.keys()].find(k => idPorCodigo.has(k));

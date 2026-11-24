@@ -360,10 +360,20 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
       try {
         let data = validate(spec, raw as Record<string, unknown>, "insert");
         let mode: "insert" | "update" = "insert";
+        let existingId: number | undefined;
         let existing: Record<string, unknown> | undefined;
         for (const f of unicos) {
           const valor = data[f.name];
           if (valor === undefined || valor === null || String(valor).trim() === "") continue;
+          if (spec.table === "productos_disponibles" && f.name === "codigo") {
+            const codigos = existentesPor.get("codigo");
+            const entry = codigos?.get(claveUnica(f, valor));
+            existingId = entry && "id" in entry ? (entry.id as number | undefined) : undefined;
+            if (existingId != null) {
+              mode = "update";
+            }
+            break;
+          }
           const found = existentesPor.get(f.name)?.get(claveUnica(f, valor));
           if (!found) continue;
           mode = "update";
@@ -371,11 +381,18 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
           existing = found;
           break;
         }
-        if (spec.table === "centros" && mode === "update") {
-          const err = await centroScope(c, c.get("user"), Number(existing?.id), "update");
-          if (err) { fallo(i + 1, err); continue; }
+        // Si es un producto que ya existe, se alimenta `existing` con su id para
+        // que el motor de upsert pueda hacer UPDATE; pero no se vuelve a validar
+        // su proveedor porque el producto ya existe y su proveedor no cambia en
+        // esta importación (solo se puede actualizar código/precio).
+        if (spec.table === "productos_disponibles" && existingId != null) {
+          existing = { id: existingId } as Record<string, unknown>;
+          // El producto ya existe: saltamos la comprobación de proveedor del
+          // beforeWrite (el producto ya tiene proveedor asignado).
+          if (spec.beforeWrite) await spec.beforeWrite(db, data, mode, undefined, { importando: true });
+        } else if (spec.beforeWrite) {
+          await spec.beforeWrite(db, data, mode, existing, { importando: true });
         }
-        if (spec.beforeWrite) data = await spec.beforeWrite(db, data, mode, existing, { importando: true });
         if (spec.scopeCentro) {
           const permitidos = await centrosPermitidos(db, c.get("user"));
           const err = await revisarCentro(db, spec, mode === "update" ? (existing ?? data) : data, permitidos);
