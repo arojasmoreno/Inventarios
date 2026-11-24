@@ -197,6 +197,22 @@ function toBool(v: string | undefined): number {
   return ["1", "true", "si", "sí", "s", "x", "verdadero"].includes(s) ? 1 : 0;
 }
 
+// «Fila 1.240: el proveedor «4247» no existe» → causa sin el número de fila:
+// así cientos de errores iguales de un catálogo grande se ven en una línea con
+// su recuento en vez de repetirse hasta llenar la pantalla.
+export interface CausaError { causa: string; total: number; ejemplo: string }
+const causaDe = (mensaje: string): string => mensaje.replace(/^Fila \d+:\s*/, "").trim();
+export function agruparErrores(lista: string[]): CausaError[] {
+  const mapa = new Map<string, CausaError>();
+  for (const mensaje of lista) {
+    const causa = causaDe(mensaje);
+    const previa = mapa.get(causa);
+    if (previa) previa.total++;
+    else mapa.set(causa, { causa, total: 1, ejemplo: mensaje });
+  }
+  return [...mapa.values()].sort((a, b) => b.total - a.total);
+}
+
 /** Resuelve un identificador por id, código o nombre (insensible a mayúsculas). */
 // Índice de un catálogo por sus claves normalizadas. Se construye una vez por
 // catálogo: con 14.000 filas y 300 proveedores, normalizar el catálogo entero
@@ -488,6 +504,9 @@ export function ImportarPage() {
   const [busy, setBusy] = useState(false);
   const [progreso, setProgreso] = useState<{ hechos: number; total: number; lote: number; lotes: number } | null>(null);
   const [agrupadas, setAgrupadas] = useState(0);
+  // Motivos por los que han fallado filas al importar, agrupados y ordenados
+  // por frecuencia (los errores completos van en el informe descargable).
+  const [causasImport, setCausasImport] = useState<CausaError[]>([]);
   const [cat, setCat] = useState<Catalogos>({ centros: [], proveedores: [], zonas: [], subzonas: [], usuarios: [], documento_tipos: [], maquinaria: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const cfg = RECURSOS.find((r) => r.key === recurso) ?? RECURSOS[0];
@@ -512,16 +531,18 @@ export function ImportarPage() {
   }, [cat, cfg.needs]);
 
   useEffect(() => {
-    setRows([]); setErroresParse([]); setError(null); setDone(null); setAgrupadas(0);
+    setRows([]); setErroresParse([]); setError(null); setDone(null); setAgrupadas(0); setCausasImport([]);
     setCabeceras([]); setLineas([]); setMapa({});
     if (inputRef.current) inputRef.current.value = "";
   }, [recurso]);
 
   const faltan = useMemo(() => cfg.obligatorios.filter((f) => !mapa[f]), [cfg.obligatorios, mapa]);
   const mapeados = useMemo(() => cfg.columns.filter((f) => mapa[f]).length, [cfg.columns, mapa]);
+  const causasParse = useMemo(() => agruparErrores(erroresParse), [erroresParse]);
+  const totalFallosImport = useMemo(() => causasImport.reduce((a, c) => a + c.total, 0), [causasImport]);
 
   const onFile = async (f: File | null) => {
-    setDone(null); setError(null); setRows([]); setErroresParse([]); setAgrupadas(0);
+    setDone(null); setError(null); setRows([]); setErroresParse([]); setAgrupadas(0); setCausasImport([]);
     setCabeceras([]); setLineas([]); setMapa({});
     if (!f) return;
     try {
@@ -558,7 +579,7 @@ export function ImportarPage() {
   };
 
   const previsualizar = async () => {
-    setError(null); setDone(null); setRows([]); setErroresParse([]);
+    setError(null); setDone(null); setRows([]); setErroresParse([]); setCausasImport([]);
     if (!lineas.length) { setError("Elige primero un archivo CSV."); return; }
     if (faltan.length) { setError(`Asigna una columna para: ${faltan.join(", ")}.`); return; }
     try {
@@ -578,6 +599,21 @@ export function ImportarPage() {
         else parsed.push(out);
       }
       if (lineas.length > MAX_ROWS) problemas.push(`(solo se procesan los primeros ${MAX_ROWS} registros)`);
+      // La base guarda un solo producto por código: si el archivo trae el mismo
+      // código con otro proveedor o con otro nombre, solo sobrevive la última
+      // fila. Se avisa en vez de perder filas en silencio.
+      if (cfg.key === "productos_disponibles" && parsed.length > 1) {
+        const porCodigo = new Map<string, Record<string, unknown>>();
+        let conflictos = 0;
+        for (const fila of parsed) {
+          const clave = String(fila.codigo ?? "").trim().toUpperCase();
+          if (!clave) continue;
+          const previa = porCodigo.get(clave);
+          if (previa && (Number(previa.proveedor_id) !== Number(fila.proveedor_id) || String(previa.producto) !== String(fila.producto))) conflictos++;
+          porCodigo.set(clave, fila);
+        }
+        if (conflictos) problemas.push(`${conflictos} código(s) se repiten con otro proveedor o nombre: se guardará la última fila de cada código`);
+      }
       // Un catálogo de proveedor repite la misma clave en cada línea (14.000
       // filas para 300 proveedores): se envía una sola vez, con los últimos
       // datos leídos, en vez de reenviar el mismo registro decenas de veces.
@@ -599,12 +635,32 @@ export function ImportarPage() {
 
   // Plantilla con las cabeceras y una fila de ejemplo del recurso elegido.
   const descargarPlantilla = (r: Recurso) => downloadCsv(`${r.key}-plantilla.csv`, r.columns, [r.ejemplo]);
+  // Informe de errores con TODOS los motivos y cuántas filas afecta cada uno:
+  // así se puede corregir el archivo de origen sin ir fila a fila.
+  const descargarErrores = () => {
+    const filas: (string | number)[][] = [
+      ...causasImport.map((c) => ["Importación", c.causa, c.total, c.ejemplo] as (string | number)[]),
+      ...causasParse.map((c) => ["Lectura", c.causa, c.total, c.ejemplo] as (string | number)[]),
+    ];
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadCsv(`errores-${cfg.key}-${stamp}.csv`, ["Origen", "Motivo", "Filas afectadas", "Ejemplo"], filas);
+  };
 
   const importar = async () => {
     if (!rows.length) return;
-    setBusy(true); setError(null); setDone(null);
-    let creados = 0, actualizados = 0;
+    setBusy(true); setError(null); setDone(null); setCausasImport([]);
+    let creados = 0, actualizados = 0, fallos = 0;
     const errores: string[] = [];
+    // Acumula los fallos por causa sumando los recuentos que ya manda el
+    // Worker (así no se pierden las filas que no caben en su lista de 100).
+    const causas = new Map<string, CausaError>();
+    const anotar = (mensaje: string, total: number, fila?: number) => {
+      const causa = causaDe(mensaje);
+      const previa = causas.get(causa) ?? { causa, total: 0, ejemplo: "" };
+      previa.total += total;
+      if (!previa.ejemplo) previa.ejemplo = fila ? `Fila ${fila}: ${causa}` : causa;
+      causas.set(causa, previa);
+    };
     const lotes = Math.ceil(rows.length / LOTE);
     setProgreso({ hechos: 0, total: rows.length, lote: 0, lotes });
     // Un lote que falle no detiene el resto: se anota y se sigue, para que un
@@ -613,26 +669,34 @@ export function ImportarPage() {
       const desde = n * LOTE, hasta = Math.min(desde + LOTE, rows.length);
       try {
         // Un corte puntual de red no debe perder el lote: se reintenta una vez.
-        const enviar = () => api.post<{ creados?: number; actualizados?: number; errores?: string[] }>(`${cfg.endpoint}/import`, { rows: rows.slice(desde, hasta) });
+        type RespuestaImport = {
+          creados?: number; actualizados?: number; errores?: string[]; fallos?: number;
+          causas?: { mensaje: string; filas: number; ejemplos?: number[] }[];
+        };
+        const enviar = () => api.post<RespuestaImport>(`${cfg.endpoint}/import`, { rows: rows.slice(desde, hasta) });
         const r = await enviar().catch(async () => { await new Promise((ok) => setTimeout(ok, 1500)); return enviar(); });
         creados += Number(r.creados ?? 0);
         actualizados += Number(r.actualizados ?? 0);
+        fallos += Number(r.fallos ?? 0);
         for (const e of r.errores ?? []) errores.push(e);
+        for (const c of r.causas ?? []) anotar(c.mensaje, c.filas, c.ejemplos?.[0]);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "error de conexión";
         errores.push(`Lote ${n + 1}/${lotes} (filas ${desde + 1}-${hasta}): ${msg}`);
+        anotar(msg, hasta - desde);
       }
       setProgreso({ hechos: hasta, total: rows.length, lote: n + 1, lotes });
     }
     setProgreso(null);
     const partes = [`${formatNum(creados)} creados`, `${formatNum(actualizados)} actualizados`];
-    const aviso = errores.length ? ` · ${formatNum(errores.length)} con error` : "";
+    const aviso = fallos ? ` · ${formatNum(fallos)} con error` : "";
     setDone(`Importados: ${partes.join(" · ")}${aviso}`);
-    if (errores.length) {
-      setError(errores.slice(0, 4).join(" · "));
+    const resumenCausas = [...causas.values()].sort((a, b) => b.total - a.total);
+    setCausasImport(resumenCausas);
+    if (fallos) {
       reportarError(
-        `${errores.length} fila(s) o lote(s) no se pudieron importar en ${cfg.label}`,
-        { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: errores.slice(0, 10).join("\n") },
+        `${fallos} fila(s) o lote(s) no se pudieron importar en ${cfg.label}`,
+        { nivel: "aviso", origen: "importar", ruta: cfg.endpoint, detalle: errores.slice(0, 50).join("\n") },
       );
     }
     setRows([]); setErroresParse([]); if (inputRef.current) inputRef.current.value = "";
@@ -690,13 +754,34 @@ export function ImportarPage() {
     {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
     {done && <div className="banner" style={{ marginBottom: 12, background: "#dcfce7", color: "#166534" }}>{done}</div>}
 
+    {totalFallosImport > 0 && <div className="banner danger" style={{ marginBottom: 12 }}>
+      <div className="section-head" style={{ marginBottom: 6 }}>
+        <span>⚠️ {formatNum(totalFallosImport)} fila{totalFallosImport === 1 ? "" : "s"} no se importó{totalFallosImport === 1 ? "" : "n"}. Motivos:</span>
+        <button className="btn secondary small" onClick={descargarErrores}>⬇️ Descargar informe</button>
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, fontWeight: 500 }}>
+        {causasImport.slice(0, 6).map((c) => <li key={c.causa}>
+          <strong>{formatNum(c.total)}</strong> × {c.causa}
+          {c.ejemplo !== c.causa && <span className="muted"> ({c.ejemplo})</span>}
+        </li>)}
+        {causasImport.length > 6 && <li className="muted">…y {formatNum(causasImport.length - 6)} motivo(s) más en el informe</li>}
+      </ul>
+    </div>}
+
     {rows.length > 0 && <div className="banner" style={{ marginBottom: 12, background: "#dbeafe", color: "#1e40af" }}>
       ✅ <strong>{formatNum(rows.length)}</strong> filas válidas listas para importar en {cfg.label}.
       {agrupadas > 0 && <> · {formatNum(agrupadas)} filas repetidas del mismo registro se han agrupado.</>}
       {erroresParse.length > 0 && <> ⚠️ {formatNum(erroresParse.length)} fila{erroresParse.length === 1 ? "" : "s"} con problemas no se importará{erroresParse.length === 1 ? "" : "n"}.</>}
     </div>}
-    {erroresParse.length > 0 && <div className="form-error" style={{ marginBottom: 12 }}>
-      {erroresParse.slice(0, 8).join(" · ")}{erroresParse.length > 8 ? ` · …y ${erroresParse.length - 8} más` : ""}
+    {causasParse.length > 0 && <div className="form-error" style={{ marginBottom: 12 }}>
+      <div className="section-head" style={{ marginBottom: 6 }}>
+        <span>Filas descartadas antes de enviar:</span>
+        <button className="btn secondary small" onClick={descargarErrores}>⬇️ Descargar informe</button>
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18 }}>
+        {causasParse.slice(0, 6).map((c) => <li key={c.causa}><strong>{formatNum(c.total)}</strong> × {c.causa}</li>)}
+        {causasParse.length > 6 && <li>…y {formatNum(causasParse.length - 6)} motivo(s) más en el informe</li>}
+      </ul>
     </div>}
 
     <div className="modal-footer" style={{ justifyContent: "space-between" }}>

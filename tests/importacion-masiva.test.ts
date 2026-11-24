@@ -103,4 +103,22 @@ describe("importación masiva", () => {
     expect(r.body.creados).toBe(1);
     expect((r.body.errores as string[])[0]).toContain("ya aparece en la fila 1");
   });
+
+  // Un archivo entero rechazado devolvía un 400 con un solo mensaje y el cliente
+  // reintentaba el lote: ahora se informa del total de fallos y de cada motivo
+  // con cuántas filas afecta, para poder corregir el archivo de origen.
+  test("si no se guarda ninguna fila, devuelve los motivos agrupados con su recuento", async () => {
+    const r = await post("/api/productos-disponibles/import", {
+      rows: Array.from({ length: 12 }, (_, i) => ({ ...fila(i + 300), proveedor_id: 999_999 })),
+    });
+    expect(r.status).toBe(200);
+    expect(Number(r.body.creados)).toBe(0);
+    expect(Number(r.body.actualizados)).toBe(0);
+    expect(Number(r.body.fallos)).toBe(12);
+    const causas = r.body.causas as { mensaje: string; filas: number; ejemplos: number[] }[];
+    expect(causas.length).toBe(1);
+    expect(causas[0].filas).toBe(12);
+    expect(causas[0].mensaje).toContain("proveedor");
+    expect(causas[0].ejemplos[0]).toBe(1);
+  });
 });

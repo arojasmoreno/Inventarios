@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { Field, Modal, SearchSelect, Toast, camposConError, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
-import { leerTextoArchivo } from "./csv";
+import { detectarSeparador, dividirFilaCsv, leerTextoArchivo } from "./csv";
 
 type Row = Record<string, unknown>;
 
@@ -20,25 +20,16 @@ const etiquetaProveedor = (p: Row | undefined): string => [p?.codigo, p?.nombre]
 const contactoProveedor = (p: Row | undefined): string =>
   [p?.contacto, p?.telefono, p?.email].map(v => String(v ?? "").trim()).filter(Boolean).join(" · ") || "Sin datos de contacto";
 
-/** Parsea un CSV/TSV sencillo (coma, punto y coma o tabulador; con comillas):
- *  el mismo formato que exporta «Guardar en Excel (CSV)» y que espera la
- *  importación masiva del backend. */
-function parseCsv(texto: string): string[][] {
-  const out: string[][] = [];
-  let fila: string[] = [], cur = "", enComillas = false;
-  for (let i = 0; i < texto.length; i++) {
-    const ch = texto[i];
-    if (enComillas) {
-      if (ch === '"' && texto[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') enComillas = false;
-      else cur += ch;
-    } else if (ch === '"') enComillas = true;
-    else if (ch === "," || ch === ";" || ch === "\t") { fila.push(cur); cur = ""; }
-    else if (ch === "\n") { fila.push(cur); out.push(fila); fila = []; cur = ""; }
-    else if (ch !== "\r") cur += ch;
-  }
-  fila.push(cur); out.push(fila);
-  return out.map(f => f.map(s => s.trim())).filter(f => f.some(s => s !== ""));
+/** Parsea un CSV/TSV: el separador se decide con la cabecera (coma, punto y
+ *  coma o tabulador) y se respeta en todas las filas, igual que en «Importar
+ *  CSV». Partir por los tres a la vez descolocaba las filas de los catálogos
+ *  reales, que llevan comas dentro del nombre del proveedor («DARLIM, S.L.») y
+ *  del precio («11,69»), y el código acababa siendo «S.L.». */
+export function parseCsv(texto: string): string[][] {
+  const lineas = texto.split(/\r?\n/).filter(l => l.trim() !== "");
+  if (!lineas.length) return [];
+  const sep = detectarSeparador(lineas[0]);
+  return lineas.map(l => dividirFilaCsv(l, sep)).filter(f => f.some(s => s !== ""));
 }
 
 /** Cabeceras tolerantes: «Código proveedor», «codigo_proveedor» y «Código de proveedor» son la misma. */
@@ -342,9 +333,15 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       const filasProveedor = new Map<string, { codigo: string; nombre: string }>();
       const filasProducto = new Map<string, { codigoProveedor: string; codigo: string; producto: string; precio: number | null }>();
       const fallos: string[] = [];
+      let columnasMal = 0;
 
       for (let i = 1; i < filas.length; i++) {
         const c = filas[i] ?? [];
+        if (c.length !== cab.length) {
+          columnasMal++;
+          if (fallos.length < 5) fallos.push(`Fila ${i + 1}: ${c.length} columnas frente a ${cab.length} de la cabecera`);
+          continue;
+        }
         const provCodigo = String(c[iProvCod] ?? "").trim();
         const provNombre = String(c[iProvNom] ?? "").trim();
         const prodCodigo = String(c[iProdCod] ?? "").trim();
@@ -402,6 +399,7 @@ export function ProductosDisponiblesPage({ user, onGoProveedores }: { user: { ro
       const partes = `${provCreados + provActualizados} proveedores (${provCreados} nuevos) · ${prodCreados + prodActualizados} productos (${prodCreados} nuevos)`;
       const detalle = errores.length ? ` · ${errores.length} con error (${errores[0]})`
         : sinProveedor ? ` · ${sinProveedor} productos sin proveedor`
+        : columnasMal ? ` · ${columnasMal} filas con columnas descuadradas (revisa el separador del archivo)`
         : fallos.length ? ` · ${fallos.length} filas descartadas` : "";
       setAviso({
         message: `Importación completada: ${partes}${detalle}`,

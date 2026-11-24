@@ -91,6 +91,54 @@ test("la importación de productos actualiza por código sin crear duplicados", 
   expect(fila?.producto).toBe("Mopa de microfibra reforzada");
 });
 
+test("carga real: proveedores con solo código y nombre, y su catálogo con precio opcional", async () => {
+  // Es lo que sube la pestaña «Proveedores»: id_proveedor (el código numérico
+  // que ya usan los catálogos) y nombre. El resto de datos no viene.
+  const provs = await post("/api/proveedores/import", {
+    rows: [
+      { id_proveedor: "2180", nombre: "DARLIM, S.L." },
+      { id_proveedor: "4247", nombre: "DARDALO SL" },
+    ],
+  });
+  expect(provs.status).toBe(200);
+  expect(Number(provs.body.creados)).toBe(2);
+  expect(provs.body.errores).toEqual([]);
+
+  const darlimId = await idProveedor("2180");
+  expect(darlimId).toBeGreaterThan(0);
+
+  // Productos: código y nombre obligatorios, precio opcional (una fila sin él).
+  const filas = [
+    { codigo: "C06001_DAR_CO", producto: "PAPEL HIG. IND. 45x130 2 C. CELULOSA 100% GOFRADO (FARDO 18)", precio: 11.69 },
+    { codigo: "C07012_DAR_CO", producto: "PAPEL HIG. DAMACEL 25 MT 2C CELULOSA 100% MICROGOFRADO (FARDO 108)", precio: 15.6 },
+    { codigo: "UA0006_DAR_UT", producto: "PALO UNIVERSAL 1,40 CM.", precio: 0.54 },
+    { codigo: "U06030_DAR_UT", producto: "PALO ALUMINIO EXTENSIBLE UNGER VERDE 3X3" },
+  ].map((f) => ({ proveedor_id: darlimId, ...f }));
+
+  const prods = await post("/api/productos-disponibles/import", { rows: filas });
+  expect(prods.status).toBe(200);
+  expect(Number(prods.body.creados)).toBe(filas.length);
+  expect(prods.body.errores).toEqual([]);
+
+  const lista = await get("/api/productos-disponibles?proveedor_id=" + String(darlimId));
+  const items = lista.body.items as Record<string, unknown>[];
+  expect(items).toHaveLength(filas.length);
+  expect(items.every((p) => p.proveedor_codigo === "2180")).toBe(true);
+  expect(items.find((p) => p.codigo === "C06001_DAR_CO")?.precio).toBe(11.69);
+  expect(items.find((p) => p.codigo === "C07012_DAR_CO")?.precio).toBe(15.6);
+  expect(items.find((p) => p.codigo === "UA0006_DAR_UT")?.precio).toBe(0.54);
+  expect(items.find((p) => p.codigo === "U06030_DAR_UT")?.precio).toBeNull();
+
+  // Se vuelve a subir el mismo archivo: actualiza, no duplica.
+  const otra = await post("/api/productos-disponibles/import", {
+    rows: [{ proveedor_id: darlimId, codigo: "C06001_DAR_CO", producto: "PAPEL HIG. IND. 45x130 (nuevo nombre)", precio: 11.99 }],
+  });
+  expect(Number(otra.body.actualizados)).toBe(1);
+  expect(Number(otra.body.creados)).toBe(0);
+  const tras = await get("/api/productos-disponibles?proveedor_id=" + String(darlimId));
+  expect((tras.body.items as Record<string, unknown>[])).toHaveLength(filas.length);
+});
+
 test("el catálogo muestra las unidades reservadas por los pedidos sin aplicar", async () => {
   const proveedorId = await idProveedor("PR-001");
   const centro = await d1.prepare("SELECT id FROM centros ORDER BY id LIMIT 1").first<{ id: number }>();

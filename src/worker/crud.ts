@@ -162,6 +162,17 @@ export async function checkUnique(db: D1Database, spec: CrudSpec, data: Record<s
     if (row) throw new ValidationError(`Ya existe un registro con ${f.label} = ${String(data[f.name])}`);
   }
 }
+// Mensajes de SQLite traducidos a algo accionable: «UNIQUE constraint failed:
+// productos_disponibles.codigo» no le dice nada a quien importa un catálogo.
+function mensajeDeError(e: unknown): string {
+  const bruto = e instanceof Error ? e.message : String(e ?? "");
+  const unico = /UNIQUE constraint failed: [\w]+\.(\w+)/i.exec(bruto);
+  if (unico) return `ya existe otro registro con el mismo valor en «${unico[1]}»`;
+  if (/FOREIGN KEY constraint failed/i.test(bruto)) return "hace referencia a un registro que no existe";
+  const obligatorio = /NOT NULL constraint failed: [\w]+\.(\w+)/i.exec(bruto);
+  if (obligatorio) return `falta el campo «${obligatorio[1]}»`;
+  return bruto || "no se pudo guardar";
+}
 export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Variables }> {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>(); app.use("*", requireAuth);
   const selectCols = ["t.id", ...spec.fields.filter(f => !f.writeOnly).map(f => `t.${f.name}`), "t.created_at", "t.updated_at"];
@@ -297,8 +308,21 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
       }
     }
     let creados = 0, actualizados = 0;
+    // Errores agrupados por causa: con un catálogo de 14.000 filas, devolver
+    // solo ocho mensajes sueltos ocultaba el motivo real (un proveedor que no
+    // existe, un código repetido…) y no decía cuántas filas habían fallado.
+    const MAX_MENSAJES = 100;
     const errores: string[] = [];
-    const fallo = (fila: number, mensaje: string) => { if (errores.length < 8) errores.push(`Fila ${fila}: ${mensaje}`); };
+    const causas = new Map<string, { filas: number; ejemplos: number[] }>();
+    let fallos = 0;
+    const fallo = (fila: number, mensaje: string) => {
+      fallos++;
+      const causa = causas.get(mensaje) ?? { filas: 0, ejemplos: [] };
+      causa.filas++;
+      if (causa.ejemplos.length < 5) causa.ejemplos.push(fila);
+      causas.set(mensaje, causa);
+      if (errores.length < MAX_MENSAJES) errores.push(`Fila ${fila}: ${mensaje}`);
+    };
     // Claves ya planificadas en esta petición: dos filas con el mismo código en
     // el mismo archivo se avisan en vez de chocar contra el índice único.
     const planificadas = new Map<string, number>();
@@ -321,7 +345,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
           await db.prepare(t.sql).bind(...t.valores).run();
           if (t.modo === "insert") creados++; else actualizados++;
         } catch (e) {
-          fallo(t.fila, e instanceof Error ? e.message : "no se pudo guardar");
+          fallo(t.fila, mensajeDeError(e));
         }
       }
     };
@@ -406,7 +430,7 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
         }
         if (tareas.length >= TANDA) await volcar();
       } catch (e) {
-        fallo(i + 1, e instanceof Error ? e.message : "registro no válido");
+        fallo(i + 1, mensajeDeError(e));
       }
     }
     await volcar();
@@ -416,8 +440,14 @@ export function createCrud(spec: CrudSpec): Hono<{ Bindings: Env; Variables: Var
       await logMovimiento(db, c.get("user"), "importacion", spec.table, null,
         `Importación masiva: ${creados} creados, ${actualizados} actualizados`, null);
     }
-    if (!creados && !actualizados && errores.length) return c.json({ error: errores[0], errores }, 400);
-    return c.json({ creados, actualizados, errores });
+    // Resumen por causa, de la más frecuente a la menos: es lo que se muestra
+    // en pantalla y lo que se puede descargar como informe de errores.
+    const resumen = [...causas.entries()]
+      .map(([mensaje, c]) => ({ mensaje, filas: c.filas, ejemplos: c.ejemplos }))
+      .sort((a, b) => b.filas - a.filas);
+    // Siempre 200 con el resumen: devolver 400 cuando no se guardó nada hacía
+    // que el cliente reintentara el lote entero y solo mostrara un mensaje.
+    return c.json({ creados, actualizados, errores, fallos, total: body.rows.length, causas: resumen });
   };
   app.post("/import", async c => {
     // Cualquier fallo inesperado se devuelve con su causa: «Error interno del

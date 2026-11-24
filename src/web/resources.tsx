@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { ColorSwatch, Field, Modal, Toast, camposConError, diasHasta, downloadCsv, formatFecha, formatNum, type FieldDef } from "./ui";
+import { detectarSeparador, dividirFilaCsv, leerTextoArchivo, mapearColumnas } from "./csv";
 import { QrModal } from "./qr";
 
 type Row = Record<string, unknown>;
@@ -39,7 +40,45 @@ export interface ResourceConfig {
   // Fila de totales al pie de la tabla: suma de las columnas indicadas,
   // calculada sobre las filas visibles (con los filtros aplicados).
   totals?: Array<{ key: string; label: string }>;
+  // Carga masiva desde Excel o CSV: cada columna del archivo se reconoce por
+  // su cabecera y solo las marcadas como obligatorias tienen que venir.
+  importacion?: {
+    endpoint: string; etiqueta: string; obligatorias: string[];
+    columnas: Array<{ campo: string; alias: string[]; tipo?: "numero" | "booleano" }>;
+    plantilla: { cabeceras: string[]; filas: string[][] };
+  };
 }
+
+/** Lee un Excel o un CSV/TSV como matriz de texto: misma codificación y mismo
+ *  separador detectado que el resto de importaciones de la app. */
+async function leerTablaArchivo(archivo: File): Promise<string[][]> {
+  if (/\.(xlsx|xls)$/i.test(archivo.name)) {
+    const XLSX = await import("xlsx");
+    const libro = XLSX.read(new Uint8Array(await archivo.arrayBuffer()), { type: "array" });
+    const hoja = libro.Sheets[libro.SheetNames[0] ?? ""];
+    if (!hoja) return [];
+    return XLSX.utils.sheet_to_json<unknown[]>(hoja, { header: 1, raw: false, defval: "" })
+      .map(fila => fila.map(v => String(v ?? "").trim()))
+      .filter(fila => fila.some(v => v !== ""));
+  }
+  const texto = await leerTextoArchivo(archivo);
+  const lineas = texto.split(/\r?\n/).filter(l => l.trim() !== "");
+  if (!lineas.length) return [];
+  const sep = detectarSeparador(lineas[0]);
+  return lineas.map(l => dividirFilaCsv(l, sep)).filter(fila => fila.some(v => v !== ""));
+}
+const numeroImportado = (v: string): number | null => {
+  let t = v.replace(/[€\s]/g, "");
+  if (!t) return null;
+  if (t.includes(",") && t.includes(".")) {
+    t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
+  } else if (t.includes(",")) {
+    t = t.replace(",", ".");
+  }
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+};
+const esSi = (v: string): boolean => ["1", "si", "sí", "s", "x", "true", "activo", "verdadero"].includes(v.trim().toLowerCase());
 const allow = (role: string, p: Permission) => p === "all" || role === "admin" || (p === "centros" && role === "admin_centros");
 const center = { name: "centro_id", label: "Centro", type: "select" as const };
 const notes = { name: "notas", label: "Notas", type: "textarea" as const };
@@ -417,6 +456,28 @@ export const PROVEEDORES: ResourceConfig = {
       render: r => Number(r.unidades_pendientes) ? <>{formatNum(r.unidades_pendientes)} uds<div style={{ color: "var(--muted)", fontSize: 12 }}>{formatNum(r.importe_pendiente, 2)} €</div></> : <span className="badge muted">—</span>,
       csv: r => `${formatNum(r.unidades_pendientes)} uds · ${formatNum(r.importe_pendiente, 2)} €` },
   ],
+  // Carga masiva del listado de proveedores: el código (el numérico que ya
+  // usan los catálogos) y el nombre son lo único obligatorio; el resto de
+  // columnas se actualizan si vienen en el archivo.
+  importacion: {
+    endpoint: "/api/proveedores/import", etiqueta: "Importar proveedores",
+    obligatorias: ["id_proveedor", "nombre"],
+    columnas: [
+      { campo: "id_proveedor", alias: ["codigo proveedor", "codigo de proveedor", "cod proveedor", "id proveedor", "id", "codigo", "proveedor"] },
+      { campo: "nombre", alias: ["nombre proveedor", "nombre del proveedor", "razon social", "nombre", "proveedor"] },
+      { campo: "contacto", alias: ["contacto", "persona de contacto"] },
+      { campo: "email", alias: ["email", "correo", "correo electronico", "e-mail"] },
+      { campo: "telefono", alias: ["telefono", "movil", "tfno"] },
+      { campo: "direccion", alias: ["direccion", "domicilio"] },
+      { campo: "notas", alias: ["notas", "observaciones"] },
+      { campo: "activo", alias: ["activo", "estado"], tipo: "booleano" },
+      { campo: "dias_entrega", alias: ["plazo de entrega (dias)", "plazo de entrega", "dias de entrega", "plazo"], tipo: "numero" },
+    ],
+    plantilla: {
+      cabeceras: ["Codigo proveedor", "Nombre proveedor", "Contacto", "Email", "Telefono", "Direccion", "Notas", "Plazo de entrega"],
+      filas: [["2180", "DARLIM, S.L.", "Ana López", "ana@darlim.test", "960 000 333", "Calle Industria 4", "", "3"]],
+    },
+  },
 };
 export const MOVIMIENTOS: ResourceConfig = {
   title: "Auditoría de movimientos", subtitle: "Entradas, salidas, consumos, altas, ediciones y borrados con su motivo", endpoint: "/api/movimientos", csvName: "movimientos", searchKeys: ["usuario_nombre", "accion", "descripcion", "motivo"], readOnlyPage: true,
@@ -437,6 +498,10 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   // Filas renderizadas: se muestran de 50 en 50 para no bloquear la tabla.
   const [limite, setLimite] = useState(50);
+  // Carga masiva (Excel/CSV) del recurso, cuando lo admite (proveedores).
+  const [importando, setImportando] = useState(false);
+  const [importAviso, setImportAviso] = useState<{ message: string; kind: "ok" | "error"; detalle: string[] } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const canCreate = !config.readOnlyPage && allow(user.rol, config.perms.create), canUpdate = !config.readOnlyPage && allow(user.rol, config.perms.update), canDelete = !config.readOnlyPage && allow(user.rol, config.perms.delete);
   const load = useCallback(async () => { setLoading(true); setError(null); try { setItems((await api.get<{ items: Row[] }>(config.endpoint)).items); } catch (e) { setError(e instanceof Error ? e.message : "Error cargando los datos"); } finally { setLoading(false); } }, [config.endpoint]);
   useEffect(() => { void load(); }, [load]);
@@ -511,11 +576,104 @@ export function ResourcePage({ config, user }: { config: ResourceConfig; user: {
   };
   const verHistorial = user.rol === "admin" && Boolean(config.historialTabla);
   const remove = async (row: Row) => { if (!window.confirm(`¿Eliminar "${String(row.nombre ?? row.username ?? row.id)}"? Esta acción no se puede deshacer.`)) return; try { await api.del(`${config.endpoint}/${String(row.id)}`); setToast({ message: "Registro eliminado", kind: "ok" }); await load(); } catch (e) { setToast({ message: e instanceof Error ? e.message : "No se pudo eliminar", kind: "error" }); } };
+  // Carga masiva desde Excel o CSV: solo las columnas obligatorias tienen que
+  // estar en el archivo y cada fila actualiza (o crea) el registro por su
+  // código. Los fallos se muestran agrupados por motivo, no de uno en uno.
+  const importarArchivo = async (archivo: File | null) => {
+    const cfg = config.importacion;
+    if (!archivo || !cfg) return;
+    setImportAviso(null);
+    setImportando(true);
+    try {
+      const matriz = await leerTablaArchivo(archivo);
+      if (matriz.length < 2) {
+        setImportAviso({ message: "El archivo necesita una fila de cabeceras y al menos un dato.", kind: "error", detalle: [] });
+        return;
+      }
+      const cab = matriz[0] ?? [];
+      const mapa = mapearColumnas(
+        { columns: cfg.columnas.map(c => c.campo), alias: Object.fromEntries(cfg.columnas.map(c => [c.campo, c.alias])) },
+        cab,
+      );
+      const faltan = cfg.obligatorias.filter(k => !mapa[k]);
+      if (faltan.length) {
+        setImportAviso({ message: `Faltan columnas obligatorias: ${faltan.join(", ")}.`, kind: "error", detalle: [`Cabeceras leídas: ${cab.join(" · ")}`] });
+        return;
+      }
+      const filas: Row[] = [];
+      let descartadas = 0;
+      for (let i = 1; i < matriz.length; i++) {
+        const c = matriz[i] ?? [];
+        if (c.length !== cab.length) { descartadas++; continue; }
+        const fila: Row = {};
+        for (const col of cfg.columnas) {
+          const idx = mapa[col.campo];
+          if (!idx) continue;
+          const v = String(c[Number(idx)] ?? "").trim();
+          if (v === "") continue;
+          fila[col.campo] = col.tipo === "numero" ? numeroImportado(v) : col.tipo === "booleano" ? (esSi(v) ? 1 : 0) : v;
+        }
+        if (cfg.obligatorias.some(k => fila[k] === undefined || fila[k] === "")) { descartadas++; continue; }
+        filas.push(fila);
+      }
+      if (!filas.length) {
+        setImportAviso({ message: "No hay filas válidas que importar.", kind: "error", detalle: [`${formatNum(descartadas)} fila(s) sin el código o el nombre, o con columnas descuadradas.`] });
+        return;
+      }
+      // Un catálogo repite el mismo proveedor en cada línea: se envía una sola
+      // vez por código (con los últimos datos leídos) en vez de 14.000 veces.
+      const porClave = new Map<string, Row>();
+      for (const fila of filas) {
+        const clave = String(fila[cfg.obligatorias[0]] ?? "").trim().toUpperCase();
+        porClave.set(clave || `fila-${porClave.size}`, fila);
+      }
+      const unicas = [...porClave.values()];
+      const agrupadas = filas.length - unicas.length;
+      let creados = 0, actualizados = 0, fallos = 0;
+      const causas: string[] = [];
+      for (let i = 0; i < unicas.length; i += 200) {
+        const r = await api.post<{ creados?: number; actualizados?: number; fallos?: number; causas?: { mensaje: string; filas: number }[] }>(
+          cfg.endpoint, { rows: unicas.slice(i, i + 200) },
+        );
+        creados += Number(r.creados ?? 0);
+        actualizados += Number(r.actualizados ?? 0);
+        fallos += Number(r.fallos ?? 0);
+        for (const c of r.causas ?? []) causas.push(`${c.mensaje} — ${formatNum(c.filas)} fila(s)`);
+      }
+      setImportAviso({
+        message: `${formatNum(creados)} creados · ${formatNum(actualizados)} actualizados${fallos ? ` · ${formatNum(fallos)} con error` : ""}`,
+        kind: fallos || descartadas ? "error" : "ok",
+        detalle: [
+          ...causas.slice(0, 6),
+          ...(agrupadas ? [`${formatNum(agrupadas)} fila(s) repetidas del mismo código agrupadas`] : []),
+          ...(descartadas ? [`${formatNum(descartadas)} fila(s) descartadas por columnas incompletas o descuadradas`] : []),
+        ],
+      });
+      await load();
+    } catch (e) {
+      setImportAviso({ message: e instanceof Error ? e.message : "No se pudo importar el archivo", kind: "error", detalle: [] });
+    } finally {
+      setImportando(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+  const descargarPlantilla = () => {
+    const cfg = config.importacion;
+    if (cfg) downloadCsv(`${config.csvName}-plantilla.csv`, cfg.plantilla.cabeceras, cfg.plantilla.filas);
+  };
   const exportCsv = () => { const stamp = new Date().toISOString().slice(0, 10); downloadCsv(`${config.csvName}-${stamp}.csv`, config.columns.map(c => c.label), filtered.map(row => config.columns.map(c => c.csv ? c.csv(row) : String(row[c.key] ?? "")))); };
-  return <><div className="toolbar no-print"><input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar…" value={q} onChange={e => setQ(e.target.value)} />{(config.centroFilter || config.fields.some(f => f.name === "centro_id")) && <select className="input" style={{ maxWidth: 220 }} value={centroId} onChange={e => setCentroId(e.target.value)}><option value="all">Todos los centros</option>{centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}</select>}{config.tipoEquipoFilter && <select className="input" style={{ maxWidth: 200 }} value={tipoEqId} onChange={e => setTipoEqId(e.target.value)} aria-label="Filtrar por tipo de equipo"><option value="all">Todos los tipos</option>{(linkRows["tipo_equipo_id"] ?? []).map(t => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}</select>}{config.origenFilter && <select className="input" style={{ maxWidth: 190 }} value={origenId} onChange={e => setOrigenId(e.target.value)} aria-label="Filtrar por origen"><option value="all">Todo el origen</option>{ORIGEN_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}<div className="spacer"/>{user.rol !== "usuario" && <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>}{canCreate && <button className="btn" onClick={openCreate}>＋ Nuevo registro</button>}</div>
-  <div className="card">{loading?<div className="loading">Cargando…</div>:error?<div className="empty">⚠️ {error}</div>:!filtered.length?<div className="empty"><span className="icon">📭</span><strong>No hay registros</strong><p>{q||centroId!=="all"||tipoEqId!=="all"||origenId!=="all"?"Prueba con otra búsqueda u otro filtro.":"Pulsa «Nuevo registro» para añadir el primero."}</p></div>:<div className="table-scroll"><table><thead><tr>{config.columns.map(c=><th key={c.key} className={c.align==="right"?"right":""}>{c.label}</th>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction||verHistorial)&&<th className="right">Acciones</th>}</tr></thead><tbody>{filtered.slice(0, limite).map(row=><tr key={String(row.id)}>{config.columns.map(c=><td key={c.key} className={c.align==="right"?"right":""}>{c.render?c.render(row):String(row[c.key]??"—")}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction||verHistorial)&&<td className="right"><div className="row-actions">{verHistorial&&<button className="btn secondary small" title="Entradas, salidas y consumos de este artículo" onClick={()=>void abrirHistorial(row)}>🕘 Historial</button>}{config.extraAction&&<button className="btn secondary small" title={config.extraAction.title} onClick={()=>void config.extraAction!.run(row)}>{config.extraAction.icon} {config.extraAction.label}</button>}{config.qrTipo&&<button className="btn secondary small" onClick={()=>setQrRow(row)}>🏷️ QR</button>}{canUpdate&&<button className="btn secondary small" onClick={()=>openEdit(row)}>✏️ Editar</button>}{canDelete&&<button className="btn danger small" onClick={()=>void remove(row)}>🗑️ Borrar</button>}</div></td>}</tr>)}</tbody>{totales&&<tfoot><tr>{config.columns.map((c,i)=><td key={c.key} className={c.align==="right"?"right":""}>{i===0?<strong>Totales · {formatNum(filtered.length)}</strong>:totales[c.key]!==undefined?formatNum(totales[c.key],2):null}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction||verHistorial)&&<td/>}</tr></tfoot>}</table></div>}{filtered.length > limite && <div style={{ textAlign: "center", padding: "10px 0 2px" }}>
-    <button className="btn secondary" onClick={() => setLimite(l => l + 100)}>⬇️ Mostrar más · quedan {formatNum(filtered.length - limite)} de {formatNum(filtered.length)}</button>
-  </div>}</div>
+  return <><div className="toolbar no-print"><input className="input" style={{ maxWidth: 260 }} placeholder="🔍 Buscar…" value={q} onChange={e => setQ(e.target.value)} />{(config.centroFilter || config.fields.some(f => f.name === "centro_id")) && <select className="input" style={{ maxWidth: 220 }} value={centroId} onChange={e => setCentroId(e.target.value)}><option value="all">Todos los centros</option>{centros.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.nombre)}</option>)}</select>}{config.tipoEquipoFilter && <select className="input" style={{ maxWidth: 200 }} value={tipoEqId} onChange={e => setTipoEqId(e.target.value)} aria-label="Filtrar por tipo de equipo"><option value="all">Todos los tipos</option>{(linkRows["tipo_equipo_id"] ?? []).map(t => <option key={String(t.id)} value={String(t.id)}>{String(t.nombre)}</option>)}</select>}{config.origenFilter && <select className="input" style={{ maxWidth: 190 }} value={origenId} onChange={e => setOrigenId(e.target.value)} aria-label="Filtrar por origen"><option value="all">Todo el origen</option>{ORIGEN_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>}<div className="spacer"/>{user.rol !== "usuario" && <button className="btn secondary" onClick={exportCsv} disabled={!filtered.length}>⬇️ CSV</button>}{config.importacion && canCreate && <><button className="btn secondary" onClick={descargarPlantilla} title="Descargar un Excel/CSV de ejemplo con las columnas que acepta la carga">📄 Plantilla</button><label className={"btn secondary" + (importando ? " disabled" : "")} style={{ cursor: "pointer" }} title={`Excel o CSV con las columnas: ${config.importacion.plantilla.cabeceras.join(", ")}`}>{importando ? "Importando…" : `📥 ${config.importacion.etiqueta}`}<input ref={importInputRef} type="file" accept=".xlsx,.xls,.csv,.txt" style={{ display: "none" }} disabled={importando} onChange={e => void importarArchivo(e.target.files?.[0] ?? null)} /></label></>}{canCreate && <button className="btn" onClick={openCreate}>＋ Nuevo registro</button>}</div>
+  {importAviso && <div className={"banner " + (importAviso.kind === "error" ? "danger" : "warn")} style={{ display: "block", position: "relative" }}><button className="icon-btn no-print" style={{ position: "absolute", top: 6, right: 6, color: "inherit" }} onClick={() => setImportAviso(null)} aria-label="Cerrar aviso">✕</button><strong>{importAviso.message}</strong>{importAviso.detalle.length > 0 && <ul style={{ margin: "6px 0 0 18px", fontWeight: 500 }}>{importAviso.detalle.map((d, i) => <li key={i}>{d}</li>)}</ul>}</div>}
+  <div className="card">{loading?<div className="loading">Cargando…</div>:error?<div className="empty">⚠️ {error}</div>:!filtered.length?<div className="empty"><span className="icon">📭</span><strong>No hay registros</strong><p>{q||centroId!=="all"||tipoEqId!=="all"||origenId!=="all"?"Prueba con otra búsqueda u otro filtro.":"Pulsa «Nuevo registro» para añadir el primero."}</p></div>:<div className="table-scroll tall"><table><thead><tr>{config.columns.map(c=><th key={c.key} className={c.align==="right"?"right":""}>{c.label}</th>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction||verHistorial)&&<th className="right">Acciones</th>}</tr></thead><tbody>{filtered.slice(0, limite).map(row=><tr key={String(row.id)}>{config.columns.map(c=><td key={c.key} className={c.align==="right"?"right":""}>{c.render?c.render(row):String(row[c.key]??"—")}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction||verHistorial)&&<td className="right"><div className="row-actions">{verHistorial&&<button className="btn secondary small" title="Entradas, salidas y consumos de este artículo" onClick={()=>void abrirHistorial(row)}>🕘 Historial</button>}{config.extraAction&&<button className="btn secondary small" title={config.extraAction.title} onClick={()=>void config.extraAction!.run(row)}>{config.extraAction.icon} {config.extraAction.label}</button>}{config.qrTipo&&<button className="btn secondary small" onClick={()=>setQrRow(row)}>🏷️ QR</button>}{canUpdate&&<button className="btn secondary small" onClick={()=>openEdit(row)}>✏️ Editar</button>}{canDelete&&<button className="btn danger small" onClick={()=>void remove(row)}>🗑️ Borrar</button>}</div></td>}</tr>)}</tbody>{totales&&<tfoot><tr>{config.columns.map((c,i)=><td key={c.key} className={c.align==="right"?"right":""}>{i===0?<strong>Totales · {formatNum(filtered.length)}</strong>:totales[c.key]!==undefined?formatNum(totales[c.key],2):null}</td>)}{(canUpdate||canDelete||config.qrTipo||config.extraAction||verHistorial)&&<td/>}</tr></tfoot>}</table></div>}
+    {filtered.length > 0 && <div className="table-foot no-print">
+      <span>Mostrando <strong>{formatNum(Math.min(limite, filtered.length))}</strong> de {formatNum(filtered.length)}</span>
+      <div className="chips" style={{ margin: 0 }}>
+        {filtered.length > limite && <button className="btn secondary small" onClick={() => setLimite(l => l + 200)}>⬇️ Mostrar 200 más</button>}
+        {filtered.length > limite && <button className="btn secondary small" onClick={() => setLimite(filtered.length)}>Ver todas</button>}
+        {limite > 50 && <button className="btn secondary small" onClick={() => setLimite(50)}>Ver solo 50</button>}
+      </div>
+    </div>}
+  </div>
   <p className="no-print" style={{color:"var(--muted)",margin:0}}>{filtered.length} de {items.length} registros · {config.subtitle}</p>{qrRow&&config.qrTipo&&<QrModal tipo={config.qrTipo} id={Number(qrRow.id)} title={String(qrRow.nombre ?? qrRow.prenda ?? qrRow.numero_lote ?? qrRow.id)} onClose={()=>setQrRow(null)}/>}
   {historial&&<Modal title={`Historial · ${historial.titulo}`} subtitle="Entradas, salidas, consumos y ajustes con fecha, usuario y motivo" onClose={()=>setHistorial(null)}>
     {historial.loading?<div className="loading">Cargando historial…</div>:historial.error?<div className="form-error">{historial.error}</div>:!historial.items.length?<div className="empty"><span className="icon">🗂️</span><strong>Sin movimientos</strong><p>Este artículo todavía no tiene entradas, salidas ni consumos registrados.</p></div>:

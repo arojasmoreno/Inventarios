@@ -6,6 +6,7 @@ import type { Catalogos } from "../src/web/importar";
 // mínimo para poder probar el parser sin navegador.
 (globalThis as unknown as { window: unknown }).window = { location: { hostname: "localhost" } };
 const { parseRow } = await import("../src/web/importar");
+const { parseCsv } = await import("../src/web/pedido");
 
 const catalogo = (proveedores: Array<Record<string, unknown>>): Catalogos => ({
   centros: [], proveedores, zonas: [], subzonas: [], usuarios: [], documento_tipos: [], maquinaria: [],
@@ -39,6 +40,23 @@ describe("cotejo de nombres", () => {
     expect(normalizarClave("SUMINISTROS GARCIA SL")).toBe("suministros garcia sl");
     expect(normalizarClave("Muñoz")).toBe("munoz");
     expect(normalizarClave("  PROV-001 ")).toBe("prov 001");
+  });
+});
+
+describe("lectura del catálogo en la pestaña Productos disponibles", () => {
+  test("con tabuladores, respeta las comas del nombre y del precio", () => {
+    const texto = "Codigo proveedor\tNombre proveedor\tCodigo producto\tProducto\tPrecio\n"
+      + "2180\tDARLIM, S.L.\tC06001_DAR_CO\tPAPEL HIG. IND. 45x130 (FARDO 18)\t11,69";
+    expect(parseCsv(texto)).toEqual([
+      ["Codigo proveedor", "Nombre proveedor", "Codigo producto", "Producto", "Precio"],
+      ["2180", "DARLIM, S.L.", "C06001_DAR_CO", "PAPEL HIG. IND. 45x130 (FARDO 18)", "11,69"],
+    ]);
+  });
+
+  test("con punto y coma, no parte el nombre ni el precio por la coma", () => {
+    const texto = "Codigo proveedor;Nombre proveedor;Codigo producto;Producto;Precio\n"
+      + "4247;DARDALO SL;C07012_DAR_CO;PAPEL 25 MT;15,6";
+    expect(parseCsv(texto)[1]).toEqual(["4247", "DARDALO SL", "C07012_DAR_CO", "PAPEL 25 MT", "15,6"]);
   });
 });
 
